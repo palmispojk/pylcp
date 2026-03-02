@@ -1,4 +1,5 @@
 import numpy as np
+import jax.numpy as jnp
 from .common import spherical2cart
 
 # Next, define a Hamiltonian class to work out the internal states:
@@ -61,24 +62,22 @@ class hamiltonian():
     class block():
         def __init__(self, label, M):
             self.label = label
-            self.diagonal = self.check_diagonality(M)
-            self.matrix = M
+            self.matrix = jnp.asarray(M, dtype=jnp.complex128)
+            self.diagonal = self.check_diagonality(self.matrix)
             self.parameters = {}
 
-            self.n = M.shape[0]
-            self.m = M.shape[1]
+            self.n = self.matrix.shape[0]
+            self.m = self.matrix.shape[1]
 
         def check_diagonality(self, M):
             if M.shape[0] == M.shape[1]:
-                return np.count_nonzero(M - np.diag(np.diagonal(M))) == 0
+                return jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0
             else:
                 return False # Cannot be diagonal, cause not square.
 
         def return_block_in_place(self, i, j, N):
-            super_M = np.zeros((N, N), dtype='complex128')
-            super_M[i:i+self.n, j:j+self.m] = self.matrix
-
-            return super_M
+            super_M = jnp.zeros((N, N), dtype=jnp.complex128)
+            return super_M.at[i:i+self.n, j:j+self.m].set(self.matrix)
 
         def __repr__(self):
             return '(%s %dx%d)' % (self.label, self.n, self.m)
@@ -91,24 +90,22 @@ class hamiltonian():
         def __init__(self, label, M):
             super().__init__(label, M)
 
-            self.n = M.shape[1]
-            self.m = M.shape[2]
+            self.n = self.matrix.shape[1]
+            self.m = self.matrix.shape[2]
 
         def check_diagonality(self, M):
             if M.shape[1] == M.shape[2]:
-                return np.count_nonzero(M[1] - np.diag(np.diagonal(M[1]))) == 0
+                return jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0
             else:
                 return False # Cannot be diagonal, cause not square.
 
         def return_block_in_place(self, i, j, N):
-            super_M = np.zeros((3, N, N), dtype='complex128')
-            super_M[:, i:i+self.n, j:j+self.m] = self.matrix
-
-            return super_M
+            super_M = jnp.zeros((3, N, N), dtype=jnp.complex128)
+            return super_M.at[:, i:i+self.n, j:j+self.m].set(self.matrix)
 
 
     def __init__(self, *args, mass=1., muB=1, gamma=1., k=1):
-        self.blocks = []
+        self.blocks = np.empty((0, 0), dtype=object)
         self.state_labels = []
         self.ns = []
         self.laser_keys = {}
@@ -159,11 +156,11 @@ class hamiltonian():
                 if isinstance(element, self.block):
                     if element.label == label:
                         ind = (ii, jj)
-                        break;
+                        break
                 elif isinstance(element, tuple):
                     if np.any([element_i.label == label for element_i in element]):
                         ind = (ii, jj)
-                        break;
+                        break
 
         return ind
 
@@ -204,6 +201,7 @@ class hamiltonian():
             Square matrix that describes the field-independent part of this
             manifold's Hamiltonian.  This manifold must have N states.
         """
+        H_0 = jnp.asarray(H_0, dtype=jnp.complex128)
         if H_0.shape[0] != H_0.shape[1]:
             raise ValueError('H_0 must be square.')
 
@@ -213,13 +211,13 @@ class hamiltonian():
         label = self.__make_elem_label('H_0', state_label)
         if not ind_H_0 and not ind_mu_q:
             self.__add_new_row_and_column()
-            self.blocks[-1, -1] = self.block(label, H_0.astype('complex128'))
+            self.blocks[-1, -1] = self.block(label, H_0)
             self.state_labels.append(state_label)
             self.ns.append(H_0.shape[0])
         elif ind_mu_q:
             if H_0.shape[0] != self.blocks[ind_H_0].n:
                 raise ValueError('Element %s is not the right shape to match mu_q.' % label)
-            self.blocks[ind_mu_q] = (self.block(label, H_0.astype('complex128')),
+            self.blocks[ind_mu_q] = (self.block(label, H_0),
                                      self.blocks[ind_mu_q])
         else:
             raise ValueError('H_0 already added.')
@@ -240,6 +238,7 @@ class hamiltonian():
             Square matrix that describes the magnetic field dependent part of
             this manifold's Hamiltonian.
         """
+        mu_q = jnp.asarray(mu_q, dtype=jnp.complex128)
         if mu_q.shape[0] != 3 or mu_q.shape[1] != mu_q.shape[2]:
             raise ValueError('mu_q must 3xnxn, where n is an integer.')
 
@@ -247,7 +246,7 @@ class hamiltonian():
         ind_mu_q = self.__search_elem_label(self.__make_elem_label('mu_q', state_label))
 
         label = self.__make_elem_label('mu_q', state_label)
-        new_block = self.vector_block(label, mu_q.astype('complex128'))
+        new_block = self.vector_block(label, mu_q)
         new_block.parameters['mu_B'] = muB
 
         if not ind_H_0 and not ind_mu_q:
@@ -286,6 +285,8 @@ class hamiltonian():
             The mangitude of the decay rate associated with this $d_q$ block.
             Default: 1
         """
+        d_q = jnp.asarray(d_q, dtype=jnp.complex128)
+        
         ind_H_0 = self.__search_elem_label(self.__make_elem_label('H_0', label1))
         ind_mu_q = self.__search_elem_label(self.__make_elem_label('mu_q', label1))
 
@@ -317,7 +318,7 @@ class hamiltonian():
             m = self.blocks[ind_H_0][0].n
 
         # Check the size of d_q, make sure it is right:
-        if d_q.shape[1]!=n or d_q.shape[2]!=m:
+        if d_q.shape[1] != n or d_q.shape[2] != m:
             raise ValueError('Expected size 3x%dx%d for %s, instead see 3x%dx%d'%
                              (n, m, label, d_q.shape[1], d_q.shape[2]))
 
@@ -328,20 +329,18 @@ class hamiltonian():
         if ind1>ind2:
             (label1, label2) = (label2, label1)
             ind = ind[::-1]
-            d_q = d_q.conj().T
+            d_q = jnp.conjugate(jnp.transpose(d_q, (0, 2, 1)))
 
         # Store the matrix d_q:
         label = self.__make_elem_label('d_q', [label1, label2])
-        self.blocks[ind] = self.vector_block(label, d_q.astype('complex128'))
+        self.blocks[ind] = self.vector_block(label, d_q)
         self.blocks[ind].parameters['k'] = k
         self.blocks[ind].parameters['gamma'] = gamma
 
         # Store the matrix d_q^\dagger
-        label = self.__make_elem_label('d_q', [label2, label1])
-        self.blocks[ind[::-1]] = self.vector_block(
-            label,
-            np.array([np.conjugate(d_q[ii].T) for ii in range(3)]).astype('complex128')
-            )
+        d_q_dagger = jnp.array([jnp.conjugate(d_q[ii].T) for ii in range(3)])
+        label_dagger = self.__make_elem_label('d_q', [label2, label1])
+        self.blocks[ind[::-1]] = self.vector_block(label_dagger, d_q_dagger)
 
         # Store the laser key for quick access:
         self.laser_keys[label1 + '->' + label2] = ind
@@ -371,12 +370,10 @@ class hamiltonian():
             :math:`d_q`.  This usually gets paired with :math:`E`
         """
         # Initialize the field-independent component of the Hamiltonian.
-        self.H_0 = np.zeros((self.n, self.n), dtype='complex128')
-        self.mu_q = np.zeros((3, self.n, self.n), dtype='complex128')
+        self.H_0 = jnp.zeros((self.n, self.n), dtype=jnp.complex128)
+        self.mu_q = jnp.zeros((3, self.n, self.n), dtype=jnp.complex128)
 
         n = 0
-        m = 0
-
         # First, return H_0 and mu_q:
         for diag_block in np.diag(self.blocks):
             if isinstance(diag_block, self.vector_block):
@@ -393,7 +390,6 @@ class hamiltonian():
                 n+=diag_block[0].n
 
         self.d_q_bare = {}
-
         # Next, return d_q:
         for ii in range(self.blocks.shape[0]):
             for jj in range(ii+1, self.blocks.shape[1]):
@@ -405,9 +401,13 @@ class hamiltonian():
 
         self.d_q_star = {}
         for key in self.d_q_bare.keys():
-            self.d_q_star[key] = np.zeros(self.d_q_bare[key].shape, dtype='complex128')
-            for kk in range(3):
-                self.d_q_star[key][kk] = np.conjugate(self.d_q_bare[key][kk].T)
+            # self.d_q_star[key] = jnp.zeros(self.d_q_bare[key].shape, dtype=jnp.complex128)
+            # for kk in range(3):
+            #     self.d_q_star[key][kk] = np.conjugate(self.d_q_bare[key][kk].T)
+            #     self.d_q_star[key] = self.d_q_star[key].at[kk].set(jnp.conjugate(self.d_q_bare[key][kk].T))
+            self.d_q_star[key] = jnp.array([
+                jnp.conjugate(self.d_q_bare[key][kk].T) for kk in range(3)
+            ])
 
         # Finally, put together the full d_q, irrespective of laser beam key:
         self.d_q = np.zeros((3, self.n, self.n), dtype='complex128')
@@ -447,15 +447,15 @@ class hamiltonian():
         if not hasattr(self, 'H_0'):
             self.make_full_matrices()
 
-        H = self.H_0 - np.tensordot(self.mu_q, np.conjugate(Bq), axes=(0, 0))
+        H = self.H_0 - jnp.tensordot(self.mu_q, jnp.conjugate(Bq), axes=(0, 0))
 
-        if isinstance(Eq, list) or isinstance(Eq, np.ndarray):
+        if isinstance(Eq, list) or isinstance(Eq, (np.ndarray, jnp.ndarray)):
             Eq = {'g->e':Eq} # Promote to a dictionary.
 
         for key in Eq.keys():
             for ii, q in enumerate(np.arange(-1., 2., 1.)):
                 H -= (0.5*(-1.)**q*self.d_q_bare[key][ii]*Eq[key][2-ii] +
-                      0.5*(-1.)**q*self.d_q_star[key][ii]*np.conjugate(Eq[key][2-ii]))
+                      0.5*(-1.)**q*self.d_q_star[key][ii]*jnp.conjugate(Eq[key][2-ii]))
 
         return H
 
@@ -505,7 +505,7 @@ class hamiltonian():
             for ii, block in enumerate(np.diagonal(self.blocks)):
                 self.rotated_hamiltonian.add_H_0_block(
                     self.state_labels[ii],
-                    np.zeros((self.ns[ii], self.ns[ii]), dtype='complex128')
+                    jnp.zeros((self.ns[ii], self.ns[ii]), dtype=jnp.complex128)
                     )
             for ii, block_row in enumerate(self.blocks):
                 for jj, block in enumerate(block_row):
@@ -523,7 +523,7 @@ class hamiltonian():
             for ii, diag_block in enumerate(np.diag(self.blocks)):
                 # Make a transformation matrix that is boring.  We'll overwrite
                 # it later if it gets interesting.
-                self.U[ii] = np.eye(self.ns[ii])
+                self.U[ii] = jnp.eye(self.ns[ii], dtype=jnp.complex128)
 
         # Now, are any of the diagonal submatrices not diagonal?
         if not np.all(self.diagonal) or B<0:
@@ -539,18 +539,18 @@ class hamiltonian():
                         H = diag_block.matrix
 
                     # Diagonalize at this field:
-                    Es, self.U[ii] = np.linalg.eig(H)
+                    Es, U_mat = jnp.linalg.eig(H)
 
                     # Sort the  output, store the transformation matrix.
-                    ind_e = np.argsort(Es)
+                    ind_e = jnp.argsort(jnp.real(Es))
                     Es = Es[ind_e]
-                    self.U[ii] = self.U[ii][:, ind_e]
+                    self.U[ii] = U_mat[ii][:, ind_e]
 
                     # Check to make sure the diganolization resulted in only real
                     # components, then build the matrix with the eigenvalues and
                     # go
-                    if np.allclose(np.imag(Es), 0.):
-                        self.rotated_hamiltonian.blocks[ii, ii].matrix = np.diag(np.real(Es))
+                    if jnp.allclose(jnp.imag(Es), 0.):
+                        self.rotated_hamiltonian.blocks[ii, ii].matrix = jnp.diag(jnp.real(Es))
                     else:
                         raise ValueError('You broke the Hamiltonian!')
                 else: # It is diagonal:
@@ -567,30 +567,28 @@ class hamiltonian():
             # Now, rotate the d_q:
             for ii in range(self.blocks.shape[0]):
                 for jj in range(ii+1, self.blocks.shape[1]):
-                    if (not self.blocks[ii, jj] is None) and (not self.diagonal[ii] or not self.diagonal[jj] or B<0):
+                    if (self.blocks[ii, jj] is not None) and (not self.diagonal[ii] or not self.diagonal[jj] or B<0):
+                        new_matrix = []
                         for kk in range(3):
-                            self.rotated_hamiltonian.blocks[ii, jj].matrix[kk] = \
-                                self.U[ii].T @ self.blocks[ii,jj].matrix[kk] @ self.U[jj]
-
-                            self.rotated_hamiltonian.blocks[jj, ii].matrix[kk] = \
-                                np.conjugate(self.rotated_hamiltonian.blocks[ii, jj].matrix[kk].T)
-
-                            if (self.rotated_hamiltonian.blocks[ii, jj].matrix.shape !=
-                                self.blocks[ii,jj].matrix.shape):
-                                raise ValueError("Rotataed d_q not the same size as original.")
+                            val = self.U[ii].T @ self.blocks[ii, jj].matrix[kk] @ self.U[jj]
+                            new_matrix.append(val)
+                        
+                        self.rotated_hamiltonian.blocks[ii, jj].matrix = jnp.array(new_matrix)
+                        self.rotated_hamiltonian.blocks[jj, ii].matrix = jnp.array([jnp.conjugate(m.T) for m in new_matrix])
+                        
         else:
             # We are already diagonal, so all we have to do is change the
             # eigenvalues.
             for ii, diag_block in enumerate(np.diag(self.blocks)):
                 if isinstance(diag_block, tuple):
                     self.rotated_hamiltonian.blocks[ii, ii].matrix = \
-                        np.real(diag_block[0].matrix - B*diag_block[1].matrix[1])
+                        jnp.real(diag_block[0].matrix - B*diag_block[1].matrix[1])
                 elif isinstance(diag_block, self.vector_block):
                     self.rotated_hamiltonian.blocks[ii, ii].matrix = \
-                        np.real(-B*diag_block.matrix[1])
+                        jnp.real(-B*diag_block.matrix[1])
                 else:
                     self.rotated_hamiltonian.blocks[ii, ii].matrix = \
-                        np.real(diag_block.matrix)
+                        jnp.real(diag_block.matrix)
 
         return self.rotated_hamiltonian
 
