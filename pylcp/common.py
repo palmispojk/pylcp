@@ -82,20 +82,20 @@ class base_force_profile():
 
     Attributes
     ----------
-    R : array_like, shape (3, ...)
+    R : jnp.Array, shape (3, ...)
         Positions at which the force profile was calculated.
-    V : array_like, shape (3, ...)
+    V : jnp.Array, shape (3, ...)
         Velocities at which the force profile was calculated.
-    F : array_like, shape (3, ...)
+    F : jnp.Array, shape (3, ...)
         Total equilibrium force at position R and velocity V.
-    f_mag : array_like, shape (3, ...)
+    f_mag : jnp.Array, shape (3, ...)
         Magnetic force at position R and velocity V.
-    f : dictionary of array_like
+    f : dictionary of jnp.Array
         The forces due to each laser, indexed by the
         manifold the laser addresses.  The dictionary is keyed by the transition
         driven, and individual lasers are in the same order as in the
         pylcp.laserBeams object used to create the governing equation.
-    Neq : array_like
+    Neq : jnp.Array
         Equilibrium population found.
     """
     def __init__(self, R, V, laserBeams, hamiltonian):
