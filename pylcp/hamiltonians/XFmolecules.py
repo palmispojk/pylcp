@@ -1,6 +1,7 @@
 import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
 import scipy.constants as cts
+import jax.numpy as jnp
 
 def __wig3j(j1, j2, j3, m1, m2, m3):
     """
@@ -253,11 +254,15 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
             mu_p[ii, :, :] = U.T @ mu_p[ii, :, :] @ U
     else:
         U = np.identity(H0.shape[0])
+    
+    H0_jax = jnp.asarray(H0, dtype=jnp.complex128)
+    mu_p_jax = jnp.asarray(mu_p, dtype=jnp.complex128)
+    U_jax = jnp.asarray(U, dtype=jnp.complex128)
 
     if return_basis:
-        return H0, mu_p, U, basis
+        return H0_jax, mu_p_jax, U_jax, basis
     else:
-        return H0, mu_p, U
+        return H0_jax, mu_p_jax, U_jax
 
 
 def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
@@ -447,11 +452,14 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
         for jj, basis_j in enumerate(basis):
             args = tuple(basis_i) + tuple(basis_j)
             mu_p[:, ii, jj] = zeeman(*args)
+    
+    H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
+    mu_p_jax = jnp.asarray(mu_p, dtype=jnp.complex128)
 
     if return_basis:
-        return H_0, mu_p, basis
+        return H_0_jax, mu_p_jax, basis
     else:
-        return H_0, mu_p
+        return H_0_jax, mu_p_jax
 
 
 def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
@@ -581,7 +589,7 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
 
     # Finally, did the user pass to us a rotation matrix for case (b) into the
     # eignebasis:
-    if UX == []:
+    if len(UX) == 0:
         UX = np.identity(xbasis.shape[0])
 
     # Now transform in Hund's case A basis
@@ -589,10 +597,11 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
     for ii in range(3):
         dijq[ii] = UX.T @ T_ba @ intdijq[ii] @ T_ap
 
+    dijq_jax = jnp.asarray(dijq, dtype=jnp.complex128)
     if return_intermediate:
-        return dijq, T_ap, T_ba, intdijq, intbasis_ap, intbasis_ba
+        return dijq_jax, T_ap, T_ba, intdijq, intbasis_ap, intbasis_ba
     else:
-        return dijq
+        return dijq_jax
 
 
 # %% Run some tests if we are in the main namespace:
@@ -611,10 +620,14 @@ if __name__ == '__main__':
         )"""
 
     # CaF numbers: Journal of Molecular Spectroscopy, 86 (2), 365 (1981)
+    # H0_X, Bq_X, U_X, Xbasis = Xstate(
+    #     N=1, Lambda=0, S=1/2, I=1/2, return_basis=True, B=10303.98670, b=109.1893, c=40.1190,
+    #     CI=2.876e-2, gamma=39.65891        ) 
+    # TODO: bug in original code that hardcodes lambda and s in `__init__`
+    
     H0_X, Bq_X, U_X, Xbasis = Xstate(
-        N=1, Lambda=0, S=1/2, I=1/2, return_basis=True, B=10303.98670, b=109.1893, c=40.1190,
-        CI=2.876e-2, gamma=39.65891        )
-
+        N=1, I=1/2, return_basis=True, B=10303.98670, b=109.1893, c=40.1190,
+        CI=2.876e-2, gamma=39.65891        ) 
     B = np.linspace(0, 20, 101)
     Es_X = np.zeros((B.size, H0_X.shape[0]))
     for ii, B_i in enumerate(B):
@@ -702,3 +715,5 @@ if __name__ == '__main__':
           np.sum(dijq[qind, 4:7, 0]**2), np.sum(dijq[qind, 4:7, 1::]**2)))
     print('F_g = 2: F_e = 0: {0:.3f} F_e = 1: {1:.3f}'.format(
           np.sum(dijq[qind, 7::, 0]**2), np.sum(dijq[qind, 7::, 1::]**2)))
+
+    plt.show()

@@ -1,7 +1,8 @@
 import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
 import scipy.constants as cts
-from . import XFmolecules
+import XFmolecules
+import jax.numpy as jnp
 
 def wig3j(j1, j2, j3, m1, m2, m3):
     return float(wigner_3j(j1, j2, j3, m1, m2, m3))
@@ -162,11 +163,14 @@ def fine_structure_uncoupled(L, S, I, xi, a_c, a_orb, a_dip, gL, gS, gI,
             t1 = t1*np.sqrt( (S-mS)*(S+mS+1)*(I-mI)*(I+mI+1) )
             drow = int(-2*(2*I+1)*(2*S+1) + (2*I+1) + 1)
             H_0[ii+drow, ii] += t1*3*(1+S)*a_dip/(4*L*S*(2*L-1))
+            
+    H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
+    mu_q_jax = jnp.asarray(mu_q, dtype=jnp.complex128)
 
     if return_basis:
-        return H_0, mu_q, basis
+        return H_0_jax, mu_q_jax, basis
     else:
-        return H_0, mu_q
+        return H_0_jax, mu_q_jax
 
 
 def dqij_two_fine_stucture_manifolds_uncoupled(basis_g, basis_e):
@@ -194,7 +198,7 @@ def dqij_two_fine_stucture_manifolds_uncoupled(basis_g, basis_e):
             for jj, (mLp, mSp, mIp) in enumerate(basis_e):
                 d_q[kk, ii, jj] = (mI==mIp)*(mS==mSp)*(mL==mLp+q)
 
-    return d_q
+    return jnp.asarray(d_q, dtype=jnp.complex128)
 
 
 def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
@@ -240,7 +244,7 @@ def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
 
     num_of_states = int((2*J+1)*(2*I+1))
     H_0 = np.zeros((num_of_states, num_of_states))
-    H_Bq = np.zeros((3,num_of_states, num_of_states))
+    mu_q = np.zeros((3,num_of_states, num_of_states))
 
     # Start with the magnetic field dependent matrices:
     for kk, q in enumerate([-1, 0, 1]):
@@ -329,6 +333,11 @@ def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
                  np.sqrt((J-mJ-1)*(J-mJ)*(J+mJ+1)*(J+mJ+2)) * \
                  np.sqrt((I+mI-1)*(I+mI)*(I-mI+1)*(I-mI+2))
 
+
+    H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
+    mu_q_jax = jnp.asarray(mu_q, dtype=jnp.complex128)
+    
+
     if return_basis:
         basis = np.zeros((4,num_of_states))
 
@@ -336,9 +345,9 @@ def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
             for mI in range(-I,I+1):
                 basis[index(J, I, mJ, mI)] = np.array([J, I, mJ, mI])
 
-        return H_0, H_Bq, basis
+        return H_0_jax, mu_q_jax, basis
     else:
-        return H_0, H_Bq
+        return H_0_jax, mu_q_jax
 
 
 def coupled_index(F, mF, Fmin):
@@ -441,11 +450,14 @@ def hyperfine_coupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
                         np.sqrt((2*Fp+1)*(2*F+1))*(-1)**(J+I+Fp+1)*\
                         wig6j(I, Fp, J, F, I, 1)*\
                         np.sqrt(I*(I+1)*(2*I+1))
+    
+    H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
+    mu_q_jax = jnp.asarray(mu_q, dtype=jnp.complex128)
 
     if return_basis:
-        return H_0, mu_q, np.vstack((Fs, mFs))
+        return H_0_jax, mu_q_jax, np.vstack((Fs, mFs))
     else:
-        return H_0, mu_q
+        return H_0_jax, mu_q_jax
 
 
 def singleF(F, gF=1, muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
@@ -491,6 +503,9 @@ def singleF(F, gF=1, muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
                 mu_q[ii, index(mF), index(mFp)] -= gF*muB*\
                     (-1)**(F-mF)*np.sqrt(F*(F+1)*(2*F+1))*\
                     wig3j(F, 1, F, -mF, q, mFp)
+    
+    H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
+    mu_q_jax = jnp.asarray(mu_q, dtype=jnp.complex128)
 
     if return_basis:
         basis = np.zeros((int(2*F+1), 2))
@@ -498,9 +513,9 @@ def singleF(F, gF=1, muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
         for mF in np.arange(-F, F+1, 1):
             basis[index(mF), 1] = mF
 
-        argout = (H_0, mu_q, basis)
+        argout = (H_0_jax, mu_q_jax, basis)
     else:
-        argout = (H_0, mu_q)
+        argout = (H_0_jax, mu_q_jax)
 
     return argout
 
@@ -570,6 +585,8 @@ def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
 
     if normalize:
         dqij = dqij_norm(dqij)
+    
+    dqij_jax = jnp.asarray(dqij, dtype=jnp.complex128)
 
     if return_basis:
         basis_g = np.zeros((dqij.shape[1], 2))
@@ -583,9 +600,9 @@ def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
             for m_Fp in np.arange(-Fp, Fp+0.5, 1):
                 basis_e[index(Fpmin, Fp, m_Fp), :] = np.array([Fp, m_Fp])
 
-        argout = (dqij, basis_g, basis_e)
+        argout = (dqij_jax, basis_g, basis_e)
     else:
-        argout = dqij
+        argout = dqij_jax
 
     return argout
 
@@ -629,4 +646,4 @@ def dqij_two_bare_hyperfine(F, Fp, normalize=True):
         dqij = dqij_norm(dqij)
 
     # Return the matrix:
-    return dqij
+    return jnp.asarray(dqij, dtype=jnp.complex128)
