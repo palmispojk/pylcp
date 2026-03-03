@@ -12,7 +12,7 @@ from scipy.integrate._ivp.base import OdeSolver
 from scipy.integrate._ivp.ivp import (prepare_events, solve_event_equation,
                                       handle_events, find_active_events)
 import time
-from .common import progressBar
+from common import progressBar
 
 METHODS = {'RK23': RK23,
            'RK45': RK45,
@@ -566,9 +566,11 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
 
     interpolants = []
 
-    events, is_terminal, event_dir = prepare_events(events)
-
     if events is not None:
+        if callable(events):
+            events = (events,)
+        events, is_terminal, event_dir = prepare_events(events)
+
         if args is not None:
             # Wrap user functions in lambdas to hide the additional parameters.
             # The original event function is passed as a keyword argument to the
@@ -580,6 +582,8 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
         t_events = [[] for _ in range(len(events))]
         y_events = [[] for _ in range(len(events))]
     else:
+        is_terminal = None
+        event_dir = None
         t_events = None
         y_events = None
 
@@ -699,20 +703,34 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
+    import numpy as np
 
     def dydt(t, y):
         return np.array([-y[1], y[0]])
 
     def func2(t, y, dt):
-        if np.random.rand()<2*dt:
-            y[1]+=5*np.random.randn()
-            return (True, max(0.1, y[1]))
+        if np.random.rand() < 2 * dt:
+            y[1] += 5 * np.random.randn()
+            return (1, max(0.1, np.abs(y[1])))
         else:
-            return (False, max(0.1, y[1]))
+            return (0, max(0.1, np.abs(y[1])))
 
-    sol = solve_ivp_random(dydt, func2, [0, 2*np.pi], [0, 1],
+
+    sol = solve_ivp_random(dydt, func2, [0, 10 * np.pi], [0., 1.],
                            max_step=0.1, method='RK45')
 
     plt.figure()
+    
+
     plt.plot(sol.t, sol.y.T)
-    plt.plot(sol.t_random, sol.y[:, sol.inds_random].T, '.')
+    
+
+    if len(sol.t_random) > 0:
+        plt.plot(sol.t_random, sol.y[:, sol.inds_random].T, 'o', color='black', label='Random Kicks')
+        plt.legend()
+        
+    plt.xlabel('Time')
+    plt.ylabel('State (Position & Velocity)')
+    plt.title('Stochastic ODE Integration (SciPy)')
+    
+    plt.show()
