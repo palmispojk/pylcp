@@ -1,8 +1,10 @@
 import copy
 import numpy as np
-from .fields import magField as magFieldObject
-from .fields import laserBeams as laserBeamsObject
+from fields import magField as magFieldObject
+from fields import laserBeams as laserBeamsObject
 from scipy.optimize import root_scalar, root
+import jax.numpy as jnp
+import jax
 
 class governingeq(object):
     """
@@ -42,10 +44,15 @@ class governingeq(object):
     """
 
     def __init__(self, laserBeams, magField, hamiltonian=None,
-                 a=np.array([0., 0., 0.]), r0=np.array([0., 0., 0.]),
-                 v0=np.array([0., 0., 0.])):
+                 a=jnp.array([0., 0., 0.]), r0=jnp.array([0., 0., 0.]),
+                 v0=jnp.array([0., 0., 0.])):
+        
+        a = jnp.asarray(a, dtype=jnp.float64) # cast to jax if not already given
+        r0 = jnp.asarray(r0, dtype=jnp.float64)
+        v0 = jnp.asarray(v0, dtype=jnp.float64)
+        
         self.set_initial_position_and_velocity(r0, v0)
-
+        
         # Add lasers:
         self.laserBeams = {} # Laser beams are meant to be dictionary,
         if isinstance(laserBeams, list):
@@ -62,8 +69,8 @@ class governingeq(object):
             raise TypeError('laserBeams is not a valid type.')
 
         # Add in magnetic field:
-        if callable(magField) or isinstance(magField, np.ndarray):
-            self.magField = magFieldObject(magField)
+        if callable(magField) or isinstance(magField, (np.ndarray, jnp.ndarray)):
+            self.magField = magFieldObject(jnp.asarray(magField))
         elif isinstance(magField, magFieldObject):
             self.magField = copy.copy(magField)
         else:
@@ -79,8 +86,8 @@ class governingeq(object):
             self.__check_consistency_in_lasers_and_d_q()
 
         # Check the acceleration:
-        if not isinstance(a, np.ndarray):
-            raise TypeError('Constant acceleration must be an numpy array.')
+        if not isinstance(a, (np.ndarray, jnp.ndarray)):
+            raise TypeError('Constant acceleration must be an numpy or jax array.')
         elif a.size != 3:
             raise ValueError('Constant acceleration must have length 3.')
         else:
@@ -128,7 +135,7 @@ class governingeq(object):
         r0 : array_like, shape (3,)
             Initial position.  Default: [0.,0.,0.]
         """
-        self.r0 = r0
+        self.r0 = jnp.asarray(r0, dtype=jnp.float64)
         self.sol = None
 
     def set_initial_velocity(self, v0):
@@ -140,7 +147,7 @@ class governingeq(object):
         v0 : array_like, shape (3,)
             Initial position.  Default: [0.,0.,0.]
         """
-        self.v0 = v0
+        self.v0 = jnp.asarray(v0, dtype=jnp.float64)
         self.sol = None
 
     def evolve_motion(self):
@@ -219,27 +226,29 @@ class governingeq(object):
             The equilibrium positions along the selected axes.
         """
         if self.r_eq is None:
-            self.r_eq = np.zeros((3,))
+            self.r_eq = jnp.zeros((3,), dtype=jnp.float64)
 
+        # -- maybe change this for Optimistix for gpu and jax native solvers.
+        # -- Not necessarily faster, depends on the number of time it will call the function and the need for auto gradient etc.
         def simple_wrapper(r_changing):
             r_wrap = self.r_eq.copy()
-            r_wrap[axes] = r_changing
+            r_wrap = r_wrap.at[jnp.asarray(axes)].set(r_changing)
 
-            self.set_initial_position_and_velocity(r_wrap, np.array([0.0, 0.0, 0.0]))
+            self.set_initial_position_and_velocity(r_wrap, jnp.array([0.0, 0.0, 0.0]))
             F = self.find_equilibrium_force()
 
-            return F[axes]
+            return np.array(F[axes])
 
         #print('Initial guess: %s' % r_eqi[axes])
         if len(axes)>1:
             result = root(simple_wrapper, **kwargs)
-            self.r_eq[axes] = result.x
+            self.r_eq = self.r_eq.at[jnp.asarray(axes)].set(jnp.asarray(result.x))
         else:
             result = root_scalar(simple_wrapper, **kwargs)
-            self.r_eq[axes] = result.root
+            self.r_eq = self.r_eq.at[axes].set(jnp.asarray(result.root))
 
         return self.r_eq
-
+        # --- to here
     def trapping_frequencies(self, axes, r=None, eps=0.01, **kwargs):
         """
         Find the trapping frequency
@@ -270,13 +279,13 @@ class governingeq(object):
         omega : list or float
             The trapping frequencies along the selected axes.
         """
-        self.omega = np.zeros(3,)
+        self.omega = jnp.zeros(3,)
 
         if isinstance(eps, float):
-            eps = np.array([eps]*3)
+            eps = jnp.array([eps]*3)
 
         if r is None and self.r_eq is None:
-            r = np.array([0., 0., 0.])
+            r = jnp.array([0., 0., 0.])
         elif r is None:
             r = self.r_eq
 
@@ -286,27 +295,30 @@ class governingeq(object):
             mass = self.hamiltonian.mass
 
         for axis in axes:
-            if not np.isnan(r[axis]):
-                rpmdri = np.tile(r, (2,1)).T
-                rpmdri[axis, 1] += eps[axis]
-                rpmdri[axis, 0] -= eps[axis]
+            if not jnp.isnan(r[axis]):
+                rpmdri = jnp.tile(r, (2,1)).T
+                # rpmdri[axis, 1] += eps[axis]
+                # rpmdri[axis, 0] -= eps[axis]
+                rpmdri = rpmdri.at[axis, 1].add(eps[axis])
+                rpmdri = rpmdri.at[axis, 0].subtract(eps[axis])
 
                 F = np.zeros((2,))
                 for jj in range(2):
                     self.set_initial_position_and_velocity(rpmdri[:, jj],
-                                                           np.zeros((3,)))
+                                                           jnp.zeros((3,)))
                     f = self.find_equilibrium_force(**kwargs)
 
                     F[jj] = f[axis]
-
-                if np.diff(F)<0:
-                    self.omega[axis] = np.sqrt(-np.diff(F)/(2*eps[axis]*mass))
+                
+                dF = jnp.diff(jnp.array(F))[0]
+                if dF < 0:
+                    self.omega = self.omega.at[axis].set(jnp.sqrt(-dF/(2*eps[axis]*mass)))
                 else:
-                    self.omega[axis] = 0
+                    self.omega = self.omega.at[axis].set(0.0)
             else:
-                self.omega[axis] = 0
+                self.omega = self.omega.at[axis].set(0.0)
 
-        return self.omega[axes]
+        return self.omega[jnp.asarray(axes)]
 
     def damping_coeff(self, axes, r=None, eps=0.01, **kwargs):
         """
@@ -338,31 +350,32 @@ class governingeq(object):
         beta : list or float
             The damping coefficients along the selected axes.
         """
-        self.beta = np.zeros(3,)
+        self.beta = jnp.zeros(3,)
 
         if isinstance(eps, float):
-            eps = np.array([eps]*3)
+            eps = jnp.array([eps]*3)
 
         if r is None and self.r_eq is None:
-            r = np.array([0., 0., 0.])
+            r = jnp.array([0., 0., 0.])
         elif r is None:
             r = self.r_eq
 
         for axis in axes:
-            if not np.isnan(r[axis]):
-                vpmdvi = np.zeros((3,2))
-                vpmdvi[axis, 1] += eps[axis]
-                vpmdvi[axis, 0] -= eps[axis]
-
+            if not jnp.isnan(r[axis]):
+                vpmdvi = jnp.zeros((3,2))
+                vpmdvi = vpmdvi.at[axis, 1].add(eps[axis])
+                vpmdvi = vpmdvi.at[axis, 0].subtract(eps[axis])
+                
                 F = np.zeros((2,))
                 for jj in range(2):
                     self.set_initial_position_and_velocity(r, vpmdvi[:, jj])
                     f = self.find_equilibrium_force(**kwargs)
 
                     F[jj] = f[axis]
-
-                self.beta[axis] = -np.diff(F)/(2*eps[axis])
+                
+                dF = jnp.diff(jnp.asarray(F))[0]
+                self.beta = self.beta.at[axis].set(-dF/(2*eps[axis]))
             else:
-                self.beta[axis] = 0
+                self.beta = self.beta.at[axis].set(0)
 
-        return self.beta[axes]
+        return self.beta[jnp.asarray(axes)]
