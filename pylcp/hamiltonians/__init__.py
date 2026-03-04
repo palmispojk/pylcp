@@ -1,7 +1,7 @@
 import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
 import scipy.constants as cts
-import XFmolecules
+from . import XFmolecules
 import jax.numpy as jnp
 
 def wig3j(j1, j2, j3, m1, m2, m3):

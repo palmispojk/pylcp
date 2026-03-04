@@ -32,7 +32,7 @@ class parallelIntegrator(object):
         The initial value of y. Default value is 0.
     method : string, optional
         Integration method to use, mapped to Diffrax GPU solvers:
-            * 'Dopri' (default): Dopri5 (Dormand-Prince 5th order).
+            * 'Dopri5' (default): Dopri5 (Dormand-Prince 5th order).
             * 'Bosh3': Bosh3 (Bogacki-Shampine 3rd order).
             * 'Kvaerno5': Kvaerno5 (Implicit solver for 
               stiff equations).

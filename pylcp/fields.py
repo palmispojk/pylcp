@@ -1,12 +1,23 @@
 import jax
+import numpy as np
 import jax.numpy as jnp
 from inspect import signature
 from pylcp.common import cart2spherical, spherical2cart
 from scipy.spatial.transform import Rotation
-from integration_tools_gpu import parallelIntegrator
+from .integration_tools_gpu import parallelIntegrator
 
 
 def return_constant_val(R, t, val):
+    """Fixed backward compatability for returning the constant value with jnp, previously numpy
+
+    Args:
+        R (_type_): Not used position argument
+        t (_type_): Not used time argument
+        val (array_like or callable): _description_
+
+    Returns:
+        _type_: _description_
+    """
     return val
 
 def return_constant_vector(R, t, vector):
@@ -308,7 +319,7 @@ class laserBeam(object):
 
         if pol is not None:
             # Assuming you have your __parse_constant_polarization method
-            if not isinstance(pol, jnp.ndarray) and not isinstance(pol, np.ndarray):
+            if not isinstance(pol, jnp.ndarray) or not isinstance(pol, np.ndarray):
                 parsed_pol = self.__parse_constant_polarization(pol, pol_coord)
             else:
                 parsed_pol = pol

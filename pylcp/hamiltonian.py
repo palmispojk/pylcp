@@ -1,6 +1,6 @@
 import numpy as np
 import jax.numpy as jnp
-from common import spherical2cart
+from .common import spherical2cart
 
 # Next, define a Hamiltonian class to work out the internal states:
 class hamiltonian():

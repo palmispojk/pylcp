@@ -1,7 +1,7 @@
 import copy
 import numpy as np
-from fields import magField as magFieldObject
-from fields import laserBeams as laserBeamsObject
+from .fields import magField as magFieldObject
+from .fields import laserBeams as laserBeamsObject
 from scipy.optimize import root_scalar, root
 import jax.numpy as jnp
 import jax

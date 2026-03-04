@@ -4,15 +4,11 @@
 Tools for solving the rate equations.
 """
 import numpy as np
-import copy
-from scipy.optimize import minimize
 from scipy.integrate import solve_ivp
-from inspect import signature
-from fields import laserBeams, magField
-from common import (progressBar, random_vector, spherical_dot,
+from .common import (progressBar, random_vector, spherical_dot,
                      cart2spherical, spherical2cart, base_force_profile)
-from governingeq import governingeq
-from integration_tools import solve_ivp_random
+from .governingeq import governingeq
+from .integration_tools import solve_ivp_random
 from scipy.interpolate import interp1d
 
 #@numba.vectorize([numba.float64(numba.complex128),numba.float32(numba.complex64)])

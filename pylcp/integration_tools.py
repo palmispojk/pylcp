@@ -12,7 +12,7 @@ from scipy.integrate._ivp.base import OdeSolver
 from scipy.integrate._ivp.ivp import (prepare_events, solve_event_equation,
                                       handle_events, find_active_events)
 import time
-from common import progressBar
+from .common import progressBar
 
 METHODS = {'RK23': RK23,
            'RK45': RK45,
