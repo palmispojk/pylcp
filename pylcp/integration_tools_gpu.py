@@ -1,4 +1,3 @@
-import inspect
 import jax
 import jax.numpy as jnp
 import functools
@@ -13,173 +12,6 @@ from diffrax import (
     LinearInterpolation
 )
 
-class parallelIntegrator(object):
-    """
-    parallelIntegrator: A GPU-native, JAX-compatible class to integrate a 
-    function as it is being called.
-
-    This class replaces the SciPy-based parallelIntegrator. It uses the Diffrax 
-    library to solve ODEs natively on the GPU (or CPU via XLA). Unlike the 
-    original version, this class is strictly stateless to remain compatible 
-    with JAX's JIT and vmap transformations.
-
-    Parameters
-    ----------
-    func : callable
-        The function that is to be integrated. It can have the form func(t) 
-        or func(t, y).
-    y0 : float or array_like, optional
-        The initial value of y. Default value is 0.
-    method : string, optional
-        Integration method to use, mapped to Diffrax GPU solvers:
-            * 'Dopri5' (default): Dopri5 (Dormand-Prince 5th order).
-            * 'Bosh3': Bosh3 (Bogacki-Shampine 3rd order).
-            * 'Kvaerno5': Kvaerno5 (Implicit solver for 
-              stiff equations).
-    tmax : float, optional
-        Maximum magnitude of the time. Included for API compatibility with 
-        legacy pylcp code.
-    rtol : float, optional
-        Relative tolerance for the adaptive step size controller. Default 1e-5.
-    atol : float, optional
-        Absolute tolerance for the adaptive step size controller. Default 1e-5.
-
-    Attributes
-    ----------
-    y0 : jax.Array
-        The initial state of the integration.
-    term : diffrax.ODETerm
-        The wrapped differential equation term for Diffrax.
-    solver : diffrax.AbstractSolver
-        The Diffrax solver instance used for integration.
-    """
-    
-    def __init__(self, func, y0=[0.], method="Dopri5", tmax=1e9, rtol=1e-5, atol=1e-5, **kwargs):
-        sig = str(inspect.signature(func))
-        if '(t, y)' in sig or '(t, y' in sig:
-            self.func = lambda t, y, args: func(t, y)
-        elif '(t)' in sig or '(t' in sig:
-            self.func = lambda t, y, args: func(t)
-        else:
-            raise ValueError(f"signature {sig} for func not recognized. Must be (t) or (t, y).")
-        
-        self.y0 = jnp.array(y0)
-        self.tmax = tmax
-        self.rtol = rtol
-        self.atol = atol
-        
-        if method == "Dopri5":
-            self.solver = Dopri5()
-        elif method == 'Bosh3':
-            self.solver = Bosh3()
-        elif method == "Kvaerno5":
-            self.solver = Kvaerno5() 
-        else:
-            raise ValueError(f"Method {method} not recognized.")
-        
-        self.term = ODETerm(self.func)
-        
-        self._batched_solve = jax.vmap(self._solve_single, in_axes=(0,))
-        
-        
-    def _solve_single(self, t):
-        """
-        Internal stateless solver for a single point in time.
-
-        Parameters
-        ----------
-        t : float or jax.Array
-            The target time for the integration.
-
-        Returns
-        -------
-        y : jax.Array
-            The result of the integration from 0 to t.
-        """
-        is_zero = jnp.isclose(t, 0.0)
-        
-        def do_solve(t_val):
-            sol = diffeqsolve(
-                self.term,
-                self.solver,
-                t0=0.0,
-                t1=t_val,
-                dt0=1e-3, # Initial step size guess
-                y0=self.y0,
-                stepsize_controller=PIDController(rtol=self.rtol, atol=self.atol),
-                saveat=SaveAt(t1=True) # Only save the final value at t
-            )
-            return sol.ys[-1]
-    
-        def return_y0(t_val):
-            return self.y0
-        
-        return jax.lax.cond(is_zero, return_y0, do_solve, t)
-
-    def __call__(self, t):
-        """
-        Return the value of the integral at time t.
-
-        If t is an array, the integration is automatically vectorized across 
-        the GPU using jax.vmap, solving all time points in parallel.
-
-        Parameters
-        ----------
-        t : float or jax.Array
-            Time or array of times at which to evaluate the function.
-
-        Returns
-        -------
-        y : jax.Array
-            Value of the function at time t.
-        """
-        t_arr = jnp.asarray(t)
-        
-        if t_arr.ndim > 0:
-            return self._batched_solve(t_arr)
-        else:
-            return self._solve_single(t_arr)
-        
-    
-    def dense_output(self, t_span, n_points=1000):
-        """
-        Computes a continuous solution over a specified interval.
-
-        This method pre-integrates the function over a grid and returns a 
-        JAX-native interpolation function. This is significantly more 
-        efficient when the integrated value must be called repeatedly 
-        inside another ODE solver.
-
-        Parameters
-        ----------
-        t_span : 2-tuple of floats
-            The start and end times for the pre-computation.
-        n_points : int, optional
-            Number of points used for the interpolation grid. Default 1000.
-
-        Returns
-        -------
-        interp_func : callable
-            A function that takes time t and returns the interpolated 
-            integral value using jax.linear_interpolation.
-        """
-        ts = jnp.linspace(t_span[0], t_span[1], n_points)
-        
-        sol = diffeqsolve(
-            self.term,
-            self.solver,
-            t0=t_span[0],
-            t1=t_span[1],
-            dt0=1e-3,
-            y0=self.y0,
-            stepsize_controller=PIDController(rtol=self.rtol, atol=self.atol),
-            saveat=SaveAt(ts=ts)
-        )
-        
-        # Return a pure JAX interpolation function that can be called anywhere
-        interp = LinearInterpolation(ts, sol.ys)
-        return lambda t: interp.evaluate(t)
-        
 
 class RandomOdeResult:
     def __init__(self, t, y, t_random, n_random, inds_random, success, status=0, message="", nfev=0):
@@ -459,6 +291,96 @@ def solve_ivp_random(
         ))
 
     return results
+
+
+@functools.partial(jax.jit, static_argnames=('func', 'n_points', 'rtol', 'atol', 'solver_type'))
+def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, solver_type='Dopri5'):
+    """
+    JIT-compiled batched ODE solve returning solution on a fixed time grid.
+
+    This is the performance-critical inner function used by solve_ivp_dense.
+    ``func`` and ``n_points`` are declared static so JAX traces and compiles
+    once per unique (func, n_points, rtol, atol, solver_type) combination and
+    then reuses the compiled XLA kernel for all subsequent calls.
+
+    Args:
+        func: RHS of the ODE, calling signature func(t, y) -> dy/dt.
+              Must be a stable Python object (e.g. a functools.cached_property)
+              so the JIT cache key stays constant across calls.
+        t0, t1: Start and end time (JAX float64 scalars).
+        y0_batch: Initial conditions, shape (N, state_dim).
+        n_points: Number of equally-spaced output time points (static).
+        rtol, atol: Adaptive step-size controller tolerances (static).
+        solver_type: 'Dopri5', 'Bosh3', or 'Kvaerno5' (static).
+
+    Returns:
+        ys: shape (N, n_points, state_dim)
+        ts: shape (n_points,)
+    """
+    if solver_type == 'Dopri5':
+        solver = Dopri5()
+    elif solver_type == 'Bosh3':
+        solver = Bosh3()
+    elif solver_type == 'Kvaerno5':
+        solver = Kvaerno5()
+    else:
+        raise ValueError(f"Solver '{solver_type}' not recognised. "
+                         f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
+
+    term = ODETerm(lambda t, y, args: func(t, y))
+    ts_grid = jnp.linspace(t0, t1, n_points)
+
+    def solve_one(y0):
+        sol = diffeqsolve(
+            term,
+            solver,
+            t0=t0,
+            t1=t1,
+            dt0=jnp.asarray(1e-3, dtype=t0.dtype),
+            y0=y0,
+            stepsize_controller=PIDController(rtol=rtol, atol=atol),
+            saveat=SaveAt(ts=ts_grid),
+        )
+        return sol.ys  # (n_points, state_dim)
+
+    return jax.vmap(solve_one)(y0_batch), ts_grid
+
+
+def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
+                    rtol=1e-5, atol=1e-5, solver_type='Dopri5'):
+    """
+    Solve a batched ODE and return the solution on a fixed time grid.
+
+    GPU-native, JIT-compiled replacement for scipy's solve_ivp when you need
+    dense output at N equally-spaced time points.  The underlying kernel is
+    compiled once per unique (func, n_points, rtol, atol, solver_type)
+    combination; subsequent calls with different t_span or y0_batch reuse the
+    compiled kernel directly.
+
+    For best performance, pass a function with a *stable Python identity*
+    (e.g. a method stored as a ``functools.cached_property``) so the JIT cache
+    is not invalidated between calls.
+
+    Args:
+        func: RHS of the ODE, calling signature func(t, y) -> dy/dt.
+        t_span: (t0, t1) integration interval.
+        y0_batch: Initial conditions, shape (N, state_dim).
+        n_points: Number of equally-spaced output time points. Default 1001.
+        rtol: Relative tolerance. Default 1e-5.
+        atol: Absolute tolerance. Default 1e-5.
+        solver_type: 'Dopri5' (default), 'Bosh3', or 'Kvaerno5'.
+
+    Returns:
+        ts: jax.Array, shape (n_points,)
+        ys: jax.Array, shape (N, n_points, state_dim)
+    """
+    t0 = jnp.asarray(t_span[0], dtype=jnp.float64)
+    t1 = jnp.asarray(t_span[1], dtype=jnp.float64)
+    y0_batch = jnp.asarray(y0_batch)
+    ys, ts = _batched_dense_trajectories(
+        func, t0, t1, y0_batch, n_points, rtol, atol, solver_type
+    )
+    return ts, ys
 
 
 if __name__ == '__main__':
