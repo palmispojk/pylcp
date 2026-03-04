@@ -4,7 +4,6 @@ import jax.numpy as jnp
 from inspect import signature
 from pylcp.common import cart2spherical, spherical2cart
 from scipy.spatial.transform import Rotation
-from .integration_tools_gpu import parallelIntegrator
 
 
 def return_constant_val(R, t, val):
