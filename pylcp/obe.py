@@ -2,11 +2,11 @@
 Tools for solving the OBE for laser cooling
 author: spe
 """
+import functools
 import numpy as np
-import time
 import jax
 import jax.numpy as jnp
-from .integration_tools_gpu import parallelIntegrator, solve_ivp_random
+from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense
 
 from .rateeq import rateeq
 from .common import (cart2spherical, spherical2cart, base_force_profile)
@@ -624,6 +624,23 @@ class obe(governingeq):
 
         return drhodt
 
+    @functools.cached_property
+    def _dydt(self):
+        """
+        Return the state-vector RHS for evolve_density as a stable callable.
+
+        Stored as a cached_property so every access of self._dydt returns the
+        *same Python object*, giving jax.jit a constant cache key and ensuring
+        the XLA kernel is compiled only once per OBE instance.
+        """
+        def dydt(t, y):
+            r    = y[-3:]
+            v    = y[-6:-3]
+            rho  = y[:-6]
+            a    = jnp.zeros(3, dtype=y.dtype)
+            drhodt = self.__drhodt(r, t, rho).astype(y.dtype)
+            return jnp.concatenate((drhodt, a, v))
+        return dydt
 
     def evolve_density(self, t_span, y0_batch, n_points=1000, **kwargs):
         """
@@ -660,37 +677,23 @@ class obe(governingeq):
             It contains other important elements, which can be discerned from
             scipy's solve_ivp documentation.
         """
-        def dydt(t, y):
-            r = y[-3:]
-            v = y[-6:-3]
-            rho = y[:-6]
-            a = jnp.zeros(3, dtype=y.dtype)
-            drhodt = self.__drhodt(r, t, rho).astype(y.dtype)
-            # dv/dt is explicitly zero (constant velocity)
-            return jnp.concatenate((drhodt, a, v))
-        
-        def solve_single_atom(y0):
-            integrator = parallelIntegrator(
-                func=dydt,
-                y0=y0,
-                method="Dopri5",
-                rtol=kwargs.get('rtol', 1e-5), 
-                atol=kwargs.get('atol', 1e-5)
-            )    
-        
-            ts = jnp.linspace(t_span[0], t_span[1], n_points)
-            interp_func = integrator.dense_output(t_span, n_points=n_points)
-            
-            return jax.vmap(interp_func)(ts)
+        rtol = kwargs.get('rtol', 1e-5)
+        atol = kwargs.get('atol', 1e-5)
+        method = kwargs.get('method', 'Dopri5')
 
-
-        batched_ys = jax.vmap(solve_single_atom)(y0_batch)
+        # self._dydt is a cached_property: same Python object every call on
+        # this instance, so _batched_dense_trajectories JIT-compiles once and
+        # reuses the kernel for every subsequent call (e.g. convergence loop).
+        ts_grid, batched_ys = solve_ivp_dense(
+            self._dydt, t_span, y0_batch,
+            n_points=n_points, rtol=rtol, atol=atol, solver_type=method,
+        )
         # batched_ys shape: (n_atoms, n_points, state_dim)
 
         class Bunch:
             pass
         self.sol = Bunch()
-        self.sol.t = jnp.linspace(t_span[0], t_span[1], n_points)
+        self.sol.t = ts_grid
         self.sol.y = batched_ys
 
         return self.sol
