@@ -3,41 +3,15 @@ Tools for solving the OBE for laser cooling
 author: spe
 """
 import numpy as np
-import copy
 import time
-import numba
-import scipy.sparse as sparse
-from scipy.integrate import solve_ivp
-from scipy.interpolate import interp1d
+import jax
+import jax.numpy as jnp
+from .integration_tools_gpu import parallelIntegrator, solve_ivp_random
+
 from .rateeq import rateeq
-from .fields import laserBeams, magField
-from .integration_tools import solve_ivp_random
-from .common import (progressBar, random_vector, spherical_dot,
-                     cart2spherical, spherical2cart, base_force_profile)
+from .common import (cart2spherical, spherical2cart, base_force_profile)
 from .governingeq import governingeq
 
-@numba.vectorize([numba.float64(numba.complex128),numba.float32(numba.complex64)])
-def abs2(x):
-    return x.real**2 + x.imag**2
-
-@numba.jit(nopython=True)
-def dot(A, x):
-    return A @ x
-
-@numba.jit(nopython=True)
-def dot_and_add(A, x, b):
-    b += A @ x
-
-def cartesian_vector_tensor_dot(a, B):
-    if B.ndim == 2 and a.ndim == 1:
-        # Single point:
-        return np.dot(B, a)
-    elif B.ndim == 2:
-        # Constant B, variable a:
-        return np.sum(a[np.newaxis, ...]*B[..., np.newaxis], axis=1)
-    else:
-        # Varaible a and variable B.  Will throw an error if a.shape[1:] != B.shape[2:]:
-        return np.sum(a[np.newaxis, ...]*B[...], axis=1)
 
 
 class force_profile(base_force_profile):
@@ -142,9 +116,8 @@ class obe(governingeq):
     -------
     """
     def __init__(self, laserBeams, magField, hamitlonian,
-                 a=np.array([0., 0., 0.]), transform_into_re_im=True,
-                 use_sparse_matrices=None, include_mag_forces=True,
-                 r0=np.array([0., 0., 0.]), v0=np.array([0., 0., 0.])):
+                 a=jnp.array([0., 0., 0.]), transform_into_re_im=True, include_mag_forces=True,
+                 r0=jnp.array([0., 0., 0.]), v0=jnp.array([0., 0., 0.])):
 
         super().__init__(laserBeams, magField, hamitlonian, a=a,
                          r0=r0, v0=v0)
@@ -152,15 +125,6 @@ class obe(governingeq):
         # Save the optional arguments:
         self.transform_into_re_im = transform_into_re_im
         self.include_mag_forces = include_mag_forces
-
-        # Should we use sparse matrices?
-        if use_sparse_matrices is None:
-            if self.hamiltonian.n>10: # Generally offers a performance increase
-                self.use_sparse_matrices = True
-            else:
-                self.use_sparse_matrices = False
-        else:
-            self.use_sparse_matrices = use_sparse_matrices
 
         # Set up a dictionary to store any resulting force profiles.
         self.profile = {}
@@ -181,9 +145,20 @@ class obe(governingeq):
         # If necessary, transform the evolution matrices:
         if self.transform_into_re_im:
             self.__transform_ev_matrices()
-
-        if self.use_sparse_matrices:
-            self.__convert_to_sparse()
+            
+        self.__cast_ev_mat_to_jax()
+    
+    
+    def __cast_ev_mat_to_jax(self):
+        """Recursively convert the nested dictionaries of numpy arrays to jax arrays"""
+        for key in self.ev_mat:
+            if isinstance(self.ev_mat[key], dict):
+                for subkey in self.ev_mat[key]:
+                    self.ev_mat[key][subkey] = jnp.asarray(self.ev_mat[key][subkey], dtype=jnp.complex128)
+            elif isinstance(self.ev_mat[key], list):
+                self.ev_mat[key] = [jnp.asarray(v, dtype=jnp.complex128) for v in self.ev_mat[key]]
+            else:
+                self.ev_mat[key] = jnp.asarray(self.ev_mat[key], dtype=jnp.complex128)
 
 
 
@@ -192,7 +167,7 @@ class obe(governingeq):
         """
         This function returns the index in the rho vector that corresponds to element rho_{ij}.  If
         """
-        return ii + jj*self.hamiltonian.n
+        return ii + jj * self.hamiltonian.n
 
 
     def __build_coherent_ev_submatrix(self, H):
@@ -214,18 +189,17 @@ class obe(governingeq):
 
         return ev_mat
 
-
+    # Is only used in construction so can remain in np
     def __build_coherent_ev(self):
         self.ev_mat['H0'] = self.__build_coherent_ev_submatrix(
-            self.hamiltonian.H_0
+            np.array(self.hamiltonian.H_0)
         )
 
         self.ev_mat['B'] = [None]*3
         for q in range(3):
             self.ev_mat['B'][q] = self.__build_coherent_ev_submatrix(
-                self.hamiltonian.mu_q[q]
+                np.array(self.hamiltonian.mu_q[q])
             )
-        self.ev_mat['B'] = np.array(self.ev_mat['B'])
 
         self.ev_mat['d_q'] = {}
         self.ev_mat['d_q*'] = {}
@@ -243,7 +217,7 @@ class obe(governingeq):
             self.ev_mat['d_q'][key] = np.array(self.ev_mat['d_q'][key])
             self.ev_mat['d_q*'][key] = np.array(self.ev_mat['d_q*'][key])
 
-
+    # is used only in construction
     def __build_decay_ev(self):
         """
         This method constructs the decay portion of the OBE using the radiation
@@ -316,7 +290,7 @@ class obe(governingeq):
 
         return self.ev_mat['decay']
 
-
+    # is only ran in setup
     def __build_transform_matrices(self):
         self.U = np.zeros((self.hamiltonian.n**2, self.hamiltonian.n**2),
                      dtype='complex128')
@@ -353,7 +327,7 @@ class obe(governingeq):
                     self.Uinv[self.__density_index(jj, ii),
                               self.__density_index(jj, ii)] = +0.5*1j
 
-
+    # is only ran in setup
     def __transform_ev_matrix(self, ev_mat):
         if not hasattr(self, 'U'):
             self.__build_transform_matrices()
@@ -366,7 +340,7 @@ class obe(governingeq):
         else:
             raise ValueError('Something went dreadfully wrong.')
 
-
+    # is only ran in setup
     def __transform_ev_matrices(self):
         self.ev_mat['decay'] = self.__transform_ev_matrix(self.ev_mat['decay'])
         self.ev_mat['H0'] = self.__transform_ev_matrix(self.ev_mat['H0'])
@@ -386,49 +360,27 @@ class obe(governingeq):
         # Transform Bq back into Bx, By, and Bz (making it real):
         self.ev_mat['B'] = spherical2cart(self.ev_mat['B'])
 
-        for jj in range(3):
-            self.ev_mat['B'][jj] = self.__transform_ev_matrix(self.ev_mat['B'][jj])
-        self.ev_mat['B'] = np.real(self.ev_mat['B'])
+        self.ev_mat['B'] = np.real(np.array([
+            self.__transform_ev_matrix(self.ev_mat['B'][jj]) for jj in range(3)
+        ]))
 
         del self.ev_mat['d_q']
         del self.ev_mat['d_q*']
 
 
-    def __convert_to_sparse(self):
-        def convert_based_on_shape(matrix):
-            # Vector:
-            if matrix.shape == (3, self.hamiltonian.n**2, self.hamiltonian.n**2):
-                new_list = [None]*3
-                for jj in range(3):
-                    new_list[jj] = sparse.csr_matrix(matrix[jj])
-
-                return new_list
-            # Scalar:
-            else:
-                return sparse.csr_matrix(matrix)
-
-        for key in self.ev_mat:
-            if isinstance(self.ev_mat[key], dict):
-                for subkey in self.ev_mat[key]:
-                    self.ev_mat[key][subkey] = convert_based_on_shape(
-                        self.ev_mat[key][subkey]
-                        )
-            else:
-                self.ev_mat[key] = convert_based_on_shape(self.ev_mat[key])
-
 
     def __reshape_rho(self, rho):
+        rho = jnp.asarray(rho)
         if self.transform_into_re_im:
             rho = rho.astype('complex128')
 
             if len(rho.shape) == 1:
-                rho = self.U @ rho
+                rho = jnp.dot(self.U, rho)
             else:
-                for jj in range(rho.shape[1]):
-                    rho[:, jj] = self.U @ rho[:, jj]
+                rho = jnp.tensordot(self.U, rho, axes=([1], [0]))
 
-        rho = rho.reshape((self.hamiltonian.n, self.hamiltonian.n) +
-                          rho.shape[1:])
+        rho = jnp.reshape(rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:])
+        
 
         """# If not:
         if self.transform_into_re_im:
@@ -448,9 +400,15 @@ class obe(governingeq):
         """
         Reshape the solution to have all the proper parts.
         """
-        self.sol.rho = self.__reshape_rho(self.sol.y[:-6])
-        self.sol.r = np.real(self.sol.y[-3:])
-        self.sol.v = np.real(self.sol.y[-6:-3])
+        
+        for sol in self.sols: # here all solutions is a list of atoms 
+            # sol with shape (time_steps, state_dim)
+            # transposed to get the same axis as original pylcp
+            rho_flat = sol.y[:, -6].T
+            sol.rho = self.__reshape_rho(rho_flat)
+            
+            sol.r = jnp.real(sol.y[:, -3:].T)
+            sol.v = jnp.real(sol.y[:, -6:-3].T)
 
         del self.sol.y
 
@@ -466,7 +424,8 @@ class obe(governingeq):
             is the total number of states in the system.  If a flat array, it
             will be reshaped.
         """
-        if np.any(np.isnan(rho0)) or np.any(np.isinf(rho0)):
+        rho0 = jnp.asarray(rho0)
+        if jnp.any(jnp.isnan(rho0)) or jnp.any(jnp.isinf(rho0)):
             raise ValueError('rho0 has NaNs or Infs!')
 
         if rho0.size != self.hamiltonian.n**2:
@@ -475,11 +434,11 @@ class obe(governingeq):
         if rho0.shape == (self.hamiltonian.n, self.hamiltonian.n):
             rho0 = rho0.flatten()
 
-        if self.transform_into_re_im and rho0.dtype is np.dtype('complex128'):
-            self.rho0 = self.Uinv @ rho0
-        elif (not self.transform_into_re_im and
-              not rho0.dtype is np.dtype('complex128')):
-            self.rho0 = rho0.astype('complex128')
+        if self.transform_into_re_im and rho0.dtype == jnp.complex128:
+            # self.rho0 = self.Uinv @ rho0
+            self.rho0 = jnp.dot(self.Uinv, rho0)
+        elif (not self.transform_into_re_im and rho0.dtype != jnp.complex128):
+            self.rho0 = rho0.astype(jnp.complex128)
         else:
             self.rho0 = rho0
 
@@ -489,12 +448,13 @@ class obe(governingeq):
         population.
         """
         if self.transform_into_re_im:
-            self.rho0 = np.zeros((self.hamiltonian.n**2,))
+            self.rho0 = jnp.zeros((self.hamiltonian.n**2,))
         else:
-            self.rho0 = np.zeros((self.hamiltonian.n**2,), dtype='complex128')
+            self.rho0 = jnp.zeros((self.hamiltonian.n**2,), dtype=jnp.complex128)
 
+        # only runs in initialization so is okay with for loop
         for jj in range(self.hamiltonian.ns[0]):
-            self.rho0[self.__density_index(jj, jj)] = 1/self.hamiltonian.ns[0]
+            self.rho0 = self.rho0.at[self.__density_index(jj, jj)].set(1/self.hamiltonian.ns[0])
 
     def set_initial_rho_from_populations(self, Npop):
         """
@@ -506,26 +466,30 @@ class obe(governingeq):
             Array of the initial populations of the states in the system.  The
             length must be :math:`n`, where :math:`n` is the number of states.
         """
-        if self.transform_into_re_im:
-            self.rho0 = np.zeros((self.hamiltonian.n**2,))
-        else:
-            self.rho0 = np.zeros((self.hamiltonian.n**2,), dtype='complex128')
-
+        Npop = jnp.asarray(Npop)
         if len(Npop) != self.hamiltonian.n:
             raise ValueError('Npop has only %d entries for %d states.' %
                              (len(Npop), self.hamiltonian.n))
-        if np.any(np.isnan(Npop)) or np.any(np.isinf(Npop)):
+        if jnp.any(jnp.isnan(Npop)) or jnp.any(jnp.isinf(Npop)):
             raise ValueError('Npop has NaNs or Infs!')
+        
+        if self.transform_into_re_im:
+            self.rho0 = jnp.zeros((self.hamiltonian.n**2,))
+        else:
+            self.rho0 = jnp.zeros((self.hamiltonian.n**2,), dtype=jnp.complex128)
 
-        Npop = Npop/np.sum(Npop) # Just make sure it is normalized.
+        Npop = Npop/jnp.sum(Npop) # Just make sure it is normalized.
+        # okay with for loop for initialization function
         for jj in range(self.hamiltonian.n):
-            self.rho0[self.__density_index(jj, jj)] = Npop[jj]
+            idx = self.__density_index(jj, jj)
+            self.rho0 = self.rho0.at[idx].set(Npop[jj])
 
     def set_initial_rho_from_rateeq(self):
         """
         Sets the diagonal elements of the initial :math:`\\rho` matrix using
         the equilibrium populations as determined by pylcp.rateeq
         """
+        # will still work since it calls `set_initial_rho_from_populations` which will transform the numpy array until `rateeq` has been implemented in jax
         if not hasattr(self, 'rateeq'):
             self.rateeq = rateeq(self.laserBeams, self.magField, self.hamiltonian)
         Neq = self.rateeq.equilibrium_populations(self.r0, self.v0, t=0)
@@ -598,17 +562,16 @@ class obe(governingeq):
             if self.transform_into_re_im:
                 Eq = self.laserBeams[key].total_electric_field(r, t)
                 for ii in range(3):
-                    if np.abs(Eq[ii])>1e-10:
-                        ev_mat -= np.real(Eq[ii])*self.ev_mat['reE'][key][ii]
-                        ev_mat -= np.imag(Eq[ii])*self.ev_mat['imE'][key][ii]
+                    ev_mat -= jnp.real(Eq[ii])*self.ev_mat['reE'][key][ii]
+                    ev_mat -= jnp.imag(Eq[ii])*self.ev_mat['imE'][key][ii]
             else:
-                Eq = self.laserBeams[key].total_electric_field(np.real(r), t)
+                Eq = self.laserBeams[key].total_electric_field(jnp.real(r), t)
                 for ii in range(3):
-                    if np.abs(Eq[ii])>1e-10:
-                        ev_mat -= np.conjugate(Eq[ii])*self.ev_mat['d_q'][key][ii]
-                        ev_mat -= Eq[ii]*self.ev_mat['d_q*'][key][ii]
+                    ev_mat -= jnp.conjugate(Eq[ii])*self.ev_mat['d_q'][key][ii]
+                    ev_mat -= Eq[ii]*self.ev_mat['d_q*'][key][ii]
 
         # Add in magnetic fields:
+        # BUG: this code never does drhodt? and is not accessed, neither is rho which is never passed to the function.
         B = self.magField.Field(r, t)
         for ii, q in enumerate(range(-1, 2)):
             if self.transform_into_re_im:
@@ -629,42 +592,40 @@ class obe(governingeq):
         and then do the dot.  It is also most efficient to avoid doing useless
         math if the applied field is zero.
         """
-        drhodt = (self.ev_mat['decay'] @ rho) + (self.ev_mat['H0'] @ rho)
+        drhodt = jnp.dot(self.ev_mat['decay'], rho) + jnp.dot(self.ev_mat['H0'], rho)
 
         # Add in electric fields:
-        for key in self.laserBeams.keys():
-            if self.transform_into_re_im:
+        if self.transform_into_re_im:
+            for key in self.laserBeams.keys():
                 Eq = self.laserBeams[key].total_electric_field(r, t)
-                for ii, q in enumerate(np.arange(-1., 2., 1)):
-                    if np.abs(Eq[2-ii])>1e-10:
-                        drhodt -= ((-1.)**q*np.real(Eq[2-ii])*
-                                   (self.ev_mat['reE'][key][ii] @ rho))
-                        drhodt -= ((-1.)**q*np.imag(Eq[2-ii])*
-                                   (self.ev_mat['imE'][key][ii] @ rho))
-            else:
-                Eq = self.laserBeams[key].total_electric_field(np.real(r), t)
-                for ii, q in enumerate(np.arange(-1., 2., 1)):
-                    if np.abs(Eq[2-ii])>1e-10:
-                        drhodt -= ((-1.)**q*Eq[2-ii]*
-                                   (self.ev_mat['d_q'][key][ii] @ rho))
-                        drhodt -= ((-1.)**q*np.conjugate(Eq[2-ii])*
-                                   (self.ev_mat['d_q*'][key][ii] @ rho))
+                for ii, q in enumerate([-1., 2., 1]):
+                    drhodt -= ((-1.) ** q * jnp.real(Eq[2-ii]) *
+                                jnp.dot(self.ev_mat['reE'][key][ii], rho))
+                    drhodt -= ((-1.) ** q * jnp.imag(Eq[2-ii]) *
+                                jnp.dot(self.ev_mat['imE'][key][ii], rho))
+        else:
+            for key in self.laserBeams.keys():
+                Eq = self.laserBeams[key].total_electric_field(jnp.real(r), t)
+                for ii, q in enumerate([-1., 2., 1]):
+                    drhodt -= ((-1.) ** q * Eq[2-ii] *
+                                jnp.dot(self.ev_mat['d_q'][key][ii], rho))
+                    drhodt -= ((-1.) ** q * jnp.conjugate(Eq[2-ii]) *
+                                jnp.dot(self.ev_mat['d_q*'][key][ii], rho))
 
         # Add in magnetic fields:
         B = self.magField.Field(r, t)
-        for ii, q in enumerate(range(-1, 2)):
-            if self.transform_into_re_im:
-                if np.abs(B[ii])>1e-10:
-                    drhodt -= self.ev_mat['B'][ii]*B[ii] @ rho
-            else:
-                Bq = cart2spherical(B)
-                if np.abs(Bq[ii])>1e-10:
-                    drhodt -= self.ev_mat['B'][ii]*np.conjugate(Bq[ii]) @ rho
+        if self.transform_into_re_im:
+            for ii in range(3):
+                drhodt -= jnp.dot(self.ev_mat['B'][ii] * B[ii], rho)
+        else:
+            Bq = cart2spherical(B)
+            for ii in range(3):
+                drhodt -= jnp.dot(self.ev_mat['B'][ii] * jnp.conjugate(Bq[ii]), rho)
 
         return drhodt
 
 
-    def evolve_density(self, t_span, progress_bar=False, **kwargs):
+    def evolve_density(self, t_span, y0_batch, n_points=1000, **kwargs):
         """
         Evolve the density operators :math:`\\rho_{ij}` in time.
 
@@ -699,35 +660,50 @@ class obe(governingeq):
             It contains other important elements, which can be discerned from
             scipy's solve_ivp documentation.
         """
-        a = np.zeros((3,))
-
-        if progress_bar:
-            progress = progressBar()
-
         def dydt(t, y):
-            if progress_bar and t<=t_span[1]:
-                progress.update(t/t_span[1])
+            r = y[-3:]
+            v = y[-6:-3]
+            rho = y[:-6]
+            a = jnp.zeros(3, dtype=y.dtype)
+            drhodt = self.__drhodt(r, t, rho).astype(y.dtype)
+            # dv/dt is explicitly zero (constant velocity)
+            return jnp.concatenate((drhodt, a, v))
+        
+        def solve_single_atom(y0):
+            integrator = parallelIntegrator(
+                func=dydt,
+                y0=y0,
+                method="Dopri5",
+                rtol=kwargs.get('rtol', 1e-5), 
+                atol=kwargs.get('atol', 1e-5)
+            )    
+        
+            ts = jnp.linspace(t_span[0], t_span[1], n_points)
+            interp_func = integrator.dense_output(t_span, n_points=n_points)
+            
+            return jax.vmap(interp_func)(ts)
 
-            return np.concatenate((self.__drhodt(y[-3:], t, y[:-6]), a, y[-6:-3]))
 
-        self.sol = solve_ivp(dydt, t_span,
-                             np.concatenate((self.rho0, self.v0, self.r0)),
-                             **kwargs)
+        batched_ys = jax.vmap(solve_single_atom)(y0_batch)
+        # batched_ys shape: (n_atoms, n_points, state_dim)
 
-        if progress_bar:
-            # Just in case the solve_ivp_random terminated due to an event.
-            progress.update(1.)
-
-        # Remake the solution:
-        self.__reshape_sol()
+        class Bunch:
+            pass
+        self.sol = Bunch()
+        self.sol.t = jnp.linspace(t_span[0], t_span[1], n_points)
+        self.sol.y = batched_ys
 
         return self.sol
 
 
-    def evolve_motion(self, t_span, freeze_axis=[False, False, False],
-                      random_recoil=False, max_scatter_probability=0.1,
-                      progress_bar=False, record_force=False,
-                      rng=np.random.default_rng(), **kwargs):
+    def evolve_motion(self,
+                      t_span,
+                      y0_batch,
+                      keys_batch,
+                      freeze_axis=[False, False, False],
+                      random_recoil=False,
+                      max_scatter_probability=0.1,
+                      **kwargs):
         """
         Evolve :math:`\\rho_{ij}` and the motion of the atom in time.
 
@@ -775,96 +751,93 @@ class obe(governingeq):
             It contains other important elements, which can be discerned from
             scipy's solve_ivp documentation.
         """
-        free_axes = np.bitwise_not(freeze_axis)
+        free_axes = jnp.bitwise_not(jnp.asarray(freeze_axis, dtype=bool))
         random_recoil_flag = random_recoil
 
-        if progress_bar:
-            progress = progressBar()
-
-        if record_force:
-            ts = []
-            Fs = []
-
         def dydt(t, y):
-            if progress_bar:
-                progress.update(t/t_span[1])
+            # since jax handles batching, y is 1D array of one atom
+            r = y[-3:]
+            v = y[-6 : -3]
+            rho = y[:-6]
+            
+            F = self.force(r, t, rho, return_details=False)
+            
+            dvdt = (F * free_axes) / self.hamiltonian.mass + self.constant_accel
+            drdt = v
+            drhodt = self.__drhodt(r, t, rho)
 
-            if record_force:
-                F = self.force(y[-3:], t, y[:-6], return_details=True)
-
-                ts.append(t)
-                Fs.append(F)
-
-                F = F[0]
-            else:
-                F = self.force(y[-3:], t, y[:-6], return_details=False)
-
-            return np.concatenate((
-                self.__drhodt(y[-3:], t, y[:-6]),
-                F*free_axes/self.hamiltonian.mass + self.constant_accel,
-                y[-6:-3]
-                ))
-
-        def random_recoil(t, y, dt):
+            return jnp.concatenate((drhodt, dvdt, drdt))
+        
+        def _jax_random_vector(key):
+            key_phi, key_z = jax.random.split(key)
+            phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
+            z = 2.0 * jax.random.uniform(key_z) - 1.0
+            
+            r_vec = jnp.sqrt(1.0 - z**2)
+            return jnp.array([r_vec * jnp.cos(phi), r_vec * jnp.sin(phi), z]) * free_axes
+        
+        def random_recoil_fn(t, y, dt, key):
             num_of_scatters = 0
             total_P = 0.
+            
+            y_jump = y
+            
+            for decay_key in self.decay_rates:
+                P = dt * self.decay_rates_truncated[decay_key] * jnp.real(y[self.decay_rho_indices[decay_key]])
+                
+                key, subkey_dice, subkey_v1, subkey_v2 = jax.random.split(key, 4)
+                dice = jax.random.uniform(subkey_dice, shape=P.shape)
+                scatters_mask = jnp.where(dice < P, 1, 0)
+                num_scatters_this_channel = jnp.sum(scatters_mask)
+                
+                vec1 = _jax_random_vector(subkey_v1)
+                vec2 = _jax_random_vector(subkey_v2)
+                
+                kick = self.recoil_velocity[decay_key] * (vec1 + vec2)
+                
+                y_jump = jnp.where(
+                    num_scatters_this_channel > 0,
+                    y_jump.at[-6:-3].add(kick * num_scatters_this_channel),
+                    y_jump
+                )
+                
+                num_of_scatters += num_scatters_this_channel
+                total_P += jnp.sum(P)
+            
+            new_dt_max = jnp.where(total_P > 0, (max_scatter_probability / total_P) * dt, jnp.inf)
 
-            # Go over each block in the Hamiltonian and compute the decay:
-            for key in self.decay_rates:
-                P = dt*self.decay_rates_truncated[key]*np.real(y[self.decay_rho_indices[key]])
-
-                # Roll the dice N times, where $N=\sum(n_i)
-                dice = rng.random(len(P))
-
-                # For any random number that is lower than P_i, add a
-                # recoil velocity.
-                for ii in range(np.sum(dice<P)):
-                    num_of_scatters += 1
-                    y[-6:-3] += self.recoil_velocity[key]*(random_vector(rng, free_axes)+
-                                                           random_vector(rng, free_axes))
-
-                # Save the total probability of a scatter:
-                total_P += np.sum(P)
-
-            # Calculate a new maximum dt to make sure we evolve while not
-            # exceeding dt max:
-            new_dt_max = (max_scatter_probability/total_P)*dt
-
-            return (num_of_scatters, new_dt_max)
+            return y_jump, num_of_scatters, new_dt_max, key
+        
 
         if not random_recoil_flag:
-            self.sol = solve_ivp(
-                dydt, t_span, np.concatenate((self.rho0, self.v0, self.r0)),
-                **kwargs)
-        else:
-            self.sol = solve_ivp_random(
-                dydt, random_recoil, t_span,
-                np.concatenate((self.rho0, self.v0, self.r0)),
+            def dummy_recoil(t, y, dt, key):
+                return y, 0, jnp.inf, key
+                
+            self.sols = solve_ivp_random(
+                fun=dydt,
+                random_func=dummy_recoil,
+                t_span=t_span,
+                y0_batch=y0_batch,
+                keys_batch=keys_batch, 
                 **kwargs
-                )
+            )
+            
+        else:
+            self.sols = solve_ivp_random(
+                fun=dydt,
+                random_func=random_recoil_fn,
+                t_span=t_span,
+                y0_batch=y0_batch,
+                keys_batch=keys_batch,
+                **kwargs
+            )
 
-        if progress_bar:
-            # Just in case the solve_ivp_random terminated due to an event.
-            progress.update(1.)
 
         # Remake the solution:
         self.__reshape_sol()
 
-        # Interpolate the force:
-        if record_force:
-            f = interp1d(ts[:-1], np.array([f[0] for f in Fs[:-1]]).T)
-            self.sol.F = f(self.sol.t)
 
-            f = interp1d(ts[:-1], np.array([f[3] for f in Fs[:-1]]).T)
-            self.sol.fmag = f(self.sol.t)
-
-            self.sol.f = {}
-            for key in Fs[0][1]:
-                f = interp1d(ts[:-1], np.array([f[1][key] for f in Fs[:-1]]).T)
-                self.sol.f[key] = f(self.sol.t)
-                self.sol.f[key] = np.swapaxes(self.sol.f[key], 0, 1)
-
-        return self.sol
+        return self.sols
 
 
     def observable(self, O, rho=None):
@@ -895,8 +868,19 @@ class obe(governingeq):
         observable : float or array
             observable has shape (O[:-2])+(rho[2:])
         """
-        if rho is None:
-            rho = self.sol.rho
+        if rho is None: # handle if rho is missing
+            if hasattr(self, 'sols') and isinstance(self.sols, list) and len(self.sols) > 0:
+                rho = self.sols[0].rho
+            elif hasattr(self, 'sol'):
+                rho = self.sol.rho
+            else:
+                raise ValueError("No solution found in memory. Please provide 'rho' explicitly.")
+        
+        O = jnp.asarray(O) # convert to jax array in case
+        if rho.shape[0] == self.hamiltonian.n**2 and rho.ndim == 1:
+            rho_mat = self.__reshape_rho(rho)
+        else:
+            rho_mat = jnp.asarray(rho)
 
         if rho.shape[:2]!=(self.hamiltonian.n, self.hamiltonian.n):
             raise ValueError('rho must have dimensions (n, n,...), where n '+
@@ -908,12 +892,8 @@ class obe(governingeq):
                              'corresponds to the number of states in the '+
                              'generating Hamiltonian. ' +
                              'Instead, shape of O is %s.'%str(O.shape))
-        else:
-            avO = np.tensordot(O, rho, axes=[(-2, -1),(0, 1)])
-            if np.allclose(np.imag(avO), 0):
-                return np.real(avO)
-            else:
-                return avO
+        
+        return jnp.tensordot(O, rho_mat, axes=[(-2, -1), (0, 1)])
 
 
     def force(self, r, t, rho, return_details=False):
@@ -944,22 +924,35 @@ class obe(governingeq):
         F_mag : array_like
             If return_details is True, the forces due to the magnetic field.
         """
-        if rho.shape[0] != self.hamiltonian.n:
-            rho = self.__reshape_rho(rho)
+        
+        rho_mat = self.__reshape_rho(rho)
 
-        f = np.zeros((3,) + rho.shape[2:])
+        f = jnp.zeros((3,) + rho_mat.shape[2:])
+        f_mag = jnp.zeros_like(f)
         if return_details:
             f_laser_q = {}
             f_laser = {}
+            
+
+        # Helper: evaluate field gradient at r (3,) or (3, n_pts) and t scalar/(n_pts,)
+        def _grad(beam_func, r_in, t_in):
+            if jnp.asarray(r_in).ndim == 2:  # time series
+                t_arr = jnp.asarray(t_in).ravel()
+                dE = jax.vmap(lambda ri, ti: beam_func(ri, ti))(
+                    jnp.real(r_in).T, t_arr  # (n_pts, 3)
+                )
+                return jnp.moveaxis(dE, 0, -1)  # (3, 3, n_pts)
+            else:
+                return beam_func(jnp.real(r_in), t_in)
 
         for key in self.laserBeams:
             # First, determine the average mu_q:
             # This returns a (3,) + rho.shape[2:] array
-            mu_q_av = self.observable(self.hamiltonian.d_q_bare[key], rho)
+            mu_q_av = self.observable(self.hamiltonian.d_q_bare[key], rho_mat)
             gamma = self.hamiltonian.blocks[self.hamiltonian.laser_keys[key]].parameters['gamma']
 
             if not return_details:
-                delE = self.laserBeams[key].total_electric_field_gradient(np.real(r), t)
+                delE = _grad(self.laserBeams[key].total_electric_field_gradient, r, t)
 
                 # We are just looking at the d_q, whereas the full observable
                 # is \nabla (d_q \cdot E^\dagger) + (d_q^* E)) =
@@ -967,47 +960,42 @@ class obe(governingeq):
                 # we see we need a factor of gamma/4, making
                 # this 2 Re[\nabla (d_q\cdot E^\dagger)]/4 =
                 # Re[\nabla (d_q\cdot E^\dagger)]/2
-                for jj, q in enumerate(np.arange(-1., 2., 1.)):
-                    f += np.real((-1)**q*gamma*mu_q_av[jj]*delE[:, 2-jj])/2
+                for jj, q in enumerate([-1., 2., 1.]):
+                    f += jnp.real((-1) ** q * gamma * mu_q_av[jj] * delE[:, 2-jj])/2
             else:
-                f_laser_q[key] = np.zeros((3, 3, self.laserBeams[key].num_of_beams)
-                                          + rho.shape[2:])
-                f_laser[key] = np.zeros((3, self.laserBeams[key].num_of_beams)
-                                        + rho.shape[2:])
+                num_beams = self.laserBeams[key].num_of_beams
+
+                f_laser_q_key = jnp.zeros((3, 3, num_beams) + rho_mat.shape[2:])
+                f_laser_key = jnp.zeros((3, num_beams) + rho_mat.shape[2:])
 
                 # Now, dot it into each laser beam:
                 for ii, beam in enumerate(self.laserBeams[key].beam_vector):
-                    if not self.transform_into_re_im:
-                        delE = beam.electric_field_gradient(np.real(r), t)
-                    else:
-                        delE = beam.electric_field_gradient(r, t)
+                    delE = _grad(beam.electric_field_gradient, r, t)
 
-                    for jj, q in enumerate(np.arange(-1., 2., 1.)):
-                        f_laser_q[key][:, jj, ii] += \
-                        np.real((-1)**q*gamma*mu_q_av[jj]*delE[:, 2-jj])/2
+                    for jj, q in enumerate([-1., 2., 1.]):
+                        val = jnp.real((-1) ** q * gamma * mu_q_av[jj] * delE[:, 2-jj])/2
+                        f_laser_q_key = f_laser_q_key.at[:, jj, ii].add(val)
 
-                    f_laser[key][:, ii] = np.sum(f_laser_q[key][:, :, ii], axis=1)
+                    f_laser_key = f_laser_key.at[:, ii].set(jnp.sum(f_laser_q_key[:, :, ii], axis=1))
 
-                f+=np.sum(f_laser[key], axis=1)
+                f = f + jnp.sum(f_laser_key, axis=1)
 
+                f_laser_q[key] = f_laser_q_key
+                f_laser[key] = f_laser_key
+                
         # Are we including magnetic forces?
         if self.include_mag_forces:
-            # This function returns a matrix that is either (3, 3) (if constant)
-            # or (3, 3, t.size).  The first two dimensions are like
-            # [dBx/dx, dBy/dx, dBz/dx; dBx/dy, dBy/dy, dBz/dy], and so on.
-            # We need to dot, and su
-            delB = self.magField.gradField(np.real(r))
+            av_mu = self.observable(self.hamiltonian.mu, rho_mat)
 
-            # What's the expectation value of mu?  Returns (3,) or (3, t.size)
-            av_mu = self.observable(self.hamiltonian.mu, rho)
+            if rho_mat.ndim == 3:  # time series: r shape (3, n_pts)
+                delB = jax.vmap(lambda ri: self.magField.gradField(ri))(jnp.real(r).T)
+                # delB: (n_pts, 3, 3) -> vmap over time, contract i
+                f_mag = jnp.einsum('it,tij->jt', av_mu, delB)
+            else:
+                delB = self.magField.gradField(jnp.real(r))
+                f_mag = jnp.einsum('...i,...ij->...j', av_mu, delB)
 
-            # Now dot it into the gradient:
-            f_mag = cartesian_vector_tensor_dot(av_mu, delB)
-
-            # Add it into the regular force.
-            f+=f_mag
-        elif return_details:
-            f_mag=np.zeros(f.shape)
+            f += f_mag
 
         if return_details:
             return f, f_laser, f_laser_q, f_mag
@@ -1017,7 +1005,7 @@ class obe(governingeq):
 
     def find_equilibrium_force(self, deltat=500, itermax=100, Npts=5001,
                                rel=1e-5, abs=1e-9, debug=False,
-                               initial_rho ='rateeq',
+                               initial_rho='rateeq',
                                return_details=False, **kwargs):
         """
         Finds the equilibrium force at the initial position
@@ -1041,7 +1029,7 @@ class obe(governingeq):
         abs : float, optional
             Absolute convergence parameter.  Default: 1e-9
         debug : boolean, optional
-            If true, pring out debug information as it goes.
+            If true, print out debug information as it goes.
         initial_rho : 'rateeq' or 'equally'
             Determines how to set the initial rho at the start of the
             calculation.
@@ -1059,7 +1047,7 @@ class obe(governingeq):
             the transition driven, and individual lasers are in the same order
             as in the pylcp.laserBeams object used to create the governing
             equation.
-        F_laser : dictionary of array_like
+        F_laser_q : dictionary of array_like
             If return_details is True, the forces due to each laser and its q
             component, indexed by the manifold the laser addresses.  The
             dictionary is keyed by the transition driven, and individual lasers
@@ -1080,64 +1068,74 @@ class obe(governingeq):
             Npop = kwargs.pop('init_pop', None)
             self.set_initial_rho_from_populations(Npop)
         else:
-            raise ValueError('Argument initial_rho=%s not understood'%initial_rho)
+            raise ValueError('Argument initial_rho=%s not understood' % initial_rho)
 
-        old_f_avg = np.array([np.inf, np.inf, np.inf])
+        old_f_avg = jnp.full((3,), jnp.inf)
 
         if debug:
-            print('Finding equilbrium force at '+
+            print('Finding equilibrium force at ' +
                   'r=(%.2f, %.2f, %.2f) ' % (self.r0[0], self.r0[1], self.r0[2]) +
                   'v=(%.2f, %.2f, %.2f) ' % (self.v0[0], self.v0[1], self.v0[2]) +
-                  'with deltat = %.2f, itermax = %d, Npts = %d, ' %  (deltat, itermax, Npts) +
-                  'rel = %.1e and abs = %.1e' % (rel, abs)
-                  )
+                  'with deltat = %.2f, itermax = %d, Npts = %d, ' % (deltat, itermax, Npts) +
+                  'rel = %.1e and abs = %.1e' % (rel, abs))
             self.piecewise_sols = []
 
-        ii=0
+        ii = 0
         while True:
-            if not Npts is None:
-                kwargs['t_eval'] = np.linspace(ii*deltat, (ii+1)*deltat, int(Npts))
+            # Build single-atom state vector [rho_flat, v, r] and wrap as batch
+            y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
+            y0_batch = y0[None, :]  # shape (1, state_dim)
 
-            self.evolve_density([ii*deltat, (ii+1)*deltat], **kwargs)
-            f, f_laser, f_laser_q, f_mag = self.force(self.sol.r, self.sol.t, self.sol.rho,
-                                                      return_details=True)
+            self.evolve_density(
+                [ii * deltat, (ii + 1) * deltat],
+                y0_batch,
+                n_points=int(Npts),
+                **kwargs
+            )
 
-            f_avg = np.mean(f, axis=1)
+            # Extract atom 0: self.sol.y shape (1, n_points, state_dim)
+            y_atom = self.sol.y[0]  # (n_points, state_dim)
+            rho_flat = y_atom[:, :-6].T  # (n^2, n_points)
+            r = jnp.real(y_atom[:, -3:]).T  # (3, n_points)
+
+            f, f_laser, f_laser_q, f_mag = self.force(
+                r, self.sol.t, rho_flat, return_details=True
+            )
+            f_avg = jnp.mean(f, axis=1)  # (3,)
 
             if debug:
-                print(ii, f_avg, np.sum(f_avg**2))
+                print(ii, f_avg, jnp.sum(f_avg ** 2))
                 self.piecewise_sols.append(self.sol)
 
-            if (np.sum((f_avg)**2)<abs or
-                np.sum((old_f_avg-f_avg)**2)/np.sum((f_avg)**2)<rel or
-                np.sum((old_f_avg-f_avg)**2)<abs):
-                break;
-            elif ii>=itermax-1:
-                break;
-            else:
-                old_f_avg = copy.copy(f_avg)
-                self.set_initial_rho(self.sol.rho[:, :, -1])
-                self.set_initial_position_and_velocity(self.sol.r[:, -1],
-                                                       self.sol.v[:, -1])
-                ii+=1
+            f_sq = jnp.sum(f_avg ** 2)
+            diff_sq = jnp.sum((old_f_avg - f_avg) ** 2)
+            converged = bool(
+                (f_sq < abs) or
+                (diff_sq / jnp.maximum(f_sq, 1e-30) < rel) or
+                (diff_sq < abs)
+            )
+            if converged or ii >= itermax - 1:
+                break
+
+            old_f_avg = f_avg
+            # Seed next chunk: rho_flat[:, -1] is already in the correct flat
+            # representation (re/im if transform_into_re_im, complex otherwise)
+            self.set_initial_rho(rho_flat[:, -1])
+            self.set_initial_position_and_velocity(r[:, -1], jnp.real(y_atom[-1, -6:-3]))
+            ii += 1
 
         if return_details:
-            f_mag = np.mean(f_mag, axis=1)
-
-            f_laser_avg = {}
-            f_laser_avg_q = {}
-            for key in f_laser:
-                f_laser_avg[key] = np.mean(f_laser[key], axis=2)
-                f_laser_avg_q[key] = np.mean(f_laser_q[key], axis=3)
-
-            Neq = np.real(np.diagonal(np.mean(self.sol.rho, axis=2)))
-            return (f_avg, f_laser_avg, f_laser_avg_q, f_mag, Neq, ii)
+            f_laser_avg = {key: jnp.mean(f_laser[key], axis=2) for key in f_laser}
+            f_laser_avg_q = {key: jnp.mean(f_laser_q[key], axis=3) for key in f_laser_q}
+            f_mag_avg = jnp.mean(f_mag, axis=1)
+            rho_mat = self.__reshape_rho(rho_flat)  # (n, n, n_points)
+            Neq = jnp.real(jnp.diagonal(jnp.mean(rho_mat, axis=2)))
+            return (f_avg, f_laser_avg, f_laser_avg_q, f_mag_avg, Neq, ii)
         else:
             return f_avg
 
 
-    def generate_force_profile(self, R, V, name=None, progress_bar=False,
-                               **kwargs):
+    def generate_force_profile(self, R, V, name=None, **kwargs):
         """
         Map out the equilibrium force vs. position and velocity
 
@@ -1156,72 +1154,150 @@ class obe(governingeq):
             If None, uses the next integer, cast as a string, (i.e., '0') as
             the name.
         progress_bar : boolean, optional
-            Displays a progress bar as the proceeds.  Default: False
+            Displays a progress bar as the calculation proceeds.  Default: False
 
         Returns
         -------
         profile : pylcp.obe.force_profile
             Resulting force profile.
         """
-        def default_deltat(r, v, deltat_v, deltat_r, deltat_tmax):
-            deltat = None
-            if deltat_v is not None:
-                vabs = np.sqrt(np.sum(v**2))
-                if vabs==0.:
-                    deltat = deltat_tmax
-                else:
-                    deltat = np.min([2*np.pi*deltat_v/vabs, deltat_tmax])
-
-            if deltat_r is not None:
-                rabs = np.sqrt(np.sum(r**2))
-                if rabs==0.:
-                    deltat = deltat_tmax
-                else:
-                    deltat = np.min([2*np.pi*deltat_r/rabs, deltat_tmax])
-
-            return deltat
-
-        deltat_r = kwargs.pop('deltat_r', None)
-        deltat_v = kwargs.pop('deltat_v', None)
+        # Pop deltat-shaping kwargs
+        deltat_r    = kwargs.pop('deltat_r',    None)
+        deltat_v    = kwargs.pop('deltat_v',    None)
         deltat_tmax = kwargs.pop('deltat_tmax', np.inf)
-        deltat_func = kwargs.pop(
-            'deltat_func',
-            lambda r, v: default_deltat(r, v, deltat_v, deltat_r, deltat_tmax)
-        )
+        deltat_func = kwargs.pop('deltat_func', None)
+        kwargs.pop('return_details', None)  # always True here
+
+        # Pop find_equilibrium_force kwargs so they don't leak into evolve_density
+        chunk_deltat = kwargs.pop('deltat',       500)
+        itermax      = kwargs.pop('itermax',      100)
+        Npts         = kwargs.pop('Npts',         5001)
+        rel          = kwargs.pop('rel',          1e-5)
+        abs_tol      = kwargs.pop('abs',          1e-9)
+        initial_rho  = kwargs.pop('initial_rho',  'rateeq')
 
         if not name:
             name = '{0:d}'.format(len(self.profile))
 
         self.profile[name] = force_profile(R, V, self.laserBeams, self.hamiltonian)
 
-        it = np.nditer([R[0], R[1], R[2], V[0], V[1], V[2]],
-                       flags=['refs_ok', 'multi_index'],
-                        op_flags=[['readonly'], ['readonly'], ['readonly'],
-                                  ['readonly'], ['readonly'], ['readonly']])
+        # Flatten the position/velocity grid: (3, N)
+        R_np = np.array(R).reshape(3, -1)
+        V_np = np.array(V).reshape(3, -1)
+        N    = R_np.shape[1]
 
-        if progress_bar:
-            progress = progressBar()
+        # Determine a single chunk_deltat for all atoms (use minimum)
+        if deltat_func is not None:
+            deltats = [deltat_func(R_np[:, i], V_np[:, i]) for i in range(N)]
+            valid   = [float(d) for d in deltats if d is not None]
+            if valid:
+                chunk_deltat = min(valid)
+        elif deltat_v is not None or deltat_r is not None:
+            deltats = []
+            for i in range(N):
+                r_i, v_i = R_np[:, i], V_np[:, i]
+                d = None
+                if deltat_v is not None:
+                    vabs = np.sqrt(np.sum(v_i**2))
+                    d = float(deltat_tmax) if vabs == 0 else min(2*np.pi*deltat_v/vabs, float(deltat_tmax))
+                if deltat_r is not None:
+                    rabs = np.sqrt(np.sum(r_i**2))
+                    d_r  = float(deltat_tmax) if rabs == 0 else min(2*np.pi*deltat_r/rabs, float(deltat_tmax))
+                    d    = d_r if d is None else min(d, d_r)
+                if d is not None:
+                    deltats.append(d)
+            if deltats:
+                chunk_deltat = min(deltats)
 
-        for (x, y, z, vx, vy, vz) in it:
-            # Construct the rate equations:
-            r = np.array([x, y, z])
-            v = np.array([vx, vy, vz])
+        # Build initial rho for every atom
+        rho0_list = []
+        for i in range(N):
+            self.set_initial_position_and_velocity(R_np[:, i], V_np[:, i])
+            if initial_rho == 'rateeq':
+                self.set_initial_rho_from_rateeq()
+            elif initial_rho == 'equally':
+                self.set_initial_rho_equally()
+            else:
+                raise ValueError(
+                    f'initial_rho={initial_rho!r} not supported in generate_force_profile'
+                )
+            rho0_list.append(self.rho0)
 
-            if progress_bar:
-                tic = time.time()
+        rho0_batch = jnp.stack(rho0_list)                    # (N, n²)
+        V_jnp      = jnp.asarray(V_np.T)                     # (N, 3)
+        R_jnp      = jnp.asarray(R_np.T)                     # (N, 3)
+        y0_batch   = jnp.concatenate(
+            [rho0_batch, V_jnp, R_jnp], axis=1
+        )                                                     # (N, state_dim)
 
-            self.set_initial_position_and_velocity(r, v)
+        old_f_avg = jnp.full((N, 3), jnp.inf)
 
-            if not deltat_func(r, v) is None:
-                kwargs['deltat'] = deltat_func(r, v)
-            kwargs['return_details'] = True
+        ii = 0
+        while True:
+            self.evolve_density(
+                [ii * chunk_deltat, (ii + 1) * chunk_deltat],
+                y0_batch,
+                n_points=int(Npts),
+                **kwargs
+            )
+            t = self.sol.t  # (n_pts,)
 
-            F, F_laser, F_laser_q, F_mag, Neq, iterations = self.find_equilibrium_force(**kwargs)
+            # self.sol.y: (N, n_pts, state_dim)
+            rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)    # (N, n², n_pts)
+            r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)  # (N, 3, n_pts)
 
-            self.profile[name].store_data(it.multi_index, Neq, F, F_laser, F_mag,
-                                          iterations, F_laser_q)
+            # Compute forces for all atoms in parallel
+            f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
+                lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
+            )(r_all, rho_flat_all)
+            # f_all: (N, 3, n_pts);  f_laser_all: {key: (N, 3, beams, n_pts)}
+            # f_laser_q_all: {key: (N, 3, 3, beams, n_pts)};  f_mag_all: (N, 3, n_pts)
 
-            if progress_bar:
-                progress.update((it.iterindex+1)/it.itersize)
+            f_avg = jnp.mean(f_all, axis=2)  # (N, 3)
+
+            f_sq    = jnp.sum(f_avg ** 2, axis=1)                        # (N,)
+            diff_sq = jnp.sum((old_f_avg - f_avg) ** 2, axis=1)          # (N,)
+            all_converged = bool(jnp.all(
+                (f_sq < abs_tol)
+                | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
+                | (diff_sq < abs_tol)
+            ))
+
+            if all_converged or ii >= itermax - 1:
+                break
+
+            old_f_avg = f_avg
+            # Seed next chunk directly from the last time point
+            y0_batch = self.sol.y[:, -1, :]  # (N, state_dim)
+            ii += 1
+
+        # Time-average all detailed quantities
+        f_laser_avg   = {key: jnp.mean(f_laser_all[key],   axis=3) for key in f_laser_all}   # (N,3,beams)
+        f_laser_avg_q = {key: jnp.mean(f_laser_q_all[key], axis=4) for key in f_laser_q_all} # (N,3,3,beams)
+        f_mag_avg     = jnp.mean(f_mag_all, axis=2)                                           # (N,3)
+
+        # Equilibrium populations: mean rho over time → diagonal
+        rho_flat_mean = jnp.mean(rho_flat_all, axis=2)   # (N, n²)
+        def get_Neq(rho_flat_i):
+            return jnp.real(jnp.diagonal(self.__reshape_rho(rho_flat_i)))
+        Neq_all = jax.vmap(get_Neq)(rho_flat_mean)        # (N, n)
+
+        # Write results back into the force_profile using nditer for multi-index
+        it = np.nditer(
+            [R[0], R[1], R[2], V[0], V[1], V[2]],
+            flags=['refs_ok', 'multi_index'],
+            op_flags=[['readonly']] * 6
+        )
+        for atom_idx, _ in enumerate(it):
+            mi = it.multi_index
+            self.profile[name].store_data(
+                mi,
+                Neq_all[atom_idx],
+                f_avg[atom_idx],
+                {key: f_laser_avg[key][atom_idx]   for key in f_laser_avg},
+                f_mag_avg[atom_idx],
+                ii,
+                {key: f_laser_avg_q[key][atom_idx] for key in f_laser_avg_q},
+            )
 
         return self.profile[name]
