@@ -69,7 +69,9 @@ class governingeq(object):
             raise TypeError('laserBeams is not a valid type.')
 
         # Add in magnetic field:
-        if callable(magField) or isinstance(magField, (np.ndarray, jnp.ndarray)):
+        if callable(magField):
+            self.magField = magFieldObject(magField)
+        elif isinstance(magField, (np.ndarray, jnp.ndarray)):
             self.magField = magFieldObject(jnp.asarray(magField))
         elif isinstance(magField, magFieldObject):
             self.magField = copy.copy(magField)
