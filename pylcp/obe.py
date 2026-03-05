@@ -149,6 +149,26 @@ class obe(governingeq):
         self.__cast_ev_mat_to_jax()
     
     
+    @property
+    def magField(self):
+        return self._magField
+
+    @magField.setter
+    def magField(self, value):
+        self._magField = value
+        # Changing the field invalidates the cached _dydt closure so JAX
+        # retraces and compiles a new XLA kernel with the updated field.
+        self.__dict__.pop('_dydt', None)
+
+    @property
+    def laserBeams(self):
+        return self._laserBeams
+
+    @laserBeams.setter
+    def laserBeams(self, value):
+        self._laserBeams = value
+        self.__dict__.pop('_dydt', None)
+
     def __cast_ev_mat_to_jax(self):
         """Recursively convert the nested dictionaries of numpy arrays to jax arrays"""
         for key in self.ev_mat:
@@ -642,7 +662,7 @@ class obe(governingeq):
             return jnp.concatenate((drhodt, a, v))
         return dydt
 
-    def evolve_density(self, t_span, y0_batch, n_points=1000, **kwargs):
+    def evolve_density(self, t_span, y0_batch=None, n_points=1000, **kwargs):
         """
         Evolve the density operators :math:`\\rho_{ij}` in time.
 
@@ -680,6 +700,10 @@ class obe(governingeq):
         rtol = kwargs.get('rtol', 1e-5)
         atol = kwargs.get('atol', 1e-5)
         method = kwargs.get('method', 'Dopri5')
+
+        if y0_batch is None:
+            y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
+            y0_batch = y0[None, :]  # (1, state_dim)
 
         # self._dydt is a cached_property: same Python object every call on
         # this instance, so _batched_dense_trajectories JIT-compiles once and
@@ -845,31 +869,36 @@ class obe(governingeq):
 
     def observable(self, O, rho=None):
         """
-        Observable returns the obervable O given density matrix rho.
+        Calculates the expectation value of the observable O given density matrix rho.
+
+        This method computes the trace of the product of the observable operator
+        and the density matrix. It natively supports evaluating single states 
+        as well as batched/time-series density matrices using JAX.
 
         Parameters
         ----------
-        O : array or array-like
-            The matrix form of the observable operator.  Can have any shape,
+        O : array_like
+            The matrix form of the observable operator. Can have any shape,
             representing scalar, vector, or tensor operators, but the last two
             axes must correspond to the matrix of the operator and have the
-            same dimensions of the generating Hamiltonian.  For example,
+            same dimensions as the generating Hamiltonian. For example,
             a vector operator might have the shape (3, n, n), where n
             is the number of states and the first axis corresponds to x, y,
             and z.
-        rho : [optional] array or array-like
-            The density matrix.  The first two dimensions must have sizes
+        rho : array_like, optional
+            The density matrix. The first two dimensions must have sizes
             (n, n), but there may be multiple instances of the density matrix
-            tiled in the higher dimensions.  For example, a rho with (n, n, m)
-            could have m instances of the density matrix at different times.
-
-            If not specified, will get rho from the current solution stored in
-            memory.
+            tiled in higher dimensions (e.g., (n, n, m) for a time series). 
+            Alternatively, a flat 1D array of length n**2 can be provided 
+            and will be automatically reshaped. If not specified, the method 
+            will default to the current solution stored in memory (`self.sols` 
+            or `self.sol`).
 
         Returns
         -------
-        observable : float or array
-            observable has shape (O[:-2])+(rho[2:])
+        observable : jax.Array
+            The calculated expectation value(s). The output shape is 
+            `O.shape[:-2] + rho.shape[2:]`.
         """
         if rho is None: # handle if rho is missing
             if hasattr(self, 'sols') and isinstance(self.sols, list) and len(self.sols) > 0:
@@ -901,31 +930,40 @@ class obe(governingeq):
 
     def force(self, r, t, rho, return_details=False):
         """
-        Calculates the instantaneous force
+        Calculates the instantaneous force on the atom.
+
+        This method computes the gradient of the laser and magnetic fields 
+        and traces them with the density matrix to find the instantaneous 
+        expectation value of the force. It supports evaluating single points 
+        as well as batched/time-series data arrays natively using JAX.
 
         Parameters
         ----------
-        r : array_like
-            Position at which to calculate the force
-        t : float
-            Time at which to calculate the force
+        r : array_like, shape (3,) or (3, n_pts)
+            Position(s) at which to calculate the force.
+        t : float or array_like, shape (n_pts,)
+            Time(s) at which to calculate the force.
         rho : array_like
-            Density matrix with which to calculate the force
+            Density matrix (or flat state vector representation) with which to 
+            calculate the force.
         return_details : boolean, optional
-            If true, returns the forces from each laser and the scattering rate
-            matrix.
+            If true, returns the detailed components of the force broken down 
+            by laser, polarization, and magnetic fields. Default: False.
 
         Returns
         -------
-        F : array_like
-            total equilibrium force experienced by the atom
-        F_laser : array_like
-            If return_details is True, the forces due to each laser.
-        F_laser_q : array_like
-            If return_details is True, the forces due to each laser and it's
-            q component of the polarization.
-        F_mag : array_like
-            If return_details is True, the forces due to the magnetic field.
+        f : jax.Array
+            Total instantaneous force experienced by the atom.
+        f_laser : dict of jax.Array
+            (Returned if `return_details=True`) The forces due to each laser, 
+            indexed by the manifold the laser addresses.
+        f_laser_q : dict of jax.Array
+            (Returned if `return_details=True`) The forces due to each laser 
+            and its q component of the polarization, indexed by the manifold 
+            the laser addresses.
+        f_mag : jax.Array
+            (Returned if `return_details=True`) The forces due to the 
+            magnetic field.
         """
         
         rho_mat = self.__reshape_rho(rho)
@@ -993,10 +1031,10 @@ class obe(governingeq):
             if rho_mat.ndim == 3:  # time series: r shape (3, n_pts)
                 delB = jax.vmap(lambda ri: self.magField.gradField(ri))(jnp.real(r).T)
                 # delB: (n_pts, 3, 3) -> vmap over time, contract i
-                f_mag = jnp.einsum('it,tij->jt', av_mu, delB)
+                f_mag = jnp.real(jnp.einsum('it,tij->jt', av_mu, delB))
             else:
                 delB = self.magField.gradField(jnp.real(r))
-                f_mag = jnp.einsum('...i,...ij->...j', av_mu, delB)
+                f_mag = jnp.real(jnp.einsum('...i,...ij->...j', av_mu, delB))
 
             f += f_mag
 
@@ -1011,57 +1049,60 @@ class obe(governingeq):
                                initial_rho='rateeq',
                                return_details=False, **kwargs):
         """
-        Finds the equilibrium force at the initial position
+        Finds the equilibrium force at the initial position.
 
         This method works by solving the OBEs in a chunk of time
-        :math:`\\Delta T`, calculating the force during that chunck, continuing
-        the integration for another chunck, calculating the force during that
-        subsequent chunck, and comparing the average of the forces of the two
+        $\Delta T$, calculating the force during that chunk, continuing
+        the integration for another chunk, calculating the force during that
+        subsequent chunk, and comparing the average of the forces of the two
         chunks to see if they have converged.
 
         Parameters
         ----------
-        deltat : float
-            Chunk time :math:`\\Delta T`.  Default: 500
+        deltat : float, optional
+            Chunk time $\Delta T$ to integrate over before checking for convergence. Default: 500.
         itermax : int, optional
-            Maximum number of iterations.  Default: 100
+            Maximum number of chunk iterations. Default: 100.
         Npts : int, optional
-            Number of points to divide the chunk into.  Default: 5001
+            Number of points to divide the chunk into. Default: 5001.
         rel : float, optional
-            Relative convergence parameter.  Default: 1e-5
+            Relative convergence parameter. Default: 1e-5.
         abs : float, optional
-            Absolute convergence parameter.  Default: 1e-9
+            Absolute convergence parameter. Default: 1e-9.
         debug : boolean, optional
-            If true, print out debug information as it goes.
-        initial_rho : 'rateeq' or 'equally'
-            Determines how to set the initial rho at the start of the
-            calculation.
+            If true, prints out debug information and stores piecewise solutions 
+            in `self.piecewise_sols` as the integration proceeds. Default: False.
+        initial_rho : {'rateeq', 'equally', 'frompops'}, optional
+            Determines how to set the initial density matrix $\\rho$ at the start
+            of the calculation. Default: 'rateeq'.
         return_details : boolean, optional
-            If true, returns the forces from each laser and the scattering rate
-            matrix.
+            If true, returns the detailed components of the force (laser, magnetic, 
+            polarization projections) and equilibrium populations. Default: False.
+            
+        Other Parameters
+        ----------------
+        init_pop : array_like, optional
+            Initial populations to use if `initial_rho='frompops'`.
+        **kwargs : 
+            Additional keyword arguments are passed directly to `evolve_density`
+            (e.g., `rtol` and `atol` for the ODE solver).
 
         Returns
         -------
-        F : array_like
-            total equilibrium force experienced by the atom
-        F_laser : dictionary of array_like
-            If return_details is True, the forces due to each laser, indexed
-            by the manifold the laser addresses.  The dictionary is keyed by
-            the transition driven, and individual lasers are in the same order
-            as in the pylcp.laserBeams object used to create the governing
-            equation.
-        F_laser_q : dictionary of array_like
-            If return_details is True, the forces due to each laser and its q
-            component, indexed by the manifold the laser addresses.  The
-            dictionary is keyed by the transition driven, and individual lasers
-            are in the same order as in the pylcp.laserBeams object used to
-            create the governing equation.
-        F_mag : array_like
-            If return_details is True, the forces due to the magnetic field.
-        Neq : array_like
-            If return_details is True, the equilibrium populations.
+        F : jax.Array, shape (3,)
+            Total equilibrium force experienced by the atom.
+        F_laser : dict of jax.Array
+            (Returned if `return_details=True`) The forces due to each laser, indexed
+            by the manifold the laser addresses.
+        F_laser_q : dict of jax.Array
+            (Returned if `return_details=True`) The forces due to each laser and its 
+            q component, indexed by the manifold the laser addresses.
+        F_mag : jax.Array, shape (3,)
+            (Returned if `return_details=True`) The forces due to the magnetic field.
+        Neq : jax.Array
+            (Returned if `return_details=True`) The equilibrium populations.
         ii : int
-            Number of iterations needed to converge.
+            (Returned if `return_details=True`) Number of iterations needed to converge.
         """
         if initial_rho == 'rateeq':
             self.set_initial_rho_from_rateeq()
@@ -1140,29 +1181,61 @@ class obe(governingeq):
 
     def generate_force_profile(self, R, V, name=None, **kwargs):
         """
-        Map out the equilibrium force vs. position and velocity
+        Map out the equilibrium force vs. position and velocity using batched JAX integration.
+
+        This method solves the Optical Bloch Equations (OBEs) simultaneously across a 
+        grid of initial positions and velocities. It integrates the evolution in chunks 
+        of time, comparing the time-averaged force of successive chunks until the force 
+        has converged for all grid points.
 
         Parameters
         ----------
         R : array_like, shape(3, ...)
-            Position vector.  First dimension of the array must be length 3, and
+            Position vector. First dimension of the array must be length 3, and
             corresponds to :math:`x`, :math:`y`, and :math:`z` components,
-            repsectively.
+            respectively.
         V : array_like, shape(3, ...)
-            Velocity vector.  First dimension of the array must be length 3, and
+            Velocity vector. First dimension of the array must be length 3, and
             corresponds to :math:`v_x`, :math:`v_y`, and :math:`v_z` components,
-            repsectively.
+            respectively.
         name : str, optional
-            Name for the profile.  Stored in profile dictionary in this object.
+            Name for the profile. Stored in the profile dictionary in this object.
             If None, uses the next integer, cast as a string, (i.e., '0') as
             the name.
-        progress_bar : boolean, optional
-            Displays a progress bar as the calculation proceeds.  Default: False
+            
+        Other Parameters
+        ----------------
+        deltat : float, optional
+            Chunk time :math:`\\Delta T` to integrate over before checking for convergence. 
+            Default: 500.
+        itermax : int, optional
+            Maximum number of chunk iterations to perform. Default: 100.
+        Npts : int, optional
+            Number of points to divide the integration chunk into. Default: 5001.
+        rel : float, optional
+            Relative convergence parameter. Default: 1e-5.
+        abs : float, optional
+            Absolute convergence parameter. Default: 1e-9.
+        initial_rho : {'rateeq', 'equally'}, optional
+            Determines how to set the initial density matrix :math:`\\rho` at the start 
+            of the calculation. Default: 'rateeq'.
+        deltat_r : float, optional
+            Dynamic deltat scaling factor based on spatial position. 
+        deltat_v : float, optional
+            Dynamic deltat scaling factor based on velocity.
+        deltat_tmax : float, optional
+            Maximum allowed deltat if dynamically calculated via `deltat_r` or `deltat_v`.
+            Default: np.inf.
+        deltat_func : callable, optional
+            A custom function `f(r, v)` to dynamically determine the chunk time `deltat` 
+            for each grid point. The method will use the minimum valid deltat returned 
+            across the grid to ensure alignment.
 
         Returns
         -------
         profile : pylcp.obe.force_profile
-            Resulting force profile.
+            Resulting force profile containing the equilibrium forces, detailed laser/mag 
+            forces, and equilibrium populations for the specified grid.
         """
         # Pop deltat-shaping kwargs
         deltat_r    = kwargs.pop('deltat_r',    None)
