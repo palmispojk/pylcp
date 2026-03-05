@@ -1,18 +1,14 @@
 import numpy as np
-import copy
-import time
-import numba
-from scipy.integrate import solve_ivp
-from scipy.interpolate import interp1d
-from .integration_tools import solve_ivp_random
-from .common import (progressBar, random_vector, spherical_dot,
-                     cart2spherical, spherical2cart)
-from .common import base_force_profile as force_profile
+import jax
+import jax.numpy as jnp
+from .integration_tools_gpu import solve_ivp_random
+from .common import base_force_profile
 from .governingeq import governingeq
+
 
 class heuristiceq(governingeq):
     """
-    Heuristic force equation
+    Heuristic force equation (JAX/GPU implementation)
 
     The heuristic equation governs the atom or molecule as if it has a single
     transition between an :math:`F=0` ground state to an :math:`F'=1` excited
@@ -21,326 +17,257 @@ class heuristiceq(governingeq):
     Parameters
     ----------
     laserBeams : dictionary of pylcp.laserBeams, pylcp.laserBeams, or list of pylcp.laserBeam
-        The laserBeams that will be used in constructing the optical Bloch
-        equations.  which transitions in the block diagonal hamiltonian.  It can
-        be any of the following:
-
-            * A dictionary of pylcp.laserBeams: if this is the case, the keys of
-              the dictionary should match available :math:`d^{nm}` matrices
-              in the pylcp.hamiltonian object.  The key structure should be
-              `n->m`.  Here, it must be `g->e`.
-            * pylcp.laserBeams: a single set of laser beams is assumed to
-              address the transition `g->e`.
-            * a list of pylcp.laserBeam: automatically promoted to a
-              pylcp.laserBeams object assumed to address the transtion `g->e`.
-
+        The laserBeams that will be used in constructing the heuristic
+        equations.  Must contain only a single key of ``'g->e'``.
     magField : pylcp.magField or callable
         The function or object that defines the magnetic field.
-    hamiltonian : pylcp.hamiltonian
-        The internal hamiltonian of the particle.
     a : array_like, shape (3,), optional
-        A default acceleraiton to apply to the particle's motion, usually
-        gravity. Default: [0., 0., 0.]
-    r0 : array_like, shape (3,), optional
-        Initial position of the atom or molecule.  Default: [0., 0., 0.]
-    v0 : array_like, shape (3,), optional
-        Initial velocity of the atom or molecule.  Default: [0., 0., 0.]
+        Constant acceleration (e.g. gravity). Default: [0., 0., 0.]
     mass : float, optional
         Mass of the atom or molecule. Default: 100
     gamma : float, optional
-        Decay rate of the single transition in the atom or molecule. Default: 1
+        Decay rate of the single transition. Default: 1
     k : float, optional
-        Magnitude of the k vector for the single transition in the atom or
-        molecule. Default: 1
+        Magnitude of the k vector for the transition. Default: 1
+    r0 : array_like, shape (3,), optional
+        Initial position. Default: [0., 0., 0.]
+    v0 : array_like, shape (3,), optional
+        Initial velocity. Default: [0., 0., 0.]
     """
-    def __init__(self, laserBeams, magField, a=np.array([0., 0., 0.]),
-                 mass=100, gamma=1, k=1, r0=np.array([0., 0., 0.]),
-                 v0=np.array([0., 0., 0.])):
+    def __init__(self, laserBeams, magField, a=jnp.array([0., 0., 0.]),
+                 mass=100, gamma=1, k=1, r0=jnp.array([0., 0., 0.]),
+                 v0=jnp.array([0., 0., 0.])):
         super().__init__(laserBeams, magField, a=a, r0=r0, v0=v0)
 
-        # Check to make sure the laserBeams dictionary has only one key:
         for key in self.laserBeams:
             if key != 'g->e':
-                print(key)
-                raise KeyError('laserBeam dictionary should only contain ' +
-                                'a single key of \'g->e\' for the heutisticeq.')
+                raise KeyError("laserBeam dictionary should only contain "
+                               "a single key of 'g->e' for the heuristiceq.")
 
-        # Finally, handle optional arguments:
-        self.mass = mass
-        self.gamma = gamma
-        self.k = k
+        self.mass = float(mass)
+        self.gamma = float(gamma)
+        self.k = float(k)
 
-        # Set up a dictionary to store any resulting force profiles.
         self.profile = {}
-
-        # Reset the current solution to None
         self.sol = None
-
-        # Make some variables to store F, F_laser, and R_sc:
-        self.F = np.array([0., 0., 0.])
-        self.F_laser = {}
-        self.F_laser['g->e'] = np.zeros((3, self.laserBeams['g->e'].num_of_beams))
-        self.R = np.zeros((self.laserBeams['g->e'].num_of_beams, ))
 
     def scattering_rate(self, r, v, t, return_kvecs=False):
         """
-        Calculates the scattering rate
+        Calculates the scattering rate for each laser beam.
 
         Parameters
         ----------
-        r : array_like
-            Position at which to calculate the force
-        v : array_like
-            Velocity at which to calculate the force
+        r : array_like, shape (3,)
+            Position.
+        v : array_like, shape (3,)
+            Velocity.
         t : float
-            Time at which to calculate the force
-        return_kvecs : bool
-            If true, returns both the scattering rate and the k-vecotrs from
-            the lasers.
+            Time.
+        return_kvecs : bool, optional
+            If True, also return the k-vectors. Default: False.
 
         Returns
         -------
-        R : array_like
-            Array of scattering rates associated with the lasers driving the
-            transition.
-        kvecs : array_like
-            If return_kvecs is True, the k-vectors of each of the lasers.  This
-            is used in heuristiceq.force, where it calls this function to
-            calculate the scattering rate first.  By returning the k-vectors
-            with the scattering rates, it prevents the need of having to
-            recompute the k-vectors again.
+        R : jax.Array, shape (n_beams,)
+            Scattering rate for each beam.
+        kvecs : jax.Array, shape (n_beams, 3)
+            Only returned if ``return_kvecs=True``.
         """
         B = self.magField.Field(r, t)
-        Bmag = np.linalg.norm(B)
-        if Bmag==0:
-            Bhat = np.array([0., 0., 1.])
-        else:
-            Bhat = B/np.linalg.norm(B)
+        Bmag = jnp.linalg.norm(B)
+        Bhat = jnp.where(Bmag > 0, B / Bmag, jnp.array([0., 0., 1.]))
 
-        kvecs = self.laserBeams['g->e'].kvec(r, t)
-        intensities = self.laserBeams['g->e'].intensity(r, t)
-        pols = self.laserBeams['g->e'].project_pol(Bhat, r, t)
-        deltas = self.laserBeams['g->e'].delta(t)
+        kvecs = self.laserBeams['g->e'].kvec(r, t)             # (n_beams, 3)
+        intensities = self.laserBeams['g->e'].intensity(r, t)  # (n_beams,)
+        pols = self.laserBeams['g->e'].project_pol(Bhat, r, t) # (n_beams, 3)
+        deltas = self.laserBeams['g->e'].delta(t)              # (n_beams,)
 
-        totintensity = np.sum(intensities)
+        totintensity = jnp.sum(intensities)
+        q_vals = jnp.array([-1., 0., 1.])
 
-        for ii, (kvec, intensity, pol, delta) in enumerate(zip(kvecs, intensities, pols, deltas)):
-            self.R[ii] = 0.
-            polsqrd = np.abs(pol)**2
-            for (q, pol_i) in zip(np.array([-1., 0., 1.]), polsqrd):
-                self.R[ii] += self.gamma/2*intensity*pol_i/\
-                (1+ totintensity + 4*(delta - np.dot(kvec, v) - q*Bmag)**2/self.gamma**2)
+        polsqrd = jnp.abs(pols) ** 2  # (n_beams, 3)
+
+        # Doppler shift per beam: k·v, shape (n_beams,)
+        kdotv = jnp.einsum('bi,i->b', kvecs, v)
+
+        # Detuning for each beam and each q: (n_beams, 3)
+        det = deltas[:, None] - kdotv[:, None] - q_vals[None, :] * Bmag
+
+        # Scattering rate summed over q components: (n_beams,)
+        R = jnp.sum(
+            self.gamma / 2 * intensities[:, None] * polsqrd /
+            (1 + totintensity + 4 * det ** 2 / self.gamma ** 2),
+            axis=1
+        )
 
         if return_kvecs:
-            return self.R, kvecs
-        else:
-            return self.R
+            return R, kvecs
+        return R
 
     def force(self, r, v, t):
         """
-        Calculates the instantaneous force
+        Calculates the instantaneous force.
 
         Parameters
         ----------
-        r : array_like
-            Position at which to calculate the force
-        v : array_like
-            Velocity at which to calculate the force
+        r : array_like, shape (3,)
+            Position.
+        v : array_like, shape (3,)
+            Velocity.
         t : float
-            Time at which to calculate the force
+            Time.
 
         Returns
         -------
-        F : array_like
-            total equilibrium force experienced by the atom
-        F_laser : dictionary of array_like
-            If return_details is True, the forces due to each laser, indexed
-            by the manifold the laser addresses.  The dictionary is keyed by
-            the transition driven, and individual lasers are in the same order
-            as in the pylcp.laserBeams object used to create the governing
-            equation.
+        F : jax.Array, shape (3,)
+            Total force on the atom.
+        F_laser : dict
+            Per-beam force contributions, keyed by transition.
+            ``F_laser['g->e']`` has shape ``(3, n_beams)``.
         """
         R, kvecs = self.scattering_rate(r, v, t, return_kvecs=True)
+        # kvecs: (n_beams, 3),  R: (n_beams,)
+        F_laser_ge = (kvecs * R[:, None]).T  # (3, n_beams)
+        F = jnp.sum(F_laser_ge, axis=1)     # (3,)
+        return F, {'g->e': F_laser_ge}
 
-        self.F_laser['g->e'] = (kvecs*R[:, np.newaxis]).T
-        self.F = np.sum(self.F_laser['g->e'], axis=1)
-
-        return self.F, self.F_laser
-
-    def evolve_motion(self, t_span, freeze_axis=[False, False, False],
-                      random_recoil=False, random_force=False,
-                      max_scatter_probability=0.1, progress_bar=False,
-                      rng=np.random.default_rng(), **kwargs):
+    def evolve_motion(self, t_span, y0_batch, keys_batch,
+                      freeze_axis=[False, False, False],
+                      random_recoil=False,
+                      max_scatter_probability=0.1,
+                      **kwargs):
         """
-        Evolve the motion of the atom in time.
+        Evolve the motion of atoms in time using JAX/diffrax.
+
+        State vector layout per atom: ``[v (3), r (3)]`` → shape ``(6,)``.
 
         Parameters
         ----------
-        t_span : list or array_like
-            A two element list or array that specify the initial and final time
-            of integration.
-        freeze_axis : list of boolean
-            Freeze atomic motion along the specified axis.
-            Default: [False, False, False]
-        random_recoil : boolean
-            Allow the atom to randomly recoil from scattering events.
-            Default: False
-        random_force : boolean
-            Rather than calculating the force using the heuristieq.force() method,
-            use the calculated scattering rates from each of the laser beam
-            to randomly add photon absorption events that cause the atom to
-            recoil randomly from the laser beam(s).
-            Default: False
+        t_span : tuple
+            ``(t0, tf)`` integration interval.
+        y0_batch : jax.Array, shape (N, 6)
+            Initial conditions ``[v, r]`` for N atoms.
+        keys_batch : jax.Array, shape (N, ...)
+            JAX PRNG keys, one per atom (required even without random recoil).
+        freeze_axis : list of bool
+            Freeze motion along the specified axes. Default: [False, False, False]
+        random_recoil : bool
+            Apply stochastic photon recoil kicks. Default: False
         max_scatter_probability : float
-            When undergoing random recoils, this sets the maximum time step such
-            that the maximum scattering probability is less than or equal to
-            this number during the next time step.  Default: 0.1
-        progress_bar : boolean
-            If true, show a progress bar as the calculation proceeds.
-            Default: False
-        rng : numpy.random.Generator()
-            A properly-seeded random number generator.  Default: calls
-            ``numpy.random.default.rng()``
-        **kwargs :
-            Additional keyword arguments get passed to solve_ivp_random, which
-            is what actually does the integration.
+            Maximum scattering probability per step. Default: 0.1
+        **kwargs
+            Passed to :func:`solve_ivp_random` (e.g. ``rtol``, ``atol``,
+            ``max_steps``, ``solver_type``).
 
         Returns
         -------
-        sol : OdeSolution
-            Bunch object that contains the following fields:
-
-                * t: integration times found by solve_ivp
-                * v: atomic velocity
-                * r: atomic position
-
-            It contains other important elements, which can be discerned from
-            scipy's solve_ivp documentation.
+        sols : list of RandomOdeResult
+            One result per atom.  Each has attributes ``t``, ``y``, ``r``, ``v``.
         """
-        free_axes = np.bitwise_not(freeze_axis)
-
-        if progress_bar:
-            progress = progressBar()
+        free_axes = jnp.asarray([not f for f in freeze_axis], dtype=jnp.float64)
+        mass = self.mass
+        constant_accel = self.constant_accel
 
         def dydt(t, y):
-            if progress_bar:
-                progress.update(t/t_span[1])
+            v = y[:3]
+            r = y[3:6]
+            F, _ = self.force(r, v, t)
+            dvdt = F / mass * free_axes + constant_accel
+            return jnp.concatenate([dvdt, v])
 
-            F, Flaser = self.force(y[3:6], y[0:3], t)
+        def _random_unit_vector(key):
+            key_phi, key_z = jax.random.split(key)
+            phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
+            z = 2.0 * jax.random.uniform(key_z) - 1.0
+            r_xy = jnp.sqrt(1.0 - z ** 2)
+            return jnp.array([r_xy * jnp.cos(phi), r_xy * jnp.sin(phi), z]) * free_axes
 
-            return np.concatenate((
-                1/self.mass*F*free_axes + self.constant_accel,
-                y[0:3]
-                ))
+        def random_recoil_fn(t, y, dt, key):
+            v = y[:3]
+            r = y[3:6]
+            R_rates = self.scattering_rate(r, v, t)
+            total_P = jnp.sum(R_rates) * dt
 
-        def dydt_random_force(t, y):
-            if progress_bar:
-                progress.update(t/t_span[1])
+            key, key_dice, key_v1, key_v2 = jax.random.split(key, 4)
+            did_scatter = jax.random.uniform(key_dice) < total_P
 
-            return np.concatenate((self.constant_accel, y[0:3]))
+            kick = self.k / mass * (_random_unit_vector(key_v1) +
+                                     _random_unit_vector(key_v2))
+            y_jump = jnp.where(did_scatter, y.at[:3].add(kick), y)
+            n_scatters = jnp.where(did_scatter, 1, 0)
+            new_dt_max = jnp.where(
+                total_P > 0,
+                max_scatter_probability / total_P * dt,
+                jnp.inf
+            )
+            return y_jump, n_scatters, new_dt_max, key
 
-        def random_recoil_func(t, y, dt):
-            num_of_scatters = 0
-            total_P = np.sum(self.R)*dt
-            if rng.random(1)<total_P:
-                y[0:3] += self.k/self.mass*(random_vector(rng, free_axes)+
-                                            random_vector(rng, free_axes))
-                num_of_scatters += 1
+        def dummy_recoil(t, y, dt, key):
+            return y, 0, jnp.inf, key
 
-            new_dt_max = (max_scatter_probability/total_P)*dt
+        random_func = random_recoil_fn if random_recoil else dummy_recoil
 
-            return (num_of_scatters, new_dt_max)
+        self.sols = solve_ivp_random(
+            fun=dydt,
+            random_func=random_func,
+            t_span=t_span,
+            y0_batch=jnp.asarray(y0_batch),
+            keys_batch=jnp.asarray(keys_batch),
+            **kwargs
+        )
 
-        def random_force_func(t, y, dt):
-            R, kvecs = self.scattering_rate(y[3:6], y[0:3], t, return_kvecs=True)
+        # Attach r and v as named attributes for convenience (y is (state_dim, n_steps))
+        for sol in self.sols:
+            sol.v = sol.y[:3]
+            sol.r = sol.y[3:]
 
-            num_of_scatters = 0
-            for kvec in kvecs[np.random.rand(len(R))<R*dt]:
-                y[-6:-3] += kvec/self.mass
-                y[-6:-3] += self.k/self.mass*random_vector(free_axes)
-
-                num_of_scatters += 1
-
-            total_P = np.sum(self.R)*dt
-            new_dt_max = (max_scatter_probability/total_P)*dt
-
-            return (num_of_scatters, new_dt_max)
-
-        if random_force:
-            self.sol = solve_ivp_random(
-                dydt_random_force, random_force_func, t_span,
-                np.concatenate((self.v0, self.r0)),
-                initial_max_step=max_scatter_probability,
-                **kwargs
-                )
-        elif random_recoil:
-            self.sol = solve_ivp_random(
-                dydt, random_recoil_func, t_span,
-                np.concatenate((self.v0, self.r0)),
-                initial_max_step=max_scatter_probability,
-                **kwargs
-                )
-        else:
-            self.sol = solve_ivp(
-                dydt, t_span, np.concatenate((self.v0, self.r0)),
-                **kwargs
-                )
-
-        if progress_bar:
-            # Just in case the solve_ivp_random terminated due to an event.
-            progress.update(1.)
-
-        self.sol.r = self.sol.y[3:]
-        self.sol.v = self.sol.y[:3]
-
+        return self.sols
 
     def find_equilibrium_force(self, return_details=False):
         """
-        Finds the equilibrium force at the initial position
+        Finds the equilibrium force at the initial position and velocity.
+
+        Since the heuristic force is instantaneous (no internal state to
+        converge), this is a direct evaluation of :meth:`force`.
 
         Parameters
         ----------
-        return_details : boolean, optional
-            If True, returns the forces from each laser and the scattering rate
-            matrix.
+        return_details : bool, optional
+            If True, also return per-beam forces and scattering rates.
 
         Returns
         -------
-        F : array_like
-            total equilibrium force experienced by the atom
-        F_laser : array_like
-            If return_details is True, the forces due to each laser.
-        R : array_like
-            The scattering rate matrix.
+        F : jax.Array, shape (3,)
+            Total force.
+        F_laser : dict
+            Only if ``return_details=True``. Per-beam forces.
+        R : jax.Array, shape (n_beams,)
+            Only if ``return_details=True``. Scattering rates.
         """
         F, F_laser = self.force(self.r0, self.v0, t=0.)
-
         if return_details:
-            return F, F_laser, self.R
-        else:
-            return F
+            R_rates = self.scattering_rate(self.r0, self.v0, t=0.)
+            return F, F_laser, R_rates
+        return F
 
-
-    def generate_force_profile(self, R, V, name=None, progress_bar=False):
+    def generate_force_profile(self, R, V, name=None, t=0.):
         """
-        Map out the equilibrium force vs. position and velocity
+        Map out the equilibrium force vs. position and velocity.
+
+        Since the heuristic force is instantaneous, all grid points are
+        evaluated in a single :func:`jax.vmap` call (no convergence loop).
 
         Parameters
         ----------
-        R : array_like, shape(3, ...)
-            Position vector.  First dimension of the array must be length 3, and
-            corresponds to :math:`x`, :math:`y`, and :math:`z` components,
-            repsectively.
-        V : array_like, shape(3, ...)
-            Velocity vector.  First dimension of the array must be length 3, and
-            corresponds to :math:`v_x`, :math:`v_y`, and :math:`v_z` components,
-            repsectively.
+        R : array_like, shape (3, ...)
+            Position grid. First dimension must be 3.
+        V : array_like, shape (3, ...)
+            Velocity grid. First dimension must be 3.
         name : str, optional
-            Name for the profile.  Stored in profile dictionary in this object.
-            If None, uses the next integer, cast as a string, (i.e., '0') as
-            the name.
-        progress_bar : boolean, optional
-            Displays a progress bar as the proceeds.  Default: False
+            Key under which to store the profile. Defaults to the current
+            count of profiles as a string.
+        t : float, optional
+            Time at which to evaluate the force. Default: 0.
 
         Returns
         -------
@@ -350,27 +277,32 @@ class heuristiceq(governingeq):
         if not name:
             name = '{0:d}'.format(len(self.profile))
 
-        self.profile[name] = force_profile(R, V, self.laserBeams, None)
+        self.profile[name] = base_force_profile(R, V, self.laserBeams, None)
 
-        it = np.nditer([R[0], R[1], R[2], V[0], V[1], V[2]],
-                       flags=['refs_ok', 'multi_index'],
-                        op_flags=[['readonly'], ['readonly'], ['readonly'],
-                                  ['readonly'], ['readonly'], ['readonly']])
+        # Flatten position/velocity grids to (3, N) then transpose to (N, 3)
+        R_jnp = jnp.asarray(R).reshape(3, -1).T  # (N, 3)
+        V_jnp = jnp.asarray(V).reshape(3, -1).T  # (N, 3)
 
-        if progress_bar:
-            progress = progressBar()
+        # Evaluate force for all (r, v) pairs in parallel
+        F_all, F_laser_all = jax.vmap(
+            lambda r_i, v_i: self.force(r_i, v_i, t)
+        )(R_jnp, V_jnp)
+        # F_all: (N, 3),  F_laser_all: {'g->e': (N, 3, n_beams)}
 
-        for (x, y, z, vx, vy, vz) in it:
-            # Construct the rate equations:
-            r = np.array([x, y, z])
-            v = np.array([vx, vy, vz])
-
-            F, F_laser = self.force(r, v, 0.)
-
-            self.profile[name].store_data(it.multi_index, None, F, F_laser,
-                                          np.zeros((3,)))
-
-            if progress_bar:
-                progress.update((it.iterindex+1)/it.itersize)
+        # Write results back using nditer for multi-index mapping
+        it = np.nditer(
+            [R[0], R[1], R[2], V[0], V[1], V[2]],
+            flags=['refs_ok', 'multi_index'],
+            op_flags=[['readonly']] * 6
+        )
+        for atom_idx, _ in enumerate(it):
+            mi = it.multi_index
+            self.profile[name].store_data(
+                mi,
+                None,
+                F_all[atom_idx],
+                {key: F_laser_all[key][atom_idx] for key in F_laser_all},
+                jnp.zeros(3)
+            )
 
         return self.profile[name]
