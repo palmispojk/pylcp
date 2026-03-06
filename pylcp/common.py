@@ -1,5 +1,4 @@
 import time
-import copy
 import jax.numpy as jnp
 import jax
 
@@ -36,7 +35,7 @@ class progressBar(object):
     def print_string(self, string1):
         # Update the maximum length of string written:
         self.max_written_length = max(self.max_written_length, len(string1))
-        pad = ''.join([' ']*(self.max_written_length - len(string1)))
+        pad = ' ' * (self.max_written_length - len(string1))
         print(string1 + pad, end='\r')
 
     def update(self, percentage):
@@ -107,8 +106,8 @@ class base_force_profile():
         if R.shape[0] != 3 or V.shape[0] != 3:
             raise TypeError('R and V must have first dimension of 3.')
 
-        self.R = copy.copy(R)
-        self.V = copy.copy(V)
+        self.R = R
+        self.V = V
 
         if hamiltonian is None:
             self.Neq = None
@@ -124,7 +123,7 @@ class base_force_profile():
         self.F = jnp.zeros(R.shape)
 
     def store_data(self, ind, Neq, F, F_laser, F_mag):
-        if not Neq is None:
+        if Neq is not None:
             self.Neq = self.Neq.at[ind].set(Neq)
 
         for jj in range(3):
@@ -156,16 +155,16 @@ def random_vector(key, free_axes=[True, True, True]):
             Random vector with unit length.
     """
     free_axes_arr = jnp.array(free_axes)
-    axes_count = jnp.sum(free_axes_arr)
-    
+    axes_count = sum(free_axes)
+
     key1, key2 = jax.random.split(key)
     a = jax.random.uniform(key1)
     b = jax.random.uniform(key2)
-    
+
     if axes_count == 1:
         val = jnp.sign(a - 0.5)
-        return (val * free_axes_arr).astype("float64")
-    
+        return val * free_axes_arr
+
     elif axes_count == 2:
         phi = 2*jnp.pi*a
         x = jnp.array([jnp.cos(phi), jnp.sin(phi)])
