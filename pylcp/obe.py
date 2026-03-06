@@ -719,6 +719,8 @@ class obe(governingeq):
         self.sol = Bunch()
         self.sol.t = ts_grid
         self.sol.y = batched_ys
+        # reconstructing the rho for output
+        self.sol.rho = self.__reshape_rho(batched_ys[0, :, :self.hamiltonian.n**2].T)
 
         return self.sol
 
@@ -924,8 +926,10 @@ class obe(governingeq):
                              'corresponds to the number of states in the '+
                              'generating Hamiltonian. ' +
                              'Instead, shape of O is %s.'%str(O.shape))
-        
-        return jnp.tensordot(O, rho_mat, axes=[(-2, -1), (0, 1)])
+        av0 = jnp.tensordot(O, rho_mat, axes=[(-2, -1), (0, 1)])
+        if jnp.allclose(jnp.imag(av0), jnp.zeros_like(jnp.imag(av0))):
+            av0 = jnp.real(av0)
+        return av0
 
 
     def force(self, r, t, rho, return_details=False):
