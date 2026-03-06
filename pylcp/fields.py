@@ -28,7 +28,7 @@ def return_constant_val_t(t, val):
     else:
         return val
 
-def promote_to_lambda(val, var_name='', type='Rt'):
+def promote_to_lambda(val, var_name='', kind='Rt'):
     """
     Promotes a constant or callable to a lambda function with proper arguments.
 
@@ -53,7 +53,7 @@ def promote_to_lambda(val, var_name='', type='Rt'):
         sig : string
             Either `(R,t)` or `(t)`
     """
-    if type == 'Rt':
+    if kind == 'Rt':
         if not callable(val):
             if isinstance(val, list) or isinstance(val, jnp.ndarray):
                 func = lambda R=jnp.array([0., 0., 0.]), t=0.: return_constant_vector(R, t, val)
@@ -76,7 +76,7 @@ def promote_to_lambda(val, var_name='', type='Rt'):
                                 'understood.'% (sig, var_name))
 
         return func, sig
-    elif type == 't':
+    elif kind == 't':
         if not callable(val):
             func = lambda t=0.: return_constant_val_t(t, val)
             sig = '()'
@@ -171,7 +171,7 @@ class iPMagneticField(magField):
     Generates a magnetic field of the form
 
     .. math::
-      \mathbf{B} = B_1 x \\hat{x} - B_1 y \\hat{y} + \\left(B_0 + \\frac{B_2}{2}z^2\\right)\\hat{z}
+      \\mathbf{B} = B_1 x \\hat{x} - B_1 y \\hat{y} + \\left(B_0 + \\frac{B_2}{2}z^2\\right)\\hat{z}
 
     Parameters
     ----------
@@ -208,7 +208,7 @@ class constantMagneticField(magField):
     Represents a magnetic field of the form
 
     .. math::
-      \\mathbf{B} = \mathbf{B}_0
+      \\mathbf{B} = \\mathbf{B}_0
 
     Parameters
     ----------
@@ -317,8 +317,7 @@ class laserBeam(object):
         self.eps = eps
 
         if pol is not None:
-            # Assuming you have your __parse_constant_polarization method
-            if not isinstance(pol, jnp.ndarray) or not isinstance(pol, np.ndarray):
+            if not isinstance(pol, (jnp.ndarray, np.ndarray)):
                 parsed_pol = self.__parse_constant_polarization(pol, pol_coord)
             else:
                 parsed_pol = pol
@@ -347,7 +346,7 @@ class laserBeam(object):
 
         elif isinstance(pol, (jnp.ndarray, np.ndarray, list)):
             pol_arr = jnp.array(pol)
-            if pol.shape != (3,):
+            if pol_arr.shape != (3,):
                 raise ValueError("pol, when a vector, must be a (3,) array")
 
             # The user has specified a single polarization vector in
@@ -642,7 +641,7 @@ class laserBeam(object):
         U = 2*jnp.real(jones_vector[0]*jnp.conj(jones_vector[1]))
         V = -2*jnp.imag(jones_vector[0]*jnp.conj(jones_vector[1]))
 
-        return (Q, U, V)
+        return jnp.array([Q, U, V])
 
 
     def polarization_ellipse(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
@@ -672,10 +671,7 @@ class laserBeam(object):
         """
         Q, U, V = self.stokes_parameters(xp, yp, R, t)
 
-        psi = jnp.arctan2(U, Q)
-        while psi<0:
-            psi+=2*jnp.pi
-        psi = psi%(2*jnp.pi)/2
+        psi = (jnp.arctan2(U, Q) % (2*jnp.pi)) / 2
         if jnp.sqrt(Q**2+U**2)>1e-10:
             chi = 0.5*jnp.arctan(V/jnp.sqrt(Q**2+U**2))
         else:
@@ -849,7 +845,7 @@ class gaussianBeam(laserBeam):
         # self.define_rotation_matrix()
         
         self.con_kvec = jnp.array(kvec)
-        self.con_khat = kvec/jnp.linalg.norm(kvec)
+        self.con_khat = self.con_kvec/jnp.linalg.norm(self.con_kvec)
         th = jnp.arccos(self.con_khat[2])
         phi = jnp.arctan2(self.con_khat[1], self.con_khat[0])
         
@@ -928,7 +924,7 @@ class clippedGaussianBeam(gaussianBeam):
         # standard gaussian
         s_gaussian = self.s_max * jnp.exp(-2 * rho_sq / self.wb**2)
         # hard clipping vectorized
-        return jnp.where(rho_sq <= self.R_clip**2, s_gaussian, 0.0)
+        return jnp.where(rho_sq <= self.rs**2, s_gaussian, 0.0)
 
 
 class laserBeams(object):
@@ -987,6 +983,7 @@ class laserBeams(object):
             self.num_of_beams = len(self.beam_vector)
         elif isinstance(new_laser, dict):
             self.beam_vector.append(laserBeam(**new_laser))
+            self.num_of_beams = len(self.beam_vector)
         else:
             raise TypeError('new_laser should by type laserBeam or a dictionary' +
                             'of arguments to initialize the laserBeam class.')
@@ -1093,9 +1090,9 @@ class laserBeams(object):
             the electric field vectors at position R and time t for each laser beam.
         """
         if self.num_of_beams == 0:
-            return jnp.zeros((0, 3, 3), dtype=jnp.complex64)
-        
-        return jnp.stack([beam.electric_field(R, t) 
+            return jnp.zeros((0, 3), dtype=jnp.complex64)
+
+        return jnp.stack([beam.electric_field(R, t)
                           for beam in self.beam_vector])
 
     def electric_field_gradient(self, R=jnp.array([0., 0., 0.]), t=0.):
@@ -1143,10 +1140,7 @@ class laserBeams(object):
             return jnp.zeros(3, dtype=jnp.complex64)
         
         
-        return jnp.sum(
-            jnp.stack([beam.electric_field(R, t) for beam in self.beam_vector]), 
-            axis=0
-        )
+        return jnp.sum(self.electric_field(R, t), axis=0)
 
     def total_electric_field_gradient(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
