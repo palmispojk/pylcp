@@ -44,7 +44,7 @@ class state():
         gamma : float
             Lifetime in :math:`\\text{s}^{-1}`
         gammaHz : float
-            Corresponding linewidth in Hz, given by :math:`\gamma/2\pi`.
+            Corresponding linewidth in Hz, given by :math:`\\gamma/2\\pi`.
         energy : float
             The energy in :math:`\\text{cm}^{-1}`
 
@@ -66,9 +66,9 @@ class state():
 
         self.gJ = gJ
 
-        if lam:
+        if lam is not None:
             self.energy = 0.01/lam  # cm^-1
-        elif E:
+        elif E is not None:
             self.energy = E
         else:
             raise ValueError("Need to specify energy of the state somehow.")
@@ -108,9 +108,9 @@ class transition():
         Isat : float
             Saturation intensity of the transition in :math:`\\text{mW/cm}^2`.
         a0 : float
-            Maximum acceleration :math:`a_0 = \hbar k/2\Gamma` in :math:`\\text{cm/s}^2`.
+            Maximum acceleration :math:`a_0 = \\hbar k/2\\Gamma` in :math:`\\text{cm/s}^2`.
         v0 : float
-            Doppler velocity :math:`v_0 = k/\Gamma` in cm/s.
+            Doppler velocity :math:`v_0 = k/\\Gamma` in cm/s.
         x0 : float
             Length scale :math:`x_0 = v_0^2/a_0` in cm.
         t0 : float
@@ -207,8 +207,8 @@ class atom():
             # 3P_{1/2}
             self.state.append(state(n=3, L=1, J=1/2, lam=323.3590e-9,
                                     tau=998.4e-9, gJ=2/3, Ahfs=13.5e6, S=1/2))
-            # 3P_{1/2}
-            self.state.append(state(n=3, L=1, J=3/2, lam=323.3590e-9,
+            # 3P_{3/2} (fine structure splitting ~3.36 cm^{-1} above 3P_{1/2})
+            self.state.append(state(n=3, L=1, J=3/2, lam=323.320e-9,
                                     tau=998.4e-9, gJ=4/3, Ahfs=-0.965e6,
                                     Bhfs=-0.019e6, S=1/2))
 
@@ -291,11 +291,11 @@ class atom():
             # Ground state:
             self.state.append(state(n=5, L=0, J=1/2, lam=np.inf, tau=np.inf,
                                     gJ=2.0023010, Ahfs=1.0119108130e9, S=1/2))
-            # D1 line (2P_{1/2})
-            self.state.append(state(n=5, L=1, J=1/2, lam=780.241e-9,
+            # D1 line (5P_{1/2})
+            self.state.append(state(n=5, L=1, J=1/2, lam=794.9788509e-9,
                                     tau=27.679e-9, gJ=0.6668, Ahfs=120.527e6,
                                     S=1/2))
-            # D2 line (2P_{1/2})
+            # D2 line (5P_{3/2})
             self.state.append(state(n=5, L=1, J=3/2, lam=780.241e-9,
                                     tau=26.2348e-9, gJ=1.335, Ahfs=25.0020e6,
                                     Bhfs=25.79e6, S=1/2))
