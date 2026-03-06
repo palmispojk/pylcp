@@ -1,0 +1,514 @@
+import jax
+jax.config.update("jax_enable_x64", True)
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from pylcp.fields import (
+    promote_to_lambda,
+    magField,
+    iPMagneticField,
+    constantMagneticField,
+    quadrupoleMagneticField,
+    laserBeam,
+    infinitePlaneWaveBeam,
+    gaussianBeam,
+    clippedGaussianBeam,
+    laserBeams,
+    conventional3DMOTBeams,
+)
+
+R0 = jnp.array([0., 0., 0.])
+R1 = jnp.array([1., 2., 3.])
+
+
+# ---------------------------------------------------------------------------
+# promote_to_lambda
+# ---------------------------------------------------------------------------
+
+class TestPromoteToLambda:
+    def test_scalar_Rt(self):
+        func, sig = promote_to_lambda(3.0)
+        assert sig == '()'
+        assert float(func()) == pytest.approx(3.0)
+
+    def test_list_Rt(self):
+        func, sig = promote_to_lambda([0., 0., 1.])
+        assert sig == '()'
+        result = func()
+        assert result.shape == (3,)
+        assert float(result[2]) == pytest.approx(1.0)
+
+    def test_callable_R_only(self):
+        func, sig = promote_to_lambda(lambda R: R * 2.0)
+        assert sig == '(R)'
+        result = func(R=jnp.array([1., 0., 0.]))
+        assert float(result[0]) == pytest.approx(2.0)
+
+    def test_callable_Rt(self):
+        func, sig = promote_to_lambda(lambda R, t: R + t)
+        assert sig == '(R, t)'
+        result = func(R=jnp.array([1., 0., 0.]), t=1.0)
+        assert float(result[0]) == pytest.approx(2.0)
+
+    def test_callable_t_only(self):
+        func, sig = promote_to_lambda(lambda t: t * 2)
+        assert sig == '(R, t)'
+        result = func(t=3.0)
+        assert float(result) == pytest.approx(6.0)
+
+    def test_scalar_t_kind(self):
+        func, sig = promote_to_lambda(5.0, kind='t')
+        assert sig == '()'
+        assert float(func()) == pytest.approx(5.0)
+
+    def test_callable_t_kind(self):
+        func, sig = promote_to_lambda(lambda t: t**2, kind='t')
+        assert float(func(t=3.0)) == pytest.approx(9.0)
+
+    def test_unknown_callable_raises(self):
+        with pytest.raises(TypeError):
+            promote_to_lambda(lambda a, b, c: a, kind='Rt')
+
+
+# ---------------------------------------------------------------------------
+# magField
+# ---------------------------------------------------------------------------
+
+class TestMagField:
+    def test_constant_array(self):
+        B = magField(jnp.array([0., 0., 1.]))
+        result = B.Field(R0, 0.)
+        assert jnp.allclose(result, jnp.array([0., 0., 1.]))
+
+    def test_callable_Rt(self):
+        B = magField(lambda R, t: jnp.array([R[0], 0., 0.]))
+        result = B.Field(jnp.array([3., 0., 0.]), 0.)
+        assert float(result[0]) == pytest.approx(3.0)
+
+    def test_field_magnitude(self):
+        B = magField(jnp.array([3., 4., 0.]))
+        assert float(B.FieldMag(R0, 0.)) == pytest.approx(5.0)
+
+    def test_grad_field_constant_zero(self):
+        # Gradient of a constant field should be zero
+        B = magField(jnp.array([0., 0., 1.]))
+        grad = B.gradField(R0)
+        assert jnp.allclose(grad, jnp.zeros((3, 3)), atol=1e-5)
+
+    def test_grad_field_mag_constant_zero(self):
+        B = magField(jnp.array([0., 0., 1.]))
+        dB = B.gradFieldMag(R0, 0.)
+        assert jnp.allclose(dB, jnp.zeros(3), atol=1e-5)
+
+
+class TestConstantMagneticField:
+    def test_returns_array(self):
+        B = constantMagneticField(jnp.array([1., 2., 3.]))
+        result = B.Field(R1, 1.0)
+        assert jnp.allclose(result, jnp.array([1., 2., 3.]))
+
+    def test_zero_gradient(self):
+        B = constantMagneticField(jnp.array([0., 1., 0.]))
+        grad = B.gradField(R1)
+        assert jnp.allclose(grad, jnp.zeros((3, 3)), atol=1e-5)
+
+
+class TestQuadrupoleMagneticField:
+    def test_origin_is_zero(self):
+        B = quadrupoleMagneticField(1.0)
+        assert jnp.allclose(B.Field(R0, 0.), jnp.zeros(3))
+
+    def test_linear_scaling(self):
+        B = quadrupoleMagneticField(2.0)
+        r = jnp.array([1., 0., 0.])
+        result = B.Field(r, 0.)
+        assert float(result[0]) == pytest.approx(-1.0)  # alpha * (-0.5 * 1)
+        assert float(result[2]) == pytest.approx(0.0)
+
+    def test_z_component(self):
+        B = quadrupoleMagneticField(1.0)
+        r = jnp.array([0., 0., 1.])
+        assert float(B.Field(r, 0.)[2]) == pytest.approx(1.0)
+
+
+class TestIPMagneticField:
+    def test_origin_gives_B0_along_z(self):
+        B = iPMagneticField(B0=1.0, B1=0.5, B2=0.1)
+        result = B.Field(R0, 0.)
+        assert float(result[2]) == pytest.approx(1.0)
+        assert float(result[0]) == pytest.approx(0.0)
+        assert float(result[1]) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# laserBeam
+# ---------------------------------------------------------------------------
+
+class TestLaserBeam:
+    def test_default_construction(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=-2.0)
+        assert float(beam.intensity()) == pytest.approx(1.0)
+        assert float(beam.delta()) == pytest.approx(-2.0)
+
+    def test_pol_int_positive(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        pol = beam.pol()
+        assert pol.shape == (3,)
+        # For +1 pol along z, sigma+ -> spherical component [1] should dominate
+        assert jnp.linalg.norm(pol) == pytest.approx(1.0, abs=1e-5)
+
+    def test_pol_int_negative(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=-1, s=1.0, delta=0.0)
+        pol = beam.pol()
+        assert pol.shape == (3,)
+        assert jnp.linalg.norm(pol) == pytest.approx(1.0, abs=1e-5)
+
+    def test_pol_spherical_array(self):
+        # Pure z-component in spherical: [0, 1, 0] represents pi polarization
+        pol_vec = jnp.array([0., 1., 0.], dtype=jnp.complex64)
+        beam = laserBeam(kvec=[1., 0., 0.], pol=pol_vec, s=1.0, delta=0.0,
+                         pol_coord='spherical')
+        assert jnp.linalg.norm(beam.pol()) == pytest.approx(1.0, abs=1e-5)
+
+    def test_callable_intensity(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1,
+                         s=lambda R, t: float(R[2]**2), delta=0.0)
+        assert float(beam.intensity(jnp.array([0., 0., 2.]), 0.)) == pytest.approx(4.0)
+
+    def test_callable_delta(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0,
+                         delta=lambda t: -t)
+        assert float(beam.delta(3.0)) == pytest.approx(-3.0)
+
+    def test_delta_phase(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=-2.0)
+        assert float(beam.delta_phase(t=1.0)) == pytest.approx(-2.0)
+
+    def test_delta_phase_callable_raises(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0,
+                         delta=lambda t: -t)
+        with pytest.raises(NotImplementedError):
+            beam.delta_phase(t=1.0)
+
+    def test_kvec_returned(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        assert jnp.allclose(beam.kvec(), jnp.array([0., 0., 1.]))
+
+    def test_cartesian_pol_shape(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        cp = beam.cartesian_pol()
+        assert cp.shape == (3,)
+
+    def test_jones_vector(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        jv = beam.jones_vector(jnp.array([1., 0., 0.]), jnp.array([0., 1., 0.]))
+        assert jv.shape == (2,)
+
+    def test_stokes_parameters(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        Q, U, V = beam.stokes_parameters(jnp.array([1., 0., 0.]),
+                                          jnp.array([0., 1., 0.]))
+        # For pure circular polarization, Q=U=0 and V has magnitude 1
+        assert float(jnp.abs(V)) == pytest.approx(1.0, abs=1e-4)
+
+    def test_polarization_ellipse(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        psi, chi = beam.polarization_ellipse(jnp.array([1., 0., 0.]),
+                                              jnp.array([0., 1., 0.]))
+        # Pure circular pol: chi should be ±pi/4
+        assert float(jnp.abs(chi)) == pytest.approx(jnp.pi / 4, abs=1e-4)
+
+    def test_electric_field_shape(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        E = beam.electric_field(R0, 0.)
+        assert E.shape == (3,)
+
+    def test_electric_field_gradient_shape(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        dE = beam.electric_field_gradient(R0, 0.)
+        assert dE.shape == (3, 3)
+
+    def test_project_pol_shape(self):
+        beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        pp = beam.project_pol(jnp.array([0., 0., 1.]))
+        assert pp.shape == (3,)
+
+    def test_project_pol_identity_z(self):
+        # Projecting onto z-axis should leave z-axis polarization unchanged
+        beam = laserBeam(kvec=[1., 0., 0.], pol=jnp.array([0., 1., 0.],
+                         dtype=jnp.complex64), s=1.0, delta=0.0,
+                         pol_coord='spherical')
+        pp = beam.project_pol(jnp.array([0., 0., 1.]))
+        assert jnp.allclose(jnp.abs(pp), jnp.abs(beam.pol()), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# infinitePlaneWaveBeam
+# ---------------------------------------------------------------------------
+
+class TestInfinitePlaneWaveBeam:
+    def test_construction(self):
+        beam = infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1, s=2.0, delta=-1.0)
+        assert float(beam.intensity()) == pytest.approx(2.0)
+
+    def test_callable_kvec_raises(self):
+        with pytest.raises(TypeError):
+            infinitePlaneWaveBeam(kvec=lambda R, t: jnp.array([0., 0., 1.]),
+                                  pol=+1, s=1.0, delta=0.0)
+
+    def test_callable_s_raises(self):
+        with pytest.raises(TypeError):
+            infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1,
+                                  s=lambda R, t: 1.0, delta=0.0)
+
+    def test_electric_field_gradient_shape(self):
+        beam = infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        dE = beam.electric_field_gradient(R0, 0.)
+        assert dE.shape == (3, 3)
+
+    def test_gradient_analytic_vs_jax(self):
+        # The analytic gradient (-i * outer(k, E)) should match jax.jacfwd result
+        beam = infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        dE_analytic = beam.electric_field_gradient(R0, 0.)
+        # Compute numerically via parent class method
+        dE_numeric = jax.jacfwd(lambda R: beam.electric_field(R, 0.))(R0)
+        assert jnp.allclose(dE_analytic, dE_numeric, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# gaussianBeam
+# ---------------------------------------------------------------------------
+
+class TestGaussianBeam:
+    def test_peak_intensity(self):
+        beam = gaussianBeam(kvec=[0., 0., 1.], pol=+1, s=5.0, delta=0.0, wb=1.0)
+        assert float(beam.intensity(R0)) == pytest.approx(5.0)
+
+    def test_half_max_intensity(self):
+        # At r = wb/sqrt(2) from axis, I = s_max * exp(-1)
+        wb = 2.0
+        beam = gaussianBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0, wb=wb)
+        r = jnp.array([wb / jnp.sqrt(2), 0., 0.])
+        expected = float(jnp.exp(-1.0))
+        assert float(beam.intensity(r)) == pytest.approx(expected, rel=1e-4)
+
+    def test_callable_kvec_raises(self):
+        with pytest.raises(TypeError):
+            gaussianBeam(kvec=lambda R, t: jnp.array([0., 0., 1.]),
+                         pol=+1, s=1.0, delta=0.0, wb=1.0)
+
+    def test_electric_field_gradient_shape(self):
+        beam = gaussianBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0, wb=10.0)
+        dE = beam.electric_field_gradient(R0, 0.)
+        assert dE.shape == (3, 3)
+
+
+# ---------------------------------------------------------------------------
+# clippedGaussianBeam
+# ---------------------------------------------------------------------------
+
+class TestClippedGaussianBeam:
+    def test_inside_clip(self):
+        beam = clippedGaussianBeam(kvec=[0., 0., 1.], pol=+1, s=1.0,
+                                    delta=0.0, wb=100.0, rs=10.0)
+        # At origin: well inside clip, intensity ≈ s_max
+        assert float(beam.intensity(R0)) == pytest.approx(1.0, rel=1e-4)
+
+    def test_outside_clip(self):
+        beam = clippedGaussianBeam(kvec=[0., 0., 1.], pol=+1, s=1.0,
+                                    delta=0.0, wb=100.0, rs=1.0)
+        # At r=5 >> rs=1: intensity should be zero
+        r = jnp.array([5., 0., 0.])
+        assert float(beam.intensity(r)) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# laserBeams collection
+# ---------------------------------------------------------------------------
+
+class TestLaserBeams:
+    def setup_method(self):
+        self.beams = laserBeams([
+            {'kvec': [0., 0.,  1.], 'pol': +1, 's': 1.0, 'delta': -2.0},
+            {'kvec': [0., 0., -1.], 'pol': -1, 's': 2.0, 'delta': -2.0},
+        ])
+
+    def test_num_of_beams(self):
+        assert self.beams.num_of_beams == 2
+
+    def test_kvec_shape(self):
+        assert self.beams.kvec().shape == (2, 3)
+
+    def test_pol_shape(self):
+        assert self.beams.pol().shape == (2, 3)
+
+    def test_intensity_shape(self):
+        s = self.beams.intensity()
+        assert s.shape == (2,)
+        assert float(s[0]) == pytest.approx(1.0)
+        assert float(s[1]) == pytest.approx(2.0)
+
+    def test_delta_shape(self):
+        d = self.beams.delta()
+        assert d.shape == (2,)
+        assert jnp.allclose(d, jnp.array([-2.0, -2.0]))
+
+    def test_electric_field_shape(self):
+        E = self.beams.electric_field(R0, 0.)
+        assert E.shape == (2, 3)
+
+    def test_electric_field_gradient_shape(self):
+        dE = self.beams.electric_field_gradient(R0, 0.)
+        assert dE.shape == (2, 3, 3)
+
+    def test_total_electric_field_shape(self):
+        E = self.beams.total_electric_field(R0, 0.)
+        assert E.shape == (3,)
+
+    def test_total_electric_field_gradient_shape(self):
+        dE = self.beams.total_electric_field_gradient(R0, 0.)
+        assert dE.shape == (3, 3)
+
+    def test_total_equals_sum(self):
+        E_total = self.beams.total_electric_field(R0, 0.)
+        E_sum = jnp.sum(self.beams.electric_field(R0, 0.), axis=0)
+        assert jnp.allclose(E_total, E_sum)
+
+    def test_project_pol_shape(self):
+        pp = self.beams.project_pol(jnp.array([0., 0., 1.]))
+        assert pp.shape == (2, 3)
+
+    def test_cartesian_pol_shape(self):
+        cp = self.beams.cartesian_pol()
+        assert cp.shape == (2, 3)
+
+    def test_jones_vector_shape(self):
+        # jones_vector requires xp, yp, k to form a right-handed system;
+        # use a collection where all beams share the same +z direction
+        same_dir = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 1.0, 'delta': -2.0},
+            {'kvec': [0., 0., 1.], 'pol': -1, 's': 2.0, 'delta': -2.0},
+        ])
+        jv = same_dir.jones_vector(jnp.array([1., 0., 0.]),
+                                    jnp.array([0., 1., 0.]))
+        assert jv.shape == (2, 2)
+
+    def test_stokes_parameters_shape(self):
+        same_dir = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 1.0, 'delta': -2.0},
+            {'kvec': [0., 0., 1.], 'pol': -1, 's': 2.0, 'delta': -2.0},
+        ])
+        sp = same_dir.stokes_parameters(jnp.array([1., 0., 0.]),
+                                         jnp.array([0., 1., 0.]))
+        assert sp.shape == (2, 3)
+
+    def test_empty_beams_shapes(self):
+        empty = laserBeams([])
+        assert empty.kvec().shape == (0, 3)
+        assert empty.pol().shape == (0, 3)
+        assert empty.intensity().shape == (0,)
+        assert empty.delta().shape == (0,)
+        assert empty.electric_field(R0, 0.).shape == (0, 3)  # each beam returns (3,)
+        assert empty.electric_field_gradient(R0, 0.).shape == (0, 3, 3)
+        assert empty.total_electric_field(R0, 0.).shape == (3,)
+        assert empty.project_pol(jnp.array([0., 0., 1.])).shape == (0, 3)
+
+    def test_add_operator(self):
+        beams2 = laserBeams([{'kvec': [1., 0., 0.], 'pol': +1, 's': 1.0, 'delta': 0.}])
+        combined = self.beams + beams2
+        assert combined.num_of_beams == 3
+
+    def test_iadd_operator(self):
+        beams_copy = laserBeams([
+            {'kvec': [0., 0.,  1.], 'pol': +1, 's': 1.0, 'delta': -2.0},
+        ])
+        beams2 = laserBeams([{'kvec': [1., 0., 0.], 'pol': +1, 's': 1.0, 'delta': 0.}])
+        beams_copy += beams2
+        assert beams_copy.num_of_beams == 2
+
+    def test_add_laser_beam_instance(self):
+        b = laserBeams([])
+        b.add_laser(laserBeam(kvec=[1., 0., 0.], pol=+1, s=1.0, delta=0.0))
+        assert b.num_of_beams == 1
+
+    def test_add_laser_dict(self):
+        b = laserBeams([])
+        b.add_laser({'kvec': [1., 0., 0.], 'pol': +1, 's': 1.0, 'delta': 0.0})
+        assert b.num_of_beams == 1
+
+    def test_add_laser_invalid_raises(self):
+        b = laserBeams([])
+        with pytest.raises(TypeError):
+            b.add_laser("not_a_beam")
+
+    def test_invalid_param_type_raises(self):
+        with pytest.raises(TypeError):
+            laserBeams(["not_a_beam_or_dict"])
+
+
+# ---------------------------------------------------------------------------
+# conventional3DMOTBeams
+# ---------------------------------------------------------------------------
+
+class TestConventional3DMOTBeams:
+    def test_six_beams(self):
+        mot = conventional3DMOTBeams(k=1.0, pol=+1, s=1.0, delta=-2.0)
+        assert mot.num_of_beams == 6
+
+    def test_counter_propagating_pairs(self):
+        mot = conventional3DMOTBeams(k=1.0, pol=+1, s=1.0, delta=-2.0)
+        kvecs = mot.kvec()  # shape (6, 3)
+        # Sum of all k-vectors should be zero (counter-propagating pairs)
+        assert jnp.allclose(jnp.sum(kvecs, axis=0), jnp.zeros(3), atol=1e-6)
+
+    def test_k_magnitude(self):
+        k = 2.5
+        mot = conventional3DMOTBeams(k=k, pol=+1, s=1.0, delta=-2.0)
+        kvecs = mot.kvec()
+        norms = jnp.linalg.norm(kvecs, axis=1)
+        assert jnp.allclose(norms, k * jnp.ones(6), atol=1e-5)
+
+    def test_with_gaussian_beam_type(self):
+        mot = conventional3DMOTBeams(k=1.0, pol=+1, beam_type=gaussianBeam,
+                                      wb=100.0, s=1.0, delta=-2.0)
+        assert mot.num_of_beams == 6
+        # Peak intensity at origin should be s_max
+        assert float(mot.beam_vector[0].intensity(R0)) == pytest.approx(1.0, rel=1e-4)
+
+    def test_rotation(self):
+        # A 90 deg rotation around Z should permute the x/y beam directions
+        mot_rot = conventional3DMOTBeams(k=1.0, pol=+1, s=1.0, delta=-2.0,
+                                          rotation_angles=[90., 0., 0.],
+                                          rotation_spec='ZYZ')
+        mot_orig = conventional3DMOTBeams(k=1.0, pol=+1, s=1.0, delta=-2.0)
+        # The z beams (indices 4, 5) should be unchanged
+        assert jnp.allclose(mot_rot.beam_vector[4].kvec(),
+                             mot_orig.beam_vector[4].kvec(), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# vmap compatibility
+# ---------------------------------------------------------------------------
+
+class TestVmapCompatibility:
+    def test_vmap_electric_field(self):
+        beam = infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        Rs = jnp.ones((10, 3))
+        ts = jnp.zeros(10)
+        E_batch = jax.vmap(beam.electric_field)(Rs, ts)
+        assert E_batch.shape == (10, 3)
+
+    def test_vmap_gaussian_intensity(self):
+        beam = gaussianBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0, wb=10.0)
+        Rs = jnp.zeros((5, 3))
+        intensities = jax.vmap(beam.intensity)(Rs)
+        assert intensities.shape == (5,)
+        assert jnp.allclose(intensities, jnp.ones(5), atol=1e-5)
+
+    def test_vmap_electric_field_gradient(self):
+        beam = infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        Rs = jnp.zeros((4, 3))
+        ts = jnp.zeros(4)
+        dE_batch = jax.vmap(beam.electric_field_gradient)(Rs, ts)
+        assert dE_batch.shape == (4, 3, 3)
