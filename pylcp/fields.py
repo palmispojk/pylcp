@@ -311,9 +311,9 @@ class laserBeam(object):
     def __init__(self, kvec=None, s=None, pol=None, delta=None,
                  phase=0., pol_coord='spherical', eps=1e-5):
         self._kvec = jnp.array(kvec) if kvec is not None else jnp.array([0., 0., 1.])
-        self._s = float(s) if s is not None else 1.0
-        self._delta = float(delta) if delta is not None else 0.0
-        self._phase = float(phase) if phase is not None else 0.0
+        self._s = s if callable(s) else (float(s) if s is not None else 1.0)
+        self._delta = delta if callable(delta) else (float(delta) if delta is not None else 0.0)
+        self._phase = phase if callable(phase) else (float(phase) if phase is not None else 0.0)
         self.eps = eps
 
         if pol is not None:
@@ -415,6 +415,8 @@ class laserBeam(object):
         s : float or array_like
             Saturation parameter of the laser beam at R and t.
         """
+        if callable(self._s):
+            return self._s(R, t)
         return self._s
 
     def pol(self, R=jnp.array([0., 0., 0.]), t=0.):
@@ -452,12 +454,25 @@ class laserBeam(object):
         delta : float or array like
             detuning of the laser beam at time t
         """
+        if callable(self._delta):
+            return self._delta(t)
         return self._delta
-    
+
     def phase(self, t=0.):
+        if callable(self._phase):
+            return self._phase(t)
         return self._phase
-    
+
     def delta_phase(self, t=0.):
+        if callable(self._delta):
+            raise NotImplementedError(
+                "Callable delta cannot be used to compute delta_phase inside the OBE "
+                "E-field because numerical integration is too slow inside a JIT kernel. "
+                "Instead, set delta=0 and supply the analytic phase integral as a "
+                "callable phase, e.g.:\n"
+                "  'delta': 0,\n"
+                "  'phase': lambda t: Delta0/omegam * jnp.sin(omegam * t)"
+            )
         return self._delta * t
 
     # TODO: add testing of kvec/pol orthogonality.
