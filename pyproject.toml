@@ -1,0 +1,37 @@
+[project]
+name = "pylcp"
+version = "2.0.0"
+description = "A package for calculating laser cooling physics"
+authors = [
+    {name = "Stephen Eckel", email = "pylcp@googlegroups.com"},
+    {name = "Daniel Barker"},
+    {name = "Eric Norrgard"},
+    {name = "Johan Palm",email = "johan.palm2000@gmail.com"}
+]
+
+license = {text = "NIST"}
+readme = "README.md"
+requires-python = ">=3.11, <4.0"
+keywords = ["atomic physics", "laser cooling", "numerical integration"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Science/Research",
+    "License :: Other/Proprietary License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12"
+]
+dependencies = [
+]
+
+[project.urls]
+"Bug Tracker" = "https://github.com/JQIamo/pylcp/issues"
+"Documentation" = "https://python-laser-cooling-physics.readthedocs.io/en/stable"
+"Source Code" = "https://github.com/JQIamo/pylcp/"
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
