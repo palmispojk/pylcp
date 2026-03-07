@@ -228,7 +228,7 @@ class hamiltonian():
 
     def add_mu_q_block(self, state_label, mu_q, muB=1):
         """
-        Adds a new $\mu_q$ block to the hamiltonian
+        Adds a new :math:`\\mu_q` block to the hamiltonian
 
         Parameters
         ----------
@@ -306,7 +306,7 @@ class hamiltonian():
         ind_mu_q = self.__search_elem_label(self.__make_elem_label('mu_q', label2))
 
         if ind_H_0 == () and ind_mu_q == ():
-            raise ValueError('Label %s not found.' % label1)
+            raise ValueError('Label %s not found.' % label2)
         elif ind_H_0 == ():
             ind2 = ind_mu_q[0]
             m = self.blocks[ind_mu_q].n
@@ -319,8 +319,8 @@ class hamiltonian():
 
         # Check the size of d_q, make sure it is right:
         if d_q.shape[1] != n or d_q.shape[2] != m:
-            raise ValueError('Expected size 3x%dx%d for %s, instead see 3x%dx%d'%
-                             (n, m, label, d_q.shape[1], d_q.shape[2]))
+            raise ValueError('Expected size 3x%dx%d for %s->%s, instead see 3x%dx%d'%
+                             (n, m, label1, label2, d_q.shape[1], d_q.shape[2]))
 
         # what is the block index to store this d_q?
         ind = (ind1, ind2)
@@ -410,7 +410,7 @@ class hamiltonian():
             ])
 
         # Finally, put together the full d_q, irrespective of laser beam key:
-        self.d_q = np.zeros((3, self.n, self.n), dtype='complex128')
+        self.d_q = jnp.zeros((3, self.n, self.n), dtype=jnp.complex128)
         for key in self.d_q_bare.keys():
             self.d_q += self.d_q_bare[key] + self.d_q_star[key]
 
@@ -477,7 +477,7 @@ class hamiltonian():
         This function diagonalizes the Hamiltonian's diagonal blocks separately
         based on the value of the static magnetic field :math:`B`, and then
         rotates the :math:`d_q`s into the new bases. This is necessary for the
-        rate equations, which always assume that :\math:`B` sets the quantization
+        rate equations, which always assume that :math:`B` sets the quantization
         axis, and they rotate the coordinate system appropriately, so we only
         ever need to consider the z-component of the field.
 
@@ -485,7 +485,7 @@ class hamiltonian():
         ----------
         B : float
             The magnetic field value at which to diagonalize.  It is always
-            assumed to be along the :math:`\hat{z}` direction.
+            assumed to be along the :math:`\\hat{z}` direction.
 
         Returns:
         H : pylcp.hamiltonian
@@ -544,7 +544,7 @@ class hamiltonian():
                     # Sort the  output, store the transformation matrix.
                     ind_e = jnp.argsort(jnp.real(Es))
                     Es = Es[ind_e]
-                    self.U[ii] = U_mat[ii][:, ind_e]
+                    self.U[ii] = U_mat[:, ind_e]
 
                     # Check to make sure the diganolization resulted in only real
                     # components, then build the matrix with the eigenvalues and

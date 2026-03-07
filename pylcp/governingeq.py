@@ -56,7 +56,7 @@ class governingeq(object):
         # Add lasers:
         self.laserBeams = {} # Laser beams are meant to be dictionary,
         if isinstance(laserBeams, list):
-            self.laserBeams['g->e'] = copy.copy(laserBeamsObject(laserBeams)) # Assume label is g->e
+            self.laserBeams['g->e'] = laserBeamsObject(laserBeams)  # Assume label is g->e
         elif isinstance(laserBeams, laserBeamsObject):
             self.laserBeams['g->e'] = copy.copy(laserBeams) # Again, assume label is g->e
         elif isinstance(laserBeams, dict):
@@ -88,12 +88,9 @@ class governingeq(object):
             self.__check_consistency_in_lasers_and_d_q()
 
         # Check the acceleration:
-        if not isinstance(a, (np.ndarray, jnp.ndarray)):
-            raise TypeError('Constant acceleration must be an numpy or jax array.')
-        elif a.size != 3:
+        if a.size != 3:
             raise ValueError('Constant acceleration must have length 3.')
-        else:
-            self.constant_accel = a
+        self.constant_accel = a
 
         # Set up a dictionary to store any resulting force profiles.
         self.profile = {}
@@ -210,15 +207,15 @@ class governingeq(object):
         Find the equilibrium position
 
         Uses the find_equilibrium force() method to calculate the where the
-        :math:`\\mathbf{f}(\mathbf{r}, \mathbf{v}=0)=0`.
+        :math:`\\mathbf{f}(\\mathbf{r}, \\mathbf{v}=0)=0`.
 
         Parameters
         ----------
         axes : array_like
             A list of axis indices to compute the trapping frequencies along.
-            Here, :math:`\hat{x}` is index 0, :math:`\hat{y}` is index 1, and
-            :math:`\hat{z}` is index 2.  For example, `axes=[2]` calculates
-            the trapping frquency along :math:`\hat{z}`.
+            Here, :math:`\\hat{x}` is index 0, :math:`\\hat{y}` is index 1, and
+            :math:`\\hat{z}` is index 2.  For example, `axes=[2]` calculates
+            the trapping frquency along :math:`\\hat{z}`.
         kwargs :
             Any additional keyword arguments to pass to find_equilibrium_force()
 
@@ -230,24 +227,33 @@ class governingeq(object):
         if self.r_eq is None:
             self.r_eq = jnp.zeros((3,), dtype=jnp.float64)
 
-        # -- maybe change this for Optimistix for gpu and jax native solvers.
-        # -- Not necessarily faster, depends on the number of time it will call the function and the need for auto gradient etc.
-        def simple_wrapper(r_changing):
-            r_wrap = self.r_eq.copy()
-            r_wrap = r_wrap.at[jnp.asarray(axes)].set(r_changing)
+        def _set_and_eval(r_list):
+            r_wrap = jnp.array(r_list, dtype=jnp.float64)
+            self.set_initial_position_and_velocity(r_wrap, jnp.zeros(3))
+            return self.find_equilibrium_force()
 
-            self.set_initial_position_and_velocity(r_wrap, jnp.array([0.0, 0.0, 0.0]))
-            F = self.find_equilibrium_force()
+        if len(axes) > 1:
+            def multi_wrapper(r_changing):
+                r_vals = list(np.array(self.r_eq, dtype=float))
+                for i, ax in enumerate(axes):
+                    r_vals[int(ax)] = float(r_changing[i])
+                F = _set_and_eval(r_vals)
+                return np.array([float(F[int(ax)]) for ax in axes])
 
-            return np.array(F[axes])
-
-        #print('Initial guess: %s' % r_eqi[axes])
-        if len(axes)>1:
-            result = root(simple_wrapper, **kwargs)
-            self.r_eq = self.r_eq.at[jnp.asarray(axes)].set(jnp.asarray(result.x))
+            result = root(multi_wrapper, **kwargs)
+            for i, ax in enumerate(axes):
+                self.r_eq = self.r_eq.at[int(ax)].set(float(result.x[i]))
         else:
-            result = root_scalar(simple_wrapper, **kwargs)
-            self.r_eq = self.r_eq.at[axes].set(jnp.asarray(result.root))
+            ax0 = int(axes[0])
+
+            def scalar_wrapper(r_changing):
+                r_vals = list(np.array(self.r_eq, dtype=float))
+                r_vals[ax0] = float(r_changing)
+                F = _set_and_eval(r_vals)
+                return float(F[ax0])
+
+            result = root_scalar(scalar_wrapper, **kwargs)
+            self.r_eq = self.r_eq.at[ax0].set(float(result.root))
 
         return self.r_eq
         # --- to here
@@ -262,16 +268,16 @@ class governingeq(object):
         ----------
         axes : array_like
             A list of axis indices to compute the trapping frequencies along.
-            Here, :math:`\hat{x}` is index 0, :math:`\hat{y}` is index 1, and
-            :math:`\hat{z}` is index 2.  For example, `axes=[2]` calculates
-            the trapping frquency along :math:`\hat{z}`.
+            Here, :math:`\\hat{x}` is index 0, :math:`\\hat{y}` is index 1, and
+            :math:`\\hat{z}` is index 2.  For example, `axes=[2]` calculates
+            the trapping frquency along :math:`\\hat{z}`.
         r : array_like, optional
             The position at which to calculate the damping coefficient.  By
             default r=None, which defaults to calculating at the equilibrium
             position as found by the find_equilibrium_position() method.  If
             this method has not been run, it defaults to the origin.
         eps : float, optional
-            The small numerical :math:`\epsilon` parameter used for calculating
+            The small numerical :math:`\\epsilon` parameter used for calculating
             the :math:`df/dr` derivative.  Default: 0.01
         kwargs :
             Any additional keyword arguments to pass to find_equilibrium_force()
@@ -333,16 +339,16 @@ class governingeq(object):
         ----------
         axes : array_like
             A list of axis indices to compute the damping coefficient(s) along.
-            Here, :math:`\hat{x}` is index 0, :math:`\hat{y}` is index 1, and
-            :math:`\hat{z}` is index 2.  For example, `axes=[2]` calculates
-            the damping parameter along :math:`\hat{z}`.
+            Here, :math:`\\hat{x}` is index 0, :math:`\\hat{y}` is index 1, and
+            :math:`\\hat{z}` is index 2.  For example, `axes=[2]` calculates
+            the damping parameter along :math:`\\hat{z}`.
         r : array_like, optional
             The position at which to calculate the damping coefficient.  By
             default r=None, which defaults to calculating at the equilibrium
             position as found by the find_equilibrium_position() method.  If
             this method has not been run, it defaults to the origin.
         eps : float
-            The small numerical :math:`\epsilon` parameter used for calculating
+            The small numerical :math:`\\epsilon` parameter used for calculating
             the :math:`df/dv` derivative.  Default: 0.01
         kwargs :
             Any additional keyword arguments to pass to find_equilibrium_force()

@@ -104,11 +104,11 @@ class rateeq(governingeq):
     v0 : array_like, shape (3,), optional
         Initial velocity.  Default: [0., 0., 0.]
     """
-    def __init__(self, laserBeams, magField, hamitlonian,
+    def __init__(self, laserBeams, magField, hamiltonian,
                  a=np.array([0., 0., 0.]), include_mag_forces=True,
                  svd_eps=1e-10, r0=np.array([0., 0., 0.]),
                  v0=np.array([0., 0., 0.])):
-        super().__init__(laserBeams, magField, hamitlonian,
+        super().__init__(laserBeams, magField, hamiltonian,
                          a=a, r0=r0, v0=v0)
 
         self.include_mag_forces = include_mag_forces
@@ -275,7 +275,7 @@ class rateeq(governingeq):
 
         self.Rev = self.Rev + self.Rev_decay
 
-        Bhat = self._calc_pumping_rates(r, v, t, Bhat)
+        self._calc_pumping_rates(r, v, t, Bhat)
 
         self._add_pumping_rates_to_Rev()
 
@@ -987,6 +987,11 @@ class rateeq(governingeq):
 
             return dydt
 
+        def _rand_unit(axes):
+            v = rng.standard_normal(3) * axes
+            norm = _np.linalg.norm(v)
+            return v / norm if norm > 0 else v
+
         def random_force_func_cpu(t, y, dt):
             total_P = 0
             num_scatters = 0
@@ -999,8 +1004,7 @@ class rateeq(governingeq):
                     y[-6:-3] += (_np.array(self.laserBeams[key].beam_vector[ii]
                                            .kvec(y[-3:], t)) /
                                  self.hamiltonian.mass)
-                    y[-6:-3] += self.recoil_velocity[key] * random_vector(
-                        rng, free_axes)
+                    y[-6:-3] += self.recoil_velocity[key] * _rand_unit(free_axes)
                 total_P += _np.sum(P)
             return (num_scatters, (max_scatter_probability / total_P) * dt)
 
@@ -1013,8 +1017,7 @@ class rateeq(governingeq):
                 for _ in range(_np.sum(dice < P)):
                     num_scatters += 1
                     y[-6:-3] += self.recoil_velocity[key] * (
-                        random_vector(rng, free_axes) +
-                        random_vector(rng, free_axes))
+                        _rand_unit(free_axes) + _rand_unit(free_axes))
                 total_P += _np.sum(P)
             return (num_scatters, (max_scatter_probability / total_P) * dt)
 

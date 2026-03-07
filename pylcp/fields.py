@@ -317,10 +317,7 @@ class laserBeam(object):
         self.eps = eps
 
         if pol is not None:
-            if not isinstance(pol, (jnp.ndarray, np.ndarray)):
-                parsed_pol = self.__parse_constant_polarization(pol, pol_coord)
-            else:
-                parsed_pol = pol
+            parsed_pol = self.__parse_constant_polarization(pol, pol_coord)
             self._pol = jnp.array(parsed_pol, dtype=jnp.complex64)
         else:
             self._pol = jnp.array([0., 0., 1.], dtype=jnp.complex64)

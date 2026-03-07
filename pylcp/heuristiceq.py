@@ -1,5 +1,6 @@
 import numpy as np
 import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 from .integration_tools_gpu import solve_ivp_random
 from .common import base_force_profile
@@ -48,9 +49,6 @@ class heuristiceq(governingeq):
         self.gamma = float(gamma)
         self.k = float(k)
 
-        self.profile = {}
-        self.sol = None
-
     def scattering_rate(self, r, v, t, return_kvecs=False):
         """
         Calculates the scattering rate for each laser beam.
@@ -75,7 +73,7 @@ class heuristiceq(governingeq):
         """
         B = self.magField.Field(r, t)
         Bmag = jnp.linalg.norm(B)
-        Bhat = jnp.where(Bmag > 0, B / Bmag, jnp.array([0., 0., 1.]))
+        Bhat = jnp.where(Bmag > 1e-10, B / Bmag, jnp.array([0., 0., 1.], dtype=jnp.float64))
 
         kvecs = self.laserBeams['g->e'].kvec(r, t)             # (n_beams, 3)
         intensities = self.laserBeams['g->e'].intensity(r, t)  # (n_beams,)
@@ -203,7 +201,7 @@ class heuristiceq(governingeq):
             return y_jump, n_scatters, new_dt_max, key
 
         def dummy_recoil(t, y, dt, key):
-            return y, 0, jnp.inf, key
+            return y, jnp.int32(0), jnp.inf, key
 
         random_func = random_recoil_fn if random_recoil else dummy_recoil
 

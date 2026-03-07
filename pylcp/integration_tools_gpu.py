@@ -1,4 +1,5 @@
 import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import functools
 from diffrax import (
@@ -107,7 +108,7 @@ def _batched_random_trajectories(
     elif solver_type == "Kvaerno5":
         solver = Kvaerno5()
     else:
-        raise ValueError(f"Solver {solver} is not one of the specified solvers implemented in the function!")
+        raise ValueError(f"Solver '{solver_type}' is not one of the specified solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
     
     term = ODETerm(lambda t, y, args: func(t, y))
     
@@ -143,8 +144,11 @@ def _batched_random_trajectories(
         
         ts_new = state['ts'].at[idx].set(t_next)
         ys_new = state['ys'].at[idx].set(y_jump)
-        t_rand_new = jnp.where(n_scatters > 0, state['t_random'].at[idx].set(t_next), state['t_random'])
-        n_rand_new = jnp.where(n_scatters > 0, state['n_random'].at[idx].set(n_scatters), state['n_random'])
+        # Always-write pattern: single scatter update per array instead of
+        # materialising two full-array copies via jnp.where(cond, arr1, arr2).
+        t_rand_new = state['t_random'].at[idx].set(
+            jnp.where(n_scatters > 0, t_next, jnp.float64(0.)))
+        n_rand_new = state['n_random'].at[idx].set(n_scatters)
         
         return {
             't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
@@ -179,7 +183,7 @@ def solve_ivp_random(
     keys_batch,
     solver_type="Dopri5",
     max_steps=100000,
-    max_step=jnp.inf,
+    max_step=float('inf'),
     rtol=1e-5,
     atol=1e-5,
     **options
@@ -241,7 +245,8 @@ def solve_ivp_random(
     y0_batch = jnp.asarray(y0_batch)
     keys_batch = jnp.asarray(keys_batch)
     t0, tf = jnp.asarray(t_span[0], dtype=jnp.float64), jnp.asarray(t_span[1], dtype=jnp.float64)
-    dt0 = jnp.minimum(1e-3, max_step)
+    dt0 = jnp.minimum(jnp.asarray((tf - t0) * 1e-3, dtype=jnp.float64),
+                       jnp.asarray(max_step, dtype=jnp.float64))
     N = y0_batch.shape[0]
     
     batched_state = _batched_random_trajectories(
@@ -336,7 +341,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, so
             solver,
             t0=t0,
             t1=t1,
-            dt0=jnp.asarray(1e-3, dtype=t0.dtype),
+            dt0=jnp.asarray((t1 - t0) / n_points, dtype=t0.dtype),
             y0=y0,
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
             saveat=SaveAt(ts=ts_grid),

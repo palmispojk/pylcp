@@ -1,6 +1,8 @@
 import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
 import scipy.constants as cts
+import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 def __wig3j(j1, j2, j3, m1, m2, m3):
@@ -272,7 +274,7 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
            return_basis=False):
     """
     Defines the field-free and magnetic field-dependent components of the excited
-    :math:`A^2\Pi_{1/2}` state Hamiltonian.
+    :math:`A^2\\Pi_{1/2}` state Hamiltonian.
 
     Parameters
     ----------
@@ -338,7 +340,7 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
     :math:`\\Sigma=1/2`, :math:`\\Lambda=1`, and then :math:`\\Omega=1/2`.
     The full Hamiltonian is a combination of a Brown
     and Carrington, *Rotational Spectroscopy of Diatomic Molecules*,
-    Eqs. 6.196 (rotation), 8.401 (:math:`\Lambda`-doubling),
+    Eqs. 6.196 (rotation), 8.401 (:math:`\\Lambda`-doubling),
     8.372 (nuclear spin-orbit coupling), 8.374 (Fermi contact interaction),
     8.506 (quadrupole), 9.57, 9.58, 9.59, 9.60, 9.70, and 9.71 (Zeeman
     interaction).  See the comments in the code for more details on equations
@@ -593,7 +595,7 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
         UX = np.identity(xbasis.shape[0])
 
     # Now transform in Hund's case A basis
-    dijq = np.zeros((3, xbasis.shape[0], abasis.shape[0]))
+    dijq = np.zeros((3, xbasis.shape[0], abasis.shape[0]), dtype=complex)
     for ii in range(3):
         dijq[ii] = UX.T @ T_ba @ intdijq[ii] @ T_ap
 
