@@ -171,6 +171,16 @@ class TestLaserBeam:
                          pol_coord='spherical')
         assert jnp.linalg.norm(beam.pol()) == pytest.approx(1.0, abs=1e-5)
 
+    def test_pol_cartesian_array_converts_to_spherical(self):
+        # Cartesian z-hat [0, 0, 1] should become spherical [0, 1, 0] (pi light)
+        beam_cart = laserBeam(kvec=[1., 0., 0.],
+                              pol=np.array([0., 0., 1.]),
+                              s=1.0, delta=0.0, pol_coord='cartesian')
+        beam_sph = laserBeam(kvec=[1., 0., 0.],
+                             pol=np.array([0., 1., 0.]),
+                             s=1.0, delta=0.0, pol_coord='spherical')
+        assert jnp.allclose(beam_cart.pol(), beam_sph.pol(), atol=1e-5)
+
     def test_callable_intensity(self):
         beam = laserBeam(kvec=[0., 0., 1.], pol=+1,
                          s=lambda R, t: float(R[2]**2), delta=0.0)
