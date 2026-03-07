@@ -169,6 +169,27 @@ class obe(governingeq):
         self._laserBeams = value
         self.__dict__.pop('_dydt', None)
 
+    def update_H0(self, hamiltonian):
+        """
+        Update only the H0 evolution matrix from a new hamiltonian.
+
+        This is much faster than reconstructing the full OBE when only the
+        field-free Hamiltonian (e.g. detunings) has changed, since the decay
+        and dipole coupling matrices remain the same.
+
+        Parameters
+        ----------
+        hamiltonian : pylcp.hamiltonian
+            A new hamiltonian whose H_0 block will be used.
+        """
+        hamiltonian.make_full_matrices()
+        self.hamiltonian = hamiltonian
+        H0_ev = self.__build_coherent_ev_submatrix(np.array(hamiltonian.H_0))
+        if self.transform_into_re_im:
+            H0_ev = self.__transform_ev_matrix(H0_ev)
+        self.ev_mat['H0'] = jnp.asarray(H0_ev, dtype=jnp.complex128)
+        self.__dict__.pop('_dydt', None)
+
     def __cast_ev_mat_to_jax(self):
         """Recursively convert the nested dictionaries of numpy arrays to jax arrays"""
         for key in self.ev_mat:
@@ -195,19 +216,15 @@ class obe(governingeq):
         This method builds the coherent evolution based on a submatrix of the
         Hamiltonian H.  In practice, one must be careful about commutators if
         one breaks up the Hamiltonian.
+
+        The density matrix is vectorized column-major: rho_flat[i + j*n] = rho[i,j].
+        The Liouvillian L such that d/dt rho_flat = L @ rho_flat is:
+            L = i * kron(H.T, I_n) - i * kron(I_n, H)
         """
-        ev_mat = np.zeros((self.hamiltonian.n**2, self.hamiltonian.n**2),
-                               dtype='complex128')
-
-        for ii in range(self.hamiltonian.n):
-            for jj in range(self.hamiltonian.n):
-                for kk in range(self.hamiltonian.n):
-                    ev_mat[self.__density_index(ii, jj),
-                           self.__density_index(ii, kk)] += 1j*H[kk, jj]
-                    ev_mat[self.__density_index(ii, jj),
-                           self.__density_index(kk, jj)] -= 1j*H[ii, kk]
-
-        return ev_mat
+        n = self.hamiltonian.n
+        I = np.eye(n)
+        H = np.asarray(H)
+        return 1j * np.kron(H.T, I) - 1j * np.kron(I, H)
 
     # Is only used in construction so can remain in np
     def __build_coherent_ev(self):
@@ -392,7 +409,7 @@ class obe(governingeq):
     def __reshape_rho(self, rho):
         rho = jnp.asarray(rho)
         if self.transform_into_re_im:
-            rho = rho.astype('complex128')
+            rho = rho.astype(jnp.complex128)
 
             if len(rho.shape) == 1:
                 rho = jnp.dot(self.U, rho)
@@ -420,17 +437,13 @@ class obe(governingeq):
         """
         Reshape the solution to have all the proper parts.
         """
-        
-        for sol in self.sols: # here all solutions is a list of atoms 
-            # sol with shape (time_steps, state_dim)
-            # transposed to get the same axis as original pylcp
-            rho_flat = sol.y[:, -6].T
+        # Each RandomOdeResult.y has shape (state_dim, n_steps)
+        for sol in self.sols:
+            rho_flat = sol.y[:-6, :]      # (n^2, n_steps)
             sol.rho = self.__reshape_rho(rho_flat)
-            
-            sol.r = jnp.real(sol.y[:, -3:].T)
-            sol.v = jnp.real(sol.y[:, -6:-3].T)
-
-        del self.sol.y
+            sol.v = jnp.real(sol.y[-6:-3, :])  # (3, n_steps)
+            sol.r = jnp.real(sol.y[-3:, :])    # (3, n_steps)
+            del sol.y
 
 
     def set_initial_rho(self, rho0):
@@ -591,16 +604,14 @@ class obe(governingeq):
                     ev_mat -= Eq[ii]*self.ev_mat['d_q*'][key][ii]
 
         # Add in magnetic fields:
-        # BUG: this code never does drhodt? and is not accessed, neither is rho which is never passed to the function.
         B = self.magField.Field(r, t)
-        for ii, q in enumerate(range(-1, 2)):
-            if self.transform_into_re_im:
-                if np.abs(Bq[ii])>1e-10:
-                    drhodt -= self.ev_mat['B'][ii]*B[ii] @ rho
-            else:
-                Bq = cart2spherical(B)
-                if np.abs(Bq[2-ii])>1e-10:
-                    drhodt -= (-1)**np.abs(q)*self.ev_mat['B'][ii]*Bq[2-ii] @ rho
+        if self.transform_into_re_im:
+            for ii in range(3):
+                ev_mat = ev_mat - self.ev_mat['B'][ii] * B[ii]
+        else:
+            Bq = cart2spherical(B)
+            for ii in range(3):
+                ev_mat = ev_mat - self.ev_mat['B'][ii] * jnp.conjugate(Bq[ii])
 
         return ev_mat
 
@@ -658,7 +669,7 @@ class obe(governingeq):
             v    = y[-6:-3]
             rho  = y[:-6]
             a    = jnp.zeros(3, dtype=y.dtype)
-            drhodt = self.__drhodt(r, t, rho).astype(y.dtype)
+            drhodt = jnp.real(self.__drhodt(r, t, rho)) if self.transform_into_re_im else self.__drhodt(r, t, rho)
             return jnp.concatenate((drhodt, a, v))
         return dydt
 
@@ -916,7 +927,7 @@ class obe(governingeq):
         else:
             rho_mat = jnp.asarray(rho)
 
-        if rho.shape[:2]!=(self.hamiltonian.n, self.hamiltonian.n):
+        if rho_mat.shape[:2]!=(self.hamiltonian.n, self.hamiltonian.n):
             raise ValueError('rho must have dimensions (n, n,...), where n '+
                              'corresponds to the number of states in the '+
                              'generating Hamiltonian. ' +
@@ -926,10 +937,7 @@ class obe(governingeq):
                              'corresponds to the number of states in the '+
                              'generating Hamiltonian. ' +
                              'Instead, shape of O is %s.'%str(O.shape))
-        av0 = jnp.tensordot(O, rho_mat, axes=[(-2, -1), (0, 1)])
-        if jnp.allclose(jnp.imag(av0), jnp.zeros_like(jnp.imag(av0))):
-            av0 = jnp.real(av0)
-        return av0
+        return jnp.real(jnp.tensordot(O, rho_mat, axes=[(-2, -1), (0, 1)]))
 
 
     def force(self, r, t, rho, return_details=False):
@@ -991,9 +999,15 @@ class obe(governingeq):
                 return beam_func(jnp.real(r_in), t_in)
 
         for key in self.laserBeams:
-            # First, determine the average mu_q:
-            # This returns a (3,) + rho.shape[2:] array
-            mu_q_av = self.observable(self.hamiltonian.d_q_bare[key], rho_mat)
+            # Compute the complex average of each d_q component.  We need the
+            # full complex value (not just Re) because the force is
+            # Re[<d_q> * ∇E] where ∇E is also complex (e.g. ∝ ik for a plane
+            # wave). Using observable() would apply jnp.real() prematurely and
+            # zero out the imaginary-coherence contribution to the force.
+            mu_q_av = jnp.tensordot(
+                jnp.asarray(self.hamiltonian.d_q_bare[key]), rho_mat,
+                axes=[(-2, -1), (0, 1)]
+            )
             gamma = self.hamiltonian.blocks[self.hamiltonian.laser_keys[key]].parameters['gamma']
 
             if not return_details:
@@ -1056,7 +1070,7 @@ class obe(governingeq):
         Finds the equilibrium force at the initial position.
 
         This method works by solving the OBEs in a chunk of time
-        $\Delta T$, calculating the force during that chunk, continuing
+        $\\Delta T$, calculating the force during that chunk, continuing
         the integration for another chunk, calculating the force during that
         subsequent chunk, and comparing the average of the forces of the two
         chunks to see if they have converged.
@@ -1064,7 +1078,7 @@ class obe(governingeq):
         Parameters
         ----------
         deltat : float, optional
-            Chunk time $\Delta T$ to integrate over before checking for convergence. Default: 500.
+            Chunk time $\\Delta T$ to integrate over before checking for convergence. Default: 500.
         itermax : int, optional
             Maximum number of chunk iterations. Default: 100.
         Npts : int, optional
