@@ -2,6 +2,8 @@ import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
 import scipy.constants as cts
 from . import XFmolecules
+import jax
+jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 def wig3j(j1, j2, j3, m1, m2, m3):
@@ -142,25 +144,25 @@ def fine_structure_uncoupled(L, S, I, xi, a_c, a_orb, a_dip, gL, gS, gI,
                 H_0[ii+drow, ii] += - t1*(3*mL**2-L*(L+1))*(L+S)*a_dip/(4*L*S*(2*L-1))
 
         # (IV)
-        if mL+1<=1 and mI-1>=-I and L>0 and (np.abs(a_orb)>0. or np.abs(a_dip)>0.):
+        if mL+1<=L and mI-1>=-I and L>0 and (np.abs(a_orb)>0. or np.abs(a_dip)>0.):
             t1 = np.sqrt((L-mL)*(L+mL+1)*(I+mI)*(I-mI+1))
             drow = int((2*I+1)*(2*S+1) - 1)
             H_0[ii+drow, ii] += t1*(1+S)*a_orb/2/L + t1*3*(2*mL+1)*mS*(1+S)*a_dip/(4*L*S*(2*L-1))
 
-        if mI+1<=I and mL-L>=-1 and L>0 and (np.abs(a_orb)>0. or np.abs(a_dip)>0.):
+        if mI+1<=I and mL-1>=-L and L>0 and (np.abs(a_orb)>0. or np.abs(a_dip)>0.):
             t1 = np.sqrt((I-mI)*(I+mI+1)*(L+mL)*(L-mL+1))
             drow = int(1 - (2*I+1)*(2*S+1))
             H_0[ii+drow, ii] += t1*(1+S)*a_orb/2/L + t1*3*(2*mL-1)*mS*(1+S)*a_dip/(4*L*S*(2*L-1))
 
         # (V)
         if mL+2<=L and mS-1>=-S and mI-1>=-I and np.abs(a_dip)>0. and L>0 and S>0:
-            t1 = (L-mL)*(L+mL+1)
-            t1 = t1*np.sqrt( (S+mS)*(S-mS+1)*(I+mI)*(I-mI+1) )
+            t1 = np.sqrt((L-mL)*(L-mL-1)*(L+mL+1)*(L+mL+2)
+                         *(S+mS)*(S-mS+1)*(I+mI)*(I-mI+1))
             drow = int(2*(2*I+1)*(2*S+1) - (2*I+1) - 1)
             H_0[ii+drow, ii] += t1*3*(1+S)*a_dip/(4*L*S*(2*L-1))
         if mL-2>=-L and mS+1<=S and mI+1<=I and np.abs(a_dip)>0. and L>0 and S>0:
-            t1 = (L+mL)*(L-mL+1)
-            t1 = t1*np.sqrt( (S-mS)*(S+mS+1)*(I-mI)*(I+mI+1) )
+            t1 = np.sqrt((L+mL)*(L+mL-1)*(L-mL+1)*(L-mL+2)
+                         *(S-mS)*(S+mS+1)*(I-mI)*(I+mI+1))
             drow = int(-2*(2*I+1)*(2*S+1) + (2*I+1) + 1)
             H_0[ii+drow, ii] += t1*3*(1+S)*a_dip/(4*L*S*(2*L-1))
             
@@ -276,7 +278,7 @@ def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
             H_0[index(J, I, mJ-1, mI+1), index(J, I, mJ, mI)] += \
              0.5*Ahfs*np.sqrt((J+mJ)*(J-mJ+1))*np.sqrt((I-mI)*(I+mI+1))
 
-    if Bhfs > 0:
+    if Bhfs != 0:
         Bhfs = Bhfs/(2*I*(2*I-1)*J*(2*J-1))  # rescale, include the denominator
         # Next, do the J_zI_z diagonal elements\
         for mJ in np.arange(-J, J+1, 1):
@@ -341,8 +343,8 @@ def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
     if return_basis:
         basis = np.zeros((4,num_of_states))
 
-        for mJ in range(-J,J+1):
-            for mI in range(-I,I+1):
+        for mJ in np.arange(-J, J+1, 1):
+            for mI in np.arange(-I, I+1, 1):
                 basis[index(J, I, mJ, mI)] = np.array([J, I, mJ, mI])
 
         return H_0_jax, mu_q_jax, basis
@@ -521,13 +523,9 @@ def singleF(F, gF=1, muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
 
 
 def dqij_norm(dqij):
-    dqij_norm = np.zeros(dqij.shape)
-    for ii in range(dqij.shape[0]):
-        for jj in range(dqij.shape[2]):
-            dqij_norm[ii, :, jj] = dqij[ii, :, jj]/\
-                np.linalg.norm(dqij[:, :, jj])
-
-    return dqij_norm
+    col_norms = np.linalg.norm(dqij, axis=(0, 1))  # (n_e,)
+    safe_norms = np.where(col_norms > 0, col_norms, 1.)
+    return np.where(col_norms > 0, dqij / safe_norms, 0.)
 
 
 def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
