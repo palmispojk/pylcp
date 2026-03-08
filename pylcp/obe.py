@@ -738,8 +738,8 @@ class obe(governingeq):
 
     def evolve_motion(self,
                       t_span,
-                      y0_batch,
-                      keys_batch,
+                      y0_batch=None,
+                      keys_batch=None,
                       freeze_axis=[False, False, False],
                       random_recoil=False,
                       max_scatter_probability=0.1,
@@ -791,6 +791,12 @@ class obe(governingeq):
             It contains other important elements, which can be discerned from
             scipy's solve_ivp documentation.
         """
+        if y0_batch is None:
+            y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
+            y0_batch = y0[jnp.newaxis, :]
+        if keys_batch is None:
+            keys_batch = jax.random.split(jax.random.PRNGKey(np.random.randint(0, 2**31)), y0_batch.shape[0])
+
         free_axes = jnp.bitwise_not(jnp.asarray(freeze_axis, dtype=bool))
         random_recoil_flag = random_recoil
 
@@ -804,7 +810,7 @@ class obe(governingeq):
             
             dvdt = (F * free_axes) / self.hamiltonian.mass + self.constant_accel
             drdt = v
-            drhodt = self.__drhodt(r, t, rho)
+            drhodt = jnp.real(self.__drhodt(r, t, rho)) if self.transform_into_re_im else self.__drhodt(r, t, rho)
 
             return jnp.concatenate((drhodt, dvdt, drdt))
         
