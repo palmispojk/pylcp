@@ -732,3 +732,60 @@ class TestFullOBEEv:
         ev = o_B.full_OBE_ev(r, 0.)
         assert ev.shape == (o_B.hamiltonian.n**2, o_B.hamiltonian.n**2)
         assert not jnp.any(jnp.isnan(ev))
+
+
+# ---------------------------------------------------------------------------
+# Test1DMOTForceProfile – regression tests for magnetic field gradient
+# ---------------------------------------------------------------------------
+
+class Test1DMOTForceProfile:
+    """1D MOT with linear B-field gradient: OBE force must be restoring."""
+
+    @pytest.fixture
+    def mot_obe(self):
+        from pylcp.fields import magField
+        ham = make_ham(gamma=1.0, k=1.0, mass=1.0)
+        mu_val = 1399624.49171  # |diag(mu_e[1])[0]|
+        delta = -4.0
+        x_res = 5.0
+        alpha = abs(delta) / (x_res * mu_val)
+        beams = laserBeams([
+            {'kvec': [1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': delta},
+            {'kvec': [-1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': delta},
+        ])
+        B = magField(lambda R: -alpha * R)
+        return obe(beams, B, ham), x_res
+
+    def test_force_at_origin_is_zero(self, mot_obe):
+        """By symmetry the force at x=0 (where B=0) must vanish."""
+        o, _ = mot_obe
+        o.set_initial_position_and_velocity(jnp.zeros(3), jnp.zeros(3))
+        F = o.find_equilibrium_force(deltat=200, itermax=50, Npts=2001)
+        assert float(F[0]) == pytest.approx(0., abs=1e-6)
+
+    def test_force_nonzero_away_from_origin(self, mot_obe):
+        """Force must be non-zero in the linear trapping region."""
+        o, x_res = mot_obe
+        o.set_initial_position_and_velocity(
+            jnp.array([x_res / 2, 0., 0.]), jnp.zeros(3))
+        F = o.find_equilibrium_force(deltat=200, itermax=50, Npts=2001)
+        assert abs(float(F[0])) > 1e-6
+
+    def test_force_is_restoring(self, mot_obe):
+        """Force in the linear region should be restoring."""
+        o, x_res = mot_obe
+        # Use half the resonance position — well inside the linear trapping region
+        x_test = x_res / 2
+        for x_val, expected_sign in [(x_test, -1), (-x_test, +1)]:
+            o.set_initial_position_and_velocity(
+                jnp.array([x_val, 0., 0.]), jnp.zeros(3))
+            F = o.find_equilibrium_force(deltat=200, itermax=50, Npts=2001)
+            assert float(F[0]) * expected_sign > 0., \
+                f"Force at x={x_val} should have sign {expected_sign}, got {float(F[0])}"
+
+    def test_force_no_nan(self, mot_obe):
+        """OBE force at origin (B=0) must not produce NaN."""
+        o, _ = mot_obe
+        o.set_initial_position_and_velocity(jnp.zeros(3), jnp.zeros(3))
+        F = o.find_equilibrium_force(deltat=200, itermax=50, Npts=2001)
+        assert not jnp.any(jnp.isnan(F))
