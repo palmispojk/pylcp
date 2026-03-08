@@ -1260,20 +1260,27 @@ class rateeq(governingeq):
             [jnp.asarray(V[i].ravel(), dtype=jnp.float64) for i in range(3)],
             axis=-1)    # (N, 3)
 
+        grid_shape = np.asarray(R[0]).shape
+
         Neq_all, F_all, f_all, fmag_all, Rijl_all = jax.vmap(single_point)(
             R_flat, V_flat)
 
-        it = np.nditer([R[0], R[1], R[2], V[0], V[1], V[2]],
-                       flags=['refs_ok', 'multi_index'],
-                       op_flags=[['readonly']] * 6)
-        for idx, _ in enumerate(it):
-            ind    = it.multi_index
-            Neq_i  = np.array(Neq_all[idx])
-            F_i    = np.array(F_all[idx])
-            f_i    = {k: np.array(f_all[k][idx])    for k in f_all}
-            fmag_i = np.array(fmag_all[idx])
-            Rijl_i = {k: np.array(Rijl_all[k][idx]) for k in Rijl_all}
-            self.profile[name].store_data(ind, Neq_i, F_i, f_i, fmag_i, Rijl_i)
+        # Bulk write results (avoids slow Python loop over grid points)
+        # Neq_all: (N, n_states) → (grid..., n_states)
+        self.profile[name].Neq = np.array(Neq_all.reshape(grid_shape + (-1,)))
+        # F_all: (N, 3) → (3, grid...)
+        self.profile[name].F = jnp.asarray(F_all.T.reshape((3,) + grid_shape))
+        # fmag_all: (N, 3) → (3, grid...)
+        self.profile[name].f_mag = jnp.asarray(fmag_all.T.reshape((3,) + grid_shape))
+        # f_all[key]: (N, 3, n_beams) → (3, grid..., n_beams)
+        ndim_grid = len(grid_shape)
+        for key in f_all:
+            f_reshaped = f_all[key].reshape(grid_shape + (3, -1))
+            self.profile[name].f[key] = jnp.moveaxis(f_reshaped, ndim_grid, 0)
+        # Rijl_all[key]: (N, n_beams, n, m) → (grid..., n_beams, n, m)
+        for key in Rijl_all:
+            self.profile[name].Rijl[key] = np.array(
+                Rijl_all[key].reshape(grid_shape + Rijl_all[key].shape[1:]))
 
 
     def _generate_force_profile_cpu(self, R, V, name, progress_bar=False,
