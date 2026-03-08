@@ -294,3 +294,65 @@ class TestGenerateForceProfile:
         V = np.zeros((3, 5))
         fp = heq.generate_force_profile(R, V)
         assert jnp.all(fp.F[2] > 0.)
+
+
+# ---------------------------------------------------------------------------
+# Test1DMOTForceProfile – regression tests for magnetic field gradient
+# ---------------------------------------------------------------------------
+
+class Test1DMOTForceProfile:
+    """1D MOT with linear B-field gradient: force must be restoring and non-zero."""
+
+    @pytest.fixture
+    def mot_heq(self):
+        from pylcp.fields import magField
+        alpha = 1.0
+        beams = laserBeams([
+            {'kvec': [1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': -4.0},
+            {'kvec': [-1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': -4.0},
+        ])
+        B = magField(lambda R: -alpha * R)
+        return heuristiceq(beams, B, mass=1.0, gamma=1.0, k=1.0)
+
+    def test_force_profile_no_nan(self, mot_heq):
+        """Force profile with a B-field gradient must not contain NaN."""
+        x = np.linspace(-10, 10, 21)
+        R = np.array([x, np.zeros_like(x), np.zeros_like(x)])
+        V = np.zeros_like(R)
+        fp = mot_heq.generate_force_profile(R, V)
+        assert not np.any(np.isnan(fp.F))
+
+    def test_force_at_origin_is_zero(self, mot_heq):
+        """By symmetry the force at x=0 (where B=0) must vanish."""
+        mot_heq.set_initial_position_and_velocity(
+            jnp.zeros(3), jnp.zeros(3))
+        F = mot_heq.find_equilibrium_force()
+        assert float(F[0]) == pytest.approx(0., abs=1e-10)
+
+    def test_force_is_restoring(self, mot_heq):
+        """For x>0 the force must point in -x (restoring), and vice versa."""
+        x = np.linspace(-10, 10, 21)
+        R = np.array([x, np.zeros_like(x), np.zeros_like(x)])
+        V = np.zeros_like(R)
+        fp = mot_heq.generate_force_profile(R, V)
+        # Exclude the origin
+        pos_mask = x > 1.0
+        neg_mask = x < -1.0
+        assert np.all(fp.F[0, pos_mask] < 0.), "Force should be negative for x>0"
+        assert np.all(fp.F[0, neg_mask] > 0.), "Force should be positive for x<0"
+
+    def test_force_is_antisymmetric(self, mot_heq):
+        """F(x) ≈ -F(-x) for the symmetric 1D MOT."""
+        x = np.linspace(-10, 10, 21)
+        R = np.array([x, np.zeros_like(x), np.zeros_like(x)])
+        V = np.zeros_like(R)
+        fp = mot_heq.generate_force_profile(R, V)
+        F_x = np.array(fp.F[0])
+        assert np.allclose(F_x, -F_x[::-1], atol=1e-10)
+
+    def test_force_nonzero_away_from_origin(self, mot_heq):
+        """Force must be non-zero at the resonance position."""
+        mot_heq.set_initial_position_and_velocity(
+            jnp.array([4., 0., 0.]), jnp.zeros(3))
+        F = mot_heq.find_equilibrium_force()
+        assert abs(float(F[0])) > 1e-4
