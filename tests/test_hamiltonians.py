@@ -7,8 +7,12 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
+import scipy.constants as cts
+
 import pylcp.hamiltonians as ham
 from pylcp.hamiltonians import XFmolecules
+from pylcp.atom import atom
+from pylcp.common import cart2spherical, spherical2cart
 
 
 # ---------------------------------------------------------------------------
@@ -575,3 +579,458 @@ class TestDipoleXandAstates:
         # Passing UX=[] (default identity) should not raise
         dijq = XFmolecules.dipoleXandAstates(Xbasis, Abasis)
         assert dijq.shape == (3, 12, 4)
+
+
+# ---------------------------------------------------------------------------
+# Breit-Rabi formula helper
+# ---------------------------------------------------------------------------
+
+def breitrabi(B, gJ, gI, AHFS, J=1/2, I=3/2):
+    """Analytical Breit-Rabi formula for J=1/2 ground states."""
+    muB = cts.value("Bohr magneton in Hz/T") * 1e-4
+    dHFS = (I + 1/2) * AHFS
+    x = (gJ - gI) * muB * B / dHFS
+
+    m_J, m_I = np.meshgrid(np.arange(-J, J + 0.001, 1),
+                            np.arange(-I, I + 0.001, 1))
+    m_J = m_J.reshape(-1)
+    m_I = m_I.reshape(-1)
+
+    E = np.zeros((m_J.size, B.size))
+    for ii in range(m_J.size):
+        m = m_I[ii] + m_J[ii]
+        if m == -(I + J):
+            E[ii, :] = (-dHFS / (2 * (2 * I + 1)) + gI * muB * m * B
+                        + dHFS / 2 * (1 - x))
+        else:
+            sgn = np.sign(m_J[ii])
+            E[ii, :] = (-dHFS / (2 * (2 * I + 1)) + gI * muB * m * B
+                        + sgn * dHFS / 2 * (1 + 4 * m * x / (2 * I + 1) + x**2)**0.5)
+
+    return np.sort(E, axis=0)
+
+
+def diagonalize_hamiltonian(B_arr, H0, mu_q, Bhat=np.array([0., 0., 1.])):
+    """Diagonalize H0 + B * (mu_q · Bhat) for each B in B_arr, return sorted eigenvalues."""
+    Bhat = Bhat / np.linalg.norm(Bhat)
+    Bq = cart2spherical(Bhat)
+    nstates = H0.shape[0]
+    Es = np.zeros((len(B_arr), nstates))
+    for ii, Bi in enumerate(B_arr):
+        H = H0.astype('complex128').copy()
+        for jj, q in enumerate(np.arange(-1., 2., 1.)):
+            H -= (-1.)**q * Bi * Bq[2 - jj] * mu_q[jj]
+        Es[ii, :] = np.sort(np.linalg.eigh(H)[0])
+    return Es
+
+
+# ---------------------------------------------------------------------------
+# Spin in magnetic field – spherical tensor vs Pauli consistency
+# ---------------------------------------------------------------------------
+
+class TestSpinInMagneticField:
+    """Verify that the spherical tensor algebra (singleF) produces the same
+    Hamiltonian and dynamics as standard Pauli matrices for spin-1/2.
+
+    Adapted from tests/hamiltonians/00_spin_in_magnetic_field.ipynb.
+    """
+
+    def test_hamiltonian_eigenvalues_match_pauli(self):
+        """Eigenvalues of singleF Hamiltonian must match Pauli construction."""
+        B = np.array([1., 1., 0.])
+        gF = 1
+        H_0, mu_q = ham.singleF(1/2, gF=gF, muB=1)
+        mu = spherical2cart(mu_q)
+
+        # Pauli matrices
+        S_pauli = np.zeros((3, 2, 2), dtype='complex128')
+        S_pauli[0] = np.array([[0., 1.], [1., 0.]]) / 2
+        S_pauli[1] = np.array([[0., -1j], [1j, 0.]]) / 2
+        S_pauli[2] = np.array([[1., 0.], [0., -1.]]) / 2
+        mu_pauli = -gF * S_pauli
+
+        # Build Hamiltonian from spherical tensor
+        Bq = np.array([(B[0] - 1j * B[1]) / np.sqrt(2), B[2],
+                        -(B[0] + 1j * B[1]) / np.sqrt(2)])
+        H = -np.tensordot(mu_q, np.conjugate(Bq), axes=(0, 0))
+
+        # Build Hamiltonian from Pauli matrices
+        H_pauli = -np.tensordot(mu_pauli, B, axes=(0, 0))
+
+        evals_sph = np.sort(np.linalg.eigvalsh(H))
+        evals_pauli = np.sort(np.linalg.eigvalsh(H_pauli))
+        np.testing.assert_allclose(evals_sph, evals_pauli, atol=1e-12)
+
+    def test_expectation_values_match_pauli(self):
+        """Spin expectation values from density matrix evolution (singleF)
+        must match Schrödinger evolution with Pauli matrices."""
+        from scipy.integrate import solve_ivp
+
+        B = np.array([1., 1., 0.])
+        gF = 1
+        H_0, mu_q = ham.singleF(1/2, gF=gF, muB=1)
+        mu = spherical2cart(mu_q)
+        S = -mu / gF
+
+        S_pauli = np.zeros((3, 2, 2), dtype='complex128')
+        S_pauli[0] = np.array([[0., 1.], [1., 0.]]) / 2
+        S_pauli[1] = np.array([[0., -1j], [1j, 0.]]) / 2
+        S_pauli[2] = np.array([[1., 0.], [0., -1.]]) / 2
+        mu_pauli = -gF * S_pauli
+
+        Bq = np.array([(B[0] - 1j * B[1]) / np.sqrt(2), B[2],
+                        -(B[0] + 1j * B[1]) / np.sqrt(2)])
+        H = -np.tensordot(mu_q, np.conjugate(Bq), axes=(0, 0))
+        H_pauli = -np.tensordot(mu_pauli, B, axes=(0, 0))
+
+        t_eval = np.linspace(0, np.pi / 2, 50)
+        sol_sph = solve_ivp(lambda t, x: -1j * H @ x, [0, np.pi / 2],
+                            np.array([0., 1.]).astype('complex128'),
+                            t_eval=t_eval)
+        sol_pauli = solve_ivp(lambda t, x: -1j * H_pauli @ x, [0, np.pi / 2],
+                              np.array([1., 0.]).astype('complex128'),
+                              t_eval=t_eval)
+
+        avS = np.zeros((3, len(t_eval)))
+        avS_pauli = np.zeros((3, len(t_eval)))
+        for ii in range(3):
+            for jj in range(len(t_eval)):
+                avS[ii, jj] = np.real(
+                    np.conj(sol_sph.y[:, jj].T) @ S[ii] @ sol_sph.y[:, jj])
+                avS_pauli[ii, jj] = np.real(
+                    np.conj(sol_pauli.y[:, jj].T) @ S_pauli[ii] @ sol_pauli.y[:, jj])
+
+        # The spin magnitudes should match (both give |<S>| = 1/2)
+        mag_sph = np.sqrt(np.sum(avS**2, axis=0))
+        mag_pauli = np.sqrt(np.sum(avS_pauli**2, axis=0))
+        np.testing.assert_allclose(mag_sph, mag_pauli, atol=1e-4)
+        np.testing.assert_allclose(mag_sph, 0.5 * np.ones(len(t_eval)), atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# Linear Zeeman effect
+# ---------------------------------------------------------------------------
+
+class TestLinearZeemanEffect:
+    """Verify Zeeman splitting for singleF Hamiltonian.
+
+    Adapted from tests/hamiltonians/01_linear_Zeeman_effect.ipynb.
+    """
+
+    def test_zero_field_degenerate(self):
+        """At B=0, all 2F+1 states must be degenerate."""
+        F = 2
+        H_0, mu_q = ham.singleF(F, muB=1)
+        evals = np.sort(np.linalg.eigvalsh(H_0))
+        assert np.allclose(evals, np.zeros(2 * F + 1), atol=1e-14)
+
+    def test_linear_splitting_with_field(self):
+        """At finite B along z, energy levels should split linearly as m_F * gF * muB * B."""
+        F = 2
+        gF = 0.5
+        H_0, mu_q = ham.singleF(F, gF=gF, muB=1)
+        B_val = 5.0
+        H = H_0 + B_val * mu_q[1]  # q=0 component for z-field
+        evals = np.sort(np.linalg.eigvalsh(H))
+        expected = np.sort(np.array([-gF * mF * B_val for mF in np.arange(-F, F + 1)]))
+        np.testing.assert_allclose(evals, expected, atol=1e-10)
+
+    def test_field_direction_invariance(self):
+        """Eigenvalue spectra should be identical regardless of B-field direction."""
+        F = 2
+        H_0, mu_q = ham.singleF(F, muB=1)
+        B_val = 5.0
+
+        # z-direction
+        Es_z = np.sort(np.linalg.eigvalsh(H_0 + B_val * mu_q[1]))
+
+        # x-direction: Bq = [-1/√2, 0, 1/√2]
+        Bq_x = np.array([-1 / np.sqrt(2), 0., 1 / np.sqrt(2)])
+        H_x = H_0 + B_val * np.tensordot(Bq_x[::-1], mu_q, axes=(0, 0))
+        Es_x = np.sort(np.linalg.eigvalsh(H_x))
+
+        # y-direction: Bq = [i/√2, 0, -i/√2]
+        Bq_y = np.array([1j / np.sqrt(2), 0., -1j / np.sqrt(2)])
+        H_y = H_0 + B_val * np.tensordot(Bq_y[::-1], mu_q, axes=(0, 0))
+        Es_y = np.sort(np.linalg.eigvalsh(H_y))
+
+        np.testing.assert_allclose(Es_x, Es_z, atol=1e-10)
+        np.testing.assert_allclose(Es_y, Es_z, atol=1e-10)
+
+    def test_splitting_increases_with_field(self):
+        """Energy spread should increase with magnetic field strength."""
+        F = 2
+        H_0, mu_q = ham.singleF(F, muB=1)
+        spreads = []
+        for B_val in [1.0, 5.0, 10.0]:
+            evals = np.linalg.eigvalsh(H_0 + B_val * mu_q[1])
+            spreads.append(np.ptp(evals))
+        assert spreads[0] < spreads[1] < spreads[2]
+
+
+# ---------------------------------------------------------------------------
+# Breit-Rabi validation for ground state hyperfine structure
+# ---------------------------------------------------------------------------
+
+class TestBreitRabiValidation:
+    """Validate hyperfine Hamiltonians against the analytical Breit-Rabi formula.
+
+    Adapted from tests/hamiltonians/02_hyperfine_Hamilotians.ipynb.
+    """
+
+    muB = cts.value("Bohr magneton in Hz/T") * 1e-4
+
+    @pytest.mark.parametrize("species", ["7Li", "87Rb"])
+    def test_ground_state_breitrabi_low_field(self, species):
+        """At low fields, Hamiltonian eigenvalues should closely track the
+        Breit-Rabi formula."""
+        a = atom(species)
+        B = np.linspace(0.1, 10, 21)
+        H0, mu_q = ham.hyperfine_uncoupled(
+            a.state[0].J, a.I, gJ=a.state[0].gJ, gI=a.gI,
+            Ahfs=a.state[0].Ahfs, Bhfs=0, muB=self.muB)
+        Es = diagonalize_hamiltonian(B, H0, mu_q)
+        Es_br = breitrabi(B, a.state[0].gJ, a.gI, a.state[0].Ahfs,
+                          J=a.state[0].J, I=a.I)
+        Es_br_sorted = np.sort(Es_br, axis=0).T
+        np.testing.assert_allclose(Es, Es_br_sorted, rtol=5e-4)
+
+    @pytest.mark.parametrize("species", ["7Li", "87Rb"])
+    def test_coupled_uncoupled_bases_agree(self, species):
+        """Coupled and uncoupled bases must give close eigenvalue spectra."""
+        a = atom(species)
+        B = np.linspace(0.01, 1.0, 21)
+        H0_uc, mu_uc = ham.hyperfine_uncoupled(
+            a.state[0].J, a.I, gJ=a.state[0].gJ, gI=a.gI,
+            Ahfs=a.state[0].Ahfs, Bhfs=0, muB=self.muB)
+        H0_c, mu_c = ham.hyperfine_coupled(
+            a.state[0].J, a.I, gJ=a.state[0].gJ, gI=a.gI,
+            Ahfs=a.state[0].Ahfs, Bhfs=0, muB=self.muB)
+        Es_uc = diagonalize_hamiltonian(B, H0_uc, mu_uc)
+        Es_c = diagonalize_hamiltonian(B, H0_c, mu_c)
+        np.testing.assert_allclose(Es_uc, Es_c, rtol=1e-7)
+
+    @pytest.mark.parametrize("species", ["6Li", "7Li", "87Rb"])
+    def test_field_direction_invariance(self, species):
+        """Eigenvalues must be invariant under rotation of B-field direction."""
+        a = atom(species)
+        B = np.linspace(1, 100, 21)
+        H0, mu_q = ham.hyperfine_coupled(
+            a.state[0].J, a.I, gJ=a.state[0].gJ, gI=a.gI,
+            Ahfs=a.state[0].Ahfs, Bhfs=0, muB=self.muB)
+        Es_z = diagonalize_hamiltonian(B, H0, mu_q, Bhat=[0, 0, 1])
+        Es_x = diagonalize_hamiltonian(B, H0, mu_q, Bhat=[1, 0, 0])
+        Es_y = diagonalize_hamiltonian(B, H0, mu_q, Bhat=[0, 1, 0])
+        np.testing.assert_allclose(Es_x, Es_z, atol=1e-6)
+        np.testing.assert_allclose(Es_y, Es_z, atol=1e-6)
+
+    @pytest.mark.parametrize("species,Bmax", [("7Li", 0.5), ("87Rb", 5.0)])
+    def test_excited_state_coupled_uncoupled_agree(self, species, Bmax):
+        """Excited P_{3/2} state eigenvalues must agree in both bases.
+        Uses a lower B range for 7Li to stay below level crossing regions."""
+        a = atom(species)
+        B = np.linspace(0.01, Bmax, 11)
+        H0_uc, mu_uc = ham.hyperfine_uncoupled(
+            a.state[2].J, a.I, gJ=a.state[2].gJ, gI=a.gI,
+            Ahfs=a.state[2].Ahfs, Bhfs=a.state[2].Bhfs, muB=self.muB)
+        H0_c, mu_c = ham.hyperfine_coupled(
+            a.state[2].J, a.I, gJ=a.state[2].gJ, gI=a.gI,
+            Ahfs=a.state[2].Ahfs, Bhfs=a.state[2].Bhfs, muB=self.muB)
+        Es_uc = diagonalize_hamiltonian(B, H0_uc, mu_uc)
+        Es_c = diagonalize_hamiltonian(B, H0_c, mu_c)
+        np.testing.assert_allclose(Es_uc, Es_c, rtol=5e-4)
+
+    def test_unit_conversion_consistency(self):
+        """Results in real units (Hz) and natural units (gamma) must agree
+        after proper scaling."""
+        a = atom("7Li")
+        muB_real = cts.value("Bohr magneton in Hz/T") * 1e-4
+        B = np.linspace(0.1, 500, 31)
+
+        # Real units
+        H0_r, mu_r = ham.hyperfine_coupled(
+            a.state[0].J, a.I, gJ=a.state[0].gJ, gI=a.gI,
+            Ahfs=a.state[0].Ahfs, Bhfs=0, muB=muB_real)
+        Es_real = diagonalize_hamiltonian(B, H0_r, mu_r)
+
+        # Natural units (scaled by gamma)
+        gamma = a.state[2].gammaHz
+        alpha = muB_real / gamma
+        H0_n, mu_n = ham.hyperfine_coupled(
+            a.state[0].J, a.I, gJ=a.state[0].gJ, gI=a.gI,
+            Ahfs=a.state[0].Ahfs / gamma, Bhfs=0, muB=1)
+        B_nat = alpha * B
+        Es_nat = diagonalize_hamiltonian(B_nat, H0_n, mu_n)
+
+        np.testing.assert_allclose(Es_real, Es_nat * gamma, rtol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Transition rate numerical values
+# ---------------------------------------------------------------------------
+
+class TestTransitionRateValues:
+    """Verify numerical values of transition rate matrix elements.
+
+    Adapted from tests/hamiltonians/03_transition_rates.ipynb.
+    """
+
+    def test_F0_to_F1_selection_rules(self):
+        """F=0 → F'=1 should have exactly one nonzero element per q."""
+        dijq = ham.dqij_two_bare_hyperfine(0, 1, normalize=False)
+        for q in range(3):
+            nonzero = np.count_nonzero(np.abs(dijq[q]) > 1e-14)
+            assert nonzero == 1, f"q={q-1}: expected 1 nonzero element, got {nonzero}"
+
+    def test_F1_to_F1_vanishing_diagonal(self):
+        """F=1 → F'=1 dipole elements: transitions with ΔmF=q must satisfy
+        the triangle rule, and mF=0→mF'=0 for q=0 must vanish."""
+        dijq = ham.dqij_two_bare_hyperfine(1, 1, normalize=False)
+        # For q=0 (dijq[1]), the m=0 → m'=0 element must vanish
+        assert float(np.abs(dijq[1, 1, 1])) == pytest.approx(0., abs=1e-14)
+
+    def test_F1_to_F2_completeness(self):
+        """F=1 → F'=2 should have 3 nonzero elements per q (for Δm=q)."""
+        dijq = ham.dqij_two_bare_hyperfine(1, 2, normalize=False)
+        for q in range(3):
+            nonzero = np.count_nonzero(np.abs(dijq[q]) > 1e-14)
+            # Each q allows 3 transitions (one per m_F in the ground state,
+            # or fewer if m_F + q falls outside the excited manifold)
+            assert nonzero > 0, f"q={q-1}: expected nonzero elements"
+
+    def test_normalized_rates_sum_rule(self):
+        """For each excited state, the sum of squared dipole elements over
+        all ground states and polarizations should equal 1 (normalized)."""
+        dijq = ham.dqij_two_bare_hyperfine(1, 2, normalize=True)
+        for k in range(dijq.shape[2]):
+            rate_sum = np.sum(np.abs(dijq[:, :, k])**2)
+            assert float(rate_sum) == pytest.approx(1.0, abs=1e-10)
+
+    def test_full_D2_manifold_structure(self):
+        """Full D2 transition (J=1/2 → J'=3/2, I=3/2 as in Na) should produce
+        a non-empty matrix with correct shape."""
+        dijq, basis_g, basis_e = ham.dqij_two_hyperfine_manifolds(
+            1/2, 3/2, 3/2, normalize=True, return_basis=True)
+        n_g = int((2 * 0.5 + 1) * (2 * 1.5 + 1))  # 8 ground states
+        n_e = int((2 * 1.5 + 1) * (2 * 1.5 + 1))  # 16 excited states
+        assert dijq.shape == (3, n_g, n_e)
+        # There should be nonzero elements
+        assert np.count_nonzero(np.abs(dijq) > 1e-14) > 0
+
+    def test_D2_manifold_sum_rule(self):
+        """For each excited state in the full D2 manifold, the sum of squared
+        dipole elements over all ground states and q must equal 1."""
+        dijq = ham.dqij_two_hyperfine_manifolds(
+            1/2, 3/2, 3/2, normalize=True)
+        for k in range(dijq.shape[2]):
+            rate_sum = np.sum(np.abs(dijq[:, :, k])**2)
+            assert float(rate_sum) == pytest.approx(1.0, abs=1e-10)
+
+
+# ---------------------------------------------------------------------------
+# Fine structure uncoupled basis
+# ---------------------------------------------------------------------------
+
+class TestFineStructurePhysics:
+    """Physics validation for fine_structure_uncoupled Hamiltonians.
+
+    Adapted from tests/hamiltonians/04_fine_structure_uncoupled_basis.ipynb.
+    """
+
+    @pytest.fixture(scope='class')
+    def li7_params(self):
+        """Li-7 fine structure parameters."""
+        xi = 6701.16             # fine structure splitting (MHz)
+        a_c = -9.5788            # contact splitting (MHz)
+        a_orb = 8.6727           # orbital splitting (MHz)
+        a_dip = -1.8964          # dipole splitting (MHz)
+        gL = 0.9999218
+        gS = 2.0023193
+        gI = 2.170903 * (5.0507866e-27 / 9.2740154e-24)
+        aa = 803.54 / 2.         # ground state contact interaction (MHz)
+        muB = cts.value('Bohr magneton in Hz/T') * 1e-4 / 1e6
+        return dict(xi=xi, a_c=a_c, a_orb=a_orb, a_dip=a_dip,
+                    gL=gL, gS=gS, gI=gI, aa=aa, muB=muB)
+
+    def test_ground_state_agrees_with_coupled(self, li7_params):
+        """Li-7 ground state fine structure uncoupled should give
+        the same eigenvalues as hyperfine_coupled at low fields."""
+        p = li7_params
+        a = atom('7Li')
+
+        H_g_unc, mu_g_unc = ham.fine_structure_uncoupled(
+            0, 1/2, 3/2, 0., p['aa'], 0., 0., p['gL'], p['gS'], p['gI'], p['muB'])
+        H_g_c, mu_g_c = ham.hyperfine_coupled(
+            a.state[0].J, a.I, a.state[0].gJ, -a.gI,
+            a.state[0].Ahfs / 1e6, Bhfs=0, Chfs=0,
+            muB=cts.value("Bohr magneton in Hz/T") * 1e-4 / 1e6)
+
+        B = np.arange(1, 200, 10)
+        Es_unc = diagonalize_hamiltonian(B, H_g_unc, mu_g_unc)
+        Es_c = diagonalize_hamiltonian(B, H_g_c, mu_g_c)
+        np.testing.assert_allclose(Es_unc, Es_c, atol=0.5)
+
+    def test_excited_state_field_direction_invariance(self, li7_params):
+        """Li-7 excited state eigenvalues must be invariant under B-field rotation."""
+        p = li7_params
+        H_e, mu_e = ham.fine_structure_uncoupled(
+            1, 1/2, 3/2, p['xi'], p['a_c'], p['a_orb'], p['a_dip'],
+            p['gL'], p['gS'], p['gI'], p['muB'])
+
+        B = np.arange(1, 15, 2)
+        Es_z = diagonalize_hamiltonian(B, H_e, mu_e, Bhat=[0, 0, 1])
+        Es_x = diagonalize_hamiltonian(B, H_e, mu_e, Bhat=[1, 0, 0])
+        Es_y = diagonalize_hamiltonian(B, H_e, mu_e, Bhat=[0, 1, 0])
+        np.testing.assert_allclose(Es_x, Es_z, atol=1e-6)
+        np.testing.assert_allclose(Es_y, Es_z, atol=1e-6)
+
+    def test_fine_structure_splitting_present(self, li7_params):
+        """At B=0, the fine structure splitting should separate the P_{1/2}
+        and P_{3/2} manifolds by approximately xi."""
+        p = li7_params
+        H_e, mu_e = ham.fine_structure_uncoupled(
+            1, 1/2, 3/2, p['xi'], p['a_c'], p['a_orb'], p['a_dip'],
+            p['gL'], p['gS'], p['gI'], p['muB'])
+        evals = np.sort(np.linalg.eigvalsh(H_e))
+        # The gap between the P_{1/2} and P_{3/2} manifolds should be
+        # approximately the fine structure splitting
+        gap = evals[8] - evals[7]  # first P_{3/2} state - last P_{1/2} state
+        assert gap > p['xi'] / 2, "Fine structure gap is too small"
+
+    def test_dipole_elements_selection_rules(self, li7_params):
+        """Dipole matrix elements in uncoupled basis should respect ΔL=±1."""
+        p = li7_params
+        _, _, basis_g = ham.fine_structure_uncoupled(
+            0, 1/2, 3/2, 0., p['aa'], 0., 0., p['gL'], p['gS'], p['gI'],
+            p['muB'], return_basis=True)
+        _, _, basis_e = ham.fine_structure_uncoupled(
+            1, 1/2, 3/2, p['xi'], p['a_c'], p['a_orb'], p['a_dip'],
+            p['gL'], p['gS'], p['gI'], p['muB'], return_basis=True)
+        d_q = ham.dqij_two_fine_stucture_manifolds_uncoupled(basis_g, basis_e)
+        basis_g_arr = np.array(basis_g)
+        basis_e_arr = np.array(basis_e)
+        # Should have shape (3, n_g, n_e) and be nonzero
+        assert d_q.shape[0] == 3
+        assert d_q.shape[1] == basis_g_arr.shape[0]
+        assert d_q.shape[2] == basis_e_arr.shape[0]
+        assert np.count_nonzero(np.abs(d_q) > 1e-14) > 0
+
+    def test_high_field_paschen_back(self, li7_params):
+        """At very high fields, the total energy spread should scale
+        linearly with B (Paschen-Back regime)."""
+        p = li7_params
+        H_e, mu_e = ham.fine_structure_uncoupled(
+            1, 1/2, 3/2, p['xi'], p['a_c'], p['a_orb'], p['a_dip'],
+            p['gL'], p['gS'], p['gI'], p['muB'])
+
+        B_high = np.array([50000., 100000., 200000.])
+        Es = diagonalize_hamiltonian(B_high, H_e, mu_e)
+        # Total energy spread should scale linearly with B
+        spreads = np.ptp(Es, axis=1)
+        # spread/B should be constant (Paschen-Back: energy ∝ B)
+        ratio_01 = spreads[1] / spreads[0]
+        ratio_12 = spreads[2] / spreads[1]
+        expected_01 = B_high[1] / B_high[0]
+        expected_12 = B_high[2] / B_high[1]
+        assert ratio_01 == pytest.approx(expected_01, rel=1e-6)
+        assert ratio_12 == pytest.approx(expected_12, rel=1e-6)

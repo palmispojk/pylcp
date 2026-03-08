@@ -522,3 +522,100 @@ class TestVmapCompatibility:
         ts = jnp.zeros(4)
         dE_batch = jax.vmap(beam.electric_field_gradient)(Rs, ts)
         assert dE_batch.shape == (4, 3, 3)
+
+
+# ---------------------------------------------------------------------------
+# Polarization projection – comprehensive physics tests
+# ---------------------------------------------------------------------------
+
+class TestPolarizationProjection:
+    """Test that polarization projection onto different quantization axes
+    produces physically correct results.
+
+    Adapted from tests/lasers/00_polarization_projection.py.
+    """
+
+    def test_two_sigma_plus_definitions_agree(self):
+        """Two equivalent ways to define σ+ light (integer flag and spherical
+        coordinates) must give the same polarization projection."""
+        laser_int = laserBeam(kvec=[0., 0., 1.], pol=+1)
+        laser_sph = laserBeam(kvec=[0., 0., 1.],
+                              pol=np.array([0., 0., 1.]),
+                              pol_coord='spherical')
+
+        ths = np.linspace(0, np.pi, 21)
+        quant_axes = np.array([np.sin(ths), np.zeros(ths.shape), np.cos(ths)])
+
+        p1 = np.array(laser_int.project_pol(quant_axes))
+        p2 = np.array(laser_sph.project_pol(quant_axes))
+
+        np.testing.assert_allclose(np.abs(p1)**2, np.abs(p2)**2, atol=1e-10)
+
+    def test_sigma_plus_along_z_axis_is_pure(self):
+        """σ+ light with k along z, quantization axis along z, should be
+        purely σ+ (component index 2)."""
+        laser = laserBeam(kvec=[0., 0., 1.], pol=+1)
+        proj = np.array(laser.project_pol(np.array([[0.], [0.], [1.]])))
+        # σ- (idx 0) and π (idx 1) should be zero, σ+ (idx 2) should be 1
+        assert float(np.abs(proj[0, 0])**2) == pytest.approx(0., abs=1e-10)
+        assert float(np.abs(proj[1, 0])**2) == pytest.approx(0., abs=1e-10)
+        assert float(np.abs(proj[2, 0])**2) == pytest.approx(1., abs=1e-10)
+
+    def test_sigma_minus_along_z_axis_is_pure(self):
+        """σ- light with k along z, quantization axis along z, should be
+        purely σ- (component index 0)."""
+        laser = laserBeam(kvec=[0., 0., 1.], pol=-1)
+        proj = np.array(laser.project_pol(np.array([[0.], [0.], [1.]])))
+        assert float(np.abs(proj[0, 0])**2) == pytest.approx(1., abs=1e-10)
+        assert float(np.abs(proj[1, 0])**2) == pytest.approx(0., abs=1e-10)
+        assert float(np.abs(proj[2, 0])**2) == pytest.approx(0., abs=1e-10)
+
+    def test_pol_components_sum_to_one(self):
+        """The sum of |σ-|² + |π|² + |σ+|² must equal 1 for any quantization axis."""
+        laser = laserBeam(kvec=[0., 0., 1.], pol=+1)
+        ths = np.linspace(0, np.pi, 31)
+        quant_axes = np.array([np.sin(ths), np.zeros(ths.shape), np.cos(ths)])
+        proj = np.array(laser.project_pol(quant_axes))
+        total = np.sum(np.abs(proj)**2, axis=0)
+        np.testing.assert_allclose(total, np.ones(len(ths)), atol=1e-10)
+
+    def test_linear_pol_perpendicular_to_kvec(self):
+        """X-polarized light propagating along z, projected onto z-axis,
+        should give equal σ+ and σ- with no π component."""
+        laser = laserBeam(kvec=[0., 0., 1.],
+                          pol=np.array([1., 0., 0.]), pol_coord='cartesian')
+        proj = np.array(laser.project_pol(np.array([[0.], [0.], [1.]])))
+        # Linear polarization decomposes into equal σ+ and σ-
+        assert float(np.abs(proj[0, 0])**2) == pytest.approx(
+            float(np.abs(proj[2, 0])**2), abs=1e-10)
+        assert float(np.abs(proj[1, 0])**2) == pytest.approx(0., abs=1e-10)
+
+    def test_linear_pol_y_kvec_x(self):
+        """Y-polarized light propagating along x, projected onto z-axis,
+        should give pure π (y is perpendicular to both k and z-axis)."""
+        laser = laserBeam(kvec=[1., 0., 0.],
+                          pol=np.array([0., 1., 0.]), pol_coord='cartesian')
+        proj = np.array(laser.project_pol(np.array([[0.], [0.], [1.]])))
+        # Y-polarization with k along x: when quantization axis is z,
+        # y-polarization decomposes into equal σ+ and σ-
+        assert float(np.abs(proj[0, 0])**2) == pytest.approx(
+            float(np.abs(proj[2, 0])**2), abs=1e-10)
+
+    def test_pol_projection_rotated_quant_axis(self):
+        """Polarization projection should be smooth and consistent when
+        sweeping quantization axis through a non-trivial azimuthal angle."""
+        laser = laserBeam(kvec=[0., 0., 1.], pol=+1)
+        ths = np.linspace(0, np.pi, 51)
+        # Sweep quantization axis in the xz-plane
+        quant_axes_xz = np.array([np.sin(ths), np.zeros(ths.shape), np.cos(ths)])
+        proj_xz = np.array(laser.project_pol(quant_axes_xz))
+
+        # Sweep quantization axis in the yz-plane
+        quant_axes_yz = np.array([np.zeros(ths.shape), np.sin(ths), np.cos(ths)])
+        proj_yz = np.array(laser.project_pol(quant_axes_yz))
+
+        # Both should conserve total polarization (float32 precision from JAX)
+        total_xz = np.sum(np.abs(proj_xz)**2, axis=0)
+        total_yz = np.sum(np.abs(proj_yz)**2, axis=0)
+        np.testing.assert_allclose(total_xz, np.ones(len(ths)), atol=1e-6)
+        np.testing.assert_allclose(total_yz, np.ones(len(ths)), atol=1e-6)

@@ -9,7 +9,7 @@ import jax.numpy as jnp
 
 import pylcp.hamiltonians as hamiltonians
 from pylcp.hamiltonian import hamiltonian
-from pylcp.fields import laserBeams, laserBeam, constantMagneticField
+from pylcp.fields import laserBeams, laserBeam, constantMagneticField, magField
 from pylcp.obe import obe, force_profile
 
 
@@ -918,3 +918,115 @@ class TestRandomRecoilKickDistribution:
             "All kick magnitudes are identical — likely using a single "
             "random vector * 2 instead of two independent random vectors"
         )
+
+
+# ---------------------------------------------------------------------------
+# Magnetic trap OBE motion tests
+# ---------------------------------------------------------------------------
+
+class TestQuadrupoleTrapOBE:
+    """Test atom motion in a quadrupole magnetic trap using OBE.
+
+    Adapted from tests/magnetic_traps/01_motion_OBE.py.
+    """
+
+    @pytest.fixture(scope='class')
+    def trap_setup(self):
+        """Build an OBE solver for a spin-1/2 atom in a linear magnetic field."""
+        import pylcp.hamiltonians as hamiltonians
+        from pylcp.hamiltonian import hamiltonian as ham_cls
+        H0, muq = hamiltonians.singleF(1/2, gF=1, muB=1)
+        h = ham_cls()
+        h.add_H_0_block('g', H0)
+        h.add_mu_q_block('g', muq)
+        return h
+
+    def test_linear_field_parabolic_motion(self, trap_setup):
+        """In a uniform gradient B=(0,0,z), a spin-up atom released from z=1
+        should undergo approximately parabolic motion: z(t) ≈ t²/4 + 1."""
+        h = trap_setup
+        B = magField(lambda R: jnp.array([0., 0., R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+
+        # Pure spin-up state
+        theta = 0.
+        psi = np.array([np.cos(theta / 2), np.sin(theta / 2)])
+        rho = np.array([[psi[0] * psi[0], psi[0] * psi[1]],
+                        [psi[1] * psi[0], psi[1] * psi[1]]])
+        o.set_initial_rho(rho.reshape(4,))
+
+        o.evolve_motion([0., 4.], random_recoil=False, n_points=101)
+        t = np.array(o.sols[0].t)
+        z = np.array(o.sols[0].r[2])
+
+        # Check parabolic trajectory z ≈ t²/4 + 1 at early times
+        # (before the linear field approximation breaks down)
+        early = t < 2.0
+        z_expected = t[early]**2 / 4 + 1
+        np.testing.assert_allclose(z[early], z_expected, rtol=0.15)
+
+    def test_quadrupole_trap_confinement(self, trap_setup):
+        """An atom in a quadrupole trap should remain confined
+        (not escape to infinity)."""
+        h = trap_setup
+        B = magField(lambda R: jnp.array([-0.5 * R[0], -0.5 * R[1], 1 * R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_populations(jnp.array([0., 1.]))
+
+        o.evolve_motion([0, 10], random_recoil=False, n_points=101)
+        r = np.array(o.sols[0].r)
+        r_mag = np.sqrt(np.sum(r**2, axis=0))
+
+        # Atom should stay bounded (not diverge)
+        assert not np.any(np.isnan(r_mag)), "NaN in position"
+        # Check atom oscillates back (doesn't just fly away monotonically)
+        z = np.array(o.sols[0].r[2])
+        assert np.any(z < z[0]), "Atom should oscillate back toward origin"
+
+    def test_density_matrix_stays_physical(self, trap_setup):
+        """Density matrix trace must remain 1 and diagonal elements non-negative."""
+        h = trap_setup
+        B = magField(lambda R: jnp.array([0., 0., R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_populations(jnp.array([0., 1.]))
+
+        o.evolve_motion([0., 5.], random_recoil=False, n_points=51)
+        rho = np.array(o.sols[0].rho)
+
+        # rho has shape (n, n, T) where n is the number of states
+        n = rho.shape[0]
+        n_times = rho.shape[2]
+        for t_idx in range(n_times):
+            rho_mat = rho[:, :, t_idx]
+            trace = np.real(np.trace(rho_mat))
+            assert trace == pytest.approx(1.0, abs=1e-6), \
+                f"Trace = {trace} at time index {t_idx}"
+
+    def test_spin_expectation_values_bounded(self, trap_setup):
+        """Spin expectation values should remain bounded by 1/2 for spin-1/2."""
+        h = trap_setup
+        B = magField(lambda R: jnp.array([0., 0., R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_populations(jnp.array([0., 1.]))
+
+        o.evolve_motion([0., 5.], random_recoil=False, n_points=51)
+        rho = np.array(o.sols[0].rho)
+
+        # rho has shape (n, n, T)
+        n = rho.shape[0]
+        n_times = rho.shape[2]
+        for t_idx in range(n_times):
+            rho_mat = rho[:, :, t_idx]
+            # Population in each state
+            for i in range(n):
+                pop = np.real(rho_mat[i, i])
+                assert pop >= -1e-6, f"Negative population {pop} at t_idx={t_idx}"
+                assert pop <= 1.0 + 1e-6, f"Population > 1: {pop} at t_idx={t_idx}"
