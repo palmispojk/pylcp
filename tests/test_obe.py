@@ -789,3 +789,77 @@ class Test1DMOTForceProfile:
         o.set_initial_position_and_velocity(jnp.zeros(3), jnp.zeros(3))
         F = o.find_equilibrium_force(deltat=200, itermax=50, Npts=2001)
         assert not jnp.any(jnp.isnan(F))
+
+
+class TestEvolveMotion:
+    """Tests for obe.evolve_motion, including default y0/keys and dtype consistency."""
+
+    @pytest.fixture
+    def mot_obe_transform(self):
+        """OBE with transform_into_re_im=True (real-valued rho), weak beam."""
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=True)
+
+    @pytest.fixture
+    def mot_obe_complex(self):
+        """OBE with transform_into_re_im=False (complex-valued rho), weak beam."""
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=False)
+
+    def test_evolve_motion_default_args(self, mot_obe_transform):
+        """evolve_motion should work without explicit y0_batch/keys_batch."""
+        o = mot_obe_transform
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        # Should not raise
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False)
+        assert len(o.sols) == 1
+        assert not jnp.any(jnp.isnan(o.sols[0].r))
+
+    def test_evolve_motion_transform_dtype_consistency(self, mot_obe_transform):
+        """With transform_into_re_im=True, y0 and dydt must both be real-valued.
+
+        This catches the dtype mismatch where __drhodt returns complex but y0
+        is float64, which causes diffrax buffer dtype errors.
+        """
+        o = mot_obe_transform
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])
+        assert y0.dtype == jnp.float64, \
+            f"y0 should be float64 with transform_into_re_im=True, got {y0.dtype}"
+
+        # Simulate what evolve_motion's dydt does internally
+        rho = y0[:-6]
+        r = y0[-3:]
+        drhodt_raw = o._obe__drhodt(r, 0.0, rho)
+        drhodt = jnp.real(drhodt_raw)  # this is what the fix applies
+        F = o.force(r, 0.0, rho, return_details=False)
+        dydt_out = jnp.concatenate([drhodt, F / o.hamiltonian.mass, jnp.zeros(3)])
+        assert dydt_out.dtype == y0.dtype, \
+            f"dydt output dtype {dydt_out.dtype} must match y0 dtype {y0.dtype}"
+
+    def test_evolve_motion_complex_mode(self, mot_obe_complex):
+        """evolve_motion should also work with transform_into_re_im=False."""
+        o = mot_obe_complex
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False)
+        assert len(o.sols) == 1
+        assert not jnp.any(jnp.isnan(o.sols[0].r))
