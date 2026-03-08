@@ -776,9 +776,7 @@ class rateeq(governingeq):
 
         # Random force / recoil path
         if key is None:
-            raise ValueError(
-                "A JAX PRNGKey must be supplied via the 'key' argument "
-                "when random_recoil=True or random_force=True.")
+            key = jax.random.PRNGKey(np.random.randint(0, 2**31))
 
         Rev_decay_jax, pump_data, force_data, mag_mats = \
             self._get_jax_components()
@@ -916,7 +914,7 @@ class rateeq(governingeq):
 
             total_n_excited = sum(n_excited_per_key[k]
                                   for k in decay_rates_jax)
-            all_keys = jax.random.split(key, 2 * total_n_excited + 1)
+            all_keys = jax.random.split(key, 3 * total_n_excited + 1)
             key_new  = all_keys[0]
             ki       = 1
 
@@ -924,21 +922,24 @@ class rateeq(governingeq):
             num_scatters = jnp.zeros((), dtype=jnp.int32)
             y_out        = y
 
+            def _rand_unit(subkey):
+                raw = jax.random.normal(subkey, shape=(3,)) * free_axes
+                norm = jnp.linalg.norm(raw)
+                return raw / jnp.where(norm > 0, norm, 1.)
+
             for recoil_key in decay_rates_jax:
                 rates   = decay_rates_jax[recoil_key]        # (n_exc,)
                 indices = decay_indices[recoil_key]           # (n_exc,)
                 P       = dt * rates * N[indices]             # (n_exc,)
 
                 for ii in range(n_excited_per_key[recoil_key]):
-                    dice    = jax.random.uniform(all_keys[ki])
-                    raw_dir = jax.random.normal(
-                        all_keys[ki+1], shape=(3,)) * free_axes
-                    ki += 2
+                    dice = jax.random.uniform(all_keys[ki])
+                    vec1 = _rand_unit(all_keys[ki+1])
+                    vec2 = _rand_unit(all_keys[ki+2])
+                    ki += 3
 
                     scattered = dice < P[ii]
-                    norm_d    = jnp.linalg.norm(raw_dir)
-                    rand_unit = raw_dir / jnp.where(norm_d > 0, norm_d, 1.)
-                    kick = self.recoil_velocity[recoil_key] * rand_unit * 2.
+                    kick = self.recoil_velocity[recoil_key] * (vec1 + vec2)
 
                     delta_v = jnp.where(
                         scattered,

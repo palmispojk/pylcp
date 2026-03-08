@@ -194,7 +194,7 @@ class heuristiceq(governingeq):
 
         return self.sol
 
-    def evolve_motion_batch(self, t_span, y0_batch, keys_batch,
+    def evolve_motion_batch(self, t_span, y0_batch=None, keys_batch=None,
                             freeze_axis=[False, False, False],
                             random_recoil=False,
                             max_scatter_probability=0.1,
@@ -210,8 +210,9 @@ class heuristiceq(governingeq):
             ``(t0, tf)`` integration interval.
         y0_batch : jax.Array, shape (N, 6)
             Initial conditions ``[v, r]`` for N atoms.
-        keys_batch : jax.Array, shape (N, ...)
-            JAX PRNG keys, one per atom.
+        keys_batch : jax.Array, shape (N, ...), optional
+            JAX PRNG keys, one per atom.  If None, keys are generated
+            automatically from a random seed.
         freeze_axis : list of bool
             Freeze motion along the specified axes. Default: [False, False, False]
         random_recoil : bool
@@ -227,6 +228,12 @@ class heuristiceq(governingeq):
         sols : list of RandomOdeResult
             One result per atom with ``t``, ``y``, ``r``, ``v``.
         """
+        if y0_batch is None:
+            y0 = jnp.concatenate([self.v0, self.r0])
+            y0_batch = y0[jnp.newaxis, :]
+        if keys_batch is None:
+            keys_batch = jax.random.split(jax.random.PRNGKey(np.random.randint(0, 2**31)), y0_batch.shape[0])
+
         free_axes = jnp.asarray([not f for f in freeze_axis], dtype=jnp.float64)
         mass = self.mass
         constant_accel = self.constant_accel

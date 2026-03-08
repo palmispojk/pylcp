@@ -865,10 +865,10 @@ class obe(governingeq):
                 dice = jax.random.uniform(subkey_dice, shape=P.shape)
                 scatters_mask = jnp.where(dice < P, 1, 0)
                 num_scatters_this_channel = jnp.sum(scatters_mask)
-                
+
                 vec1 = _jax_random_vector(subkey_v1)
                 vec2 = _jax_random_vector(subkey_v2)
-                
+
                 kick = self.recoil_velocity[decay_key] * (vec1 + vec2)
                 
                 y_jump = jnp.where(
