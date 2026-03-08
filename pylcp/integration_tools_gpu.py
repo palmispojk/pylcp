@@ -129,7 +129,8 @@ def _batched_random_trajectories(
             dt0=dt_curr,
             y0=state['y'],
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
-            saveat=SaveAt(t1=True)
+            saveat=SaveAt(t1=True),
+            max_steps=max_steps,
         )
         
         y_next = sol.ys[-1]
