@@ -187,19 +187,21 @@ class obe(governingeq):
         H0_ev = self.__build_coherent_ev_submatrix(np.array(hamiltonian.H_0))
         if self.transform_into_re_im:
             H0_ev = self.__transform_ev_matrix(H0_ev)
-        self.ev_mat['H0'] = jnp.asarray(H0_ev, dtype=jnp.complex128)
+        dtype = jnp.float64 if self.transform_into_re_im else jnp.complex128
+        self.ev_mat['H0'] = jnp.asarray(H0_ev, dtype=dtype)
         self.__dict__.pop('_dydt', None)
 
     def __cast_ev_mat_to_jax(self):
         """Recursively convert the nested dictionaries of numpy arrays to jax arrays"""
+        dtype = jnp.float64 if self.transform_into_re_im else jnp.complex128
         for key in self.ev_mat:
             if isinstance(self.ev_mat[key], dict):
                 for subkey in self.ev_mat[key]:
-                    self.ev_mat[key][subkey] = jnp.asarray(self.ev_mat[key][subkey], dtype=jnp.complex128)
+                    self.ev_mat[key][subkey] = jnp.asarray(self.ev_mat[key][subkey], dtype=dtype)
             elif isinstance(self.ev_mat[key], list):
-                self.ev_mat[key] = [jnp.asarray(v, dtype=jnp.complex128) for v in self.ev_mat[key]]
+                self.ev_mat[key] = [jnp.asarray(v, dtype=dtype) for v in self.ev_mat[key]]
             else:
-                self.ev_mat[key] = jnp.asarray(self.ev_mat[key], dtype=jnp.complex128)
+                self.ev_mat[key] = jnp.asarray(self.ev_mat[key], dtype=dtype)
 
 
 
@@ -669,7 +671,7 @@ class obe(governingeq):
             v    = y[-6:-3]
             rho  = y[:-6]
             a    = jnp.zeros(3, dtype=y.dtype)
-            drhodt = jnp.real(self.__drhodt(r, t, rho)) if self.transform_into_re_im else self.__drhodt(r, t, rho)
+            drhodt = self.__drhodt(r, t, rho)
             return jnp.concatenate((drhodt, a, v))
         return dydt
 
@@ -748,7 +750,9 @@ class obe(governingeq):
         Evolve :math:`\\rho_{ij}` and the motion of the atom in time.
 
         This function evolves the optical Bloch equations, moving the atom
-        along given the instantaneous force, for some period of time.
+        along given the instantaneous force, for some period of time. The
+        integration is performed using a JAX/diffrax adaptive solver with a
+        custom outer loop that records the state at each step.
 
         Parameters
         ----------
@@ -765,31 +769,57 @@ class obe(governingeq):
             When undergoing random recoils, this sets the maximum time step such
             that the maximum scattering probability is less than or equal to
             this number during the next time step.  Default: 0.1
-        progress_bar : boolean
-            If true, show a progress bar as the calculation proceeds.
-            Default: False
-        record_force : boolean
-            If true, record the instantaneous force and store in the solution.
-            Default: False
-        rng : numpy.random.Generator()
-            A properly-seeded random number generator.  Default: calls
-            ``numpy.random.default.rng()``
         **kwargs :
-            Additional keyword arguments get passed to solve_ivp_random, which
-            is what actually does the integration.
+            Additional keyword arguments passed to ``solve_ivp_random``.
+            Important options include:
+
+            max_step : float, optional
+                Maximum time step the solver is allowed to take. This directly
+                controls the time resolution of the output, since one data
+                point is recorded per step. If not provided, defaults to
+                ``(t_span[1] - t_span[0]) / 500``, yielding ~500 output
+                points. Set a smaller value for finer resolution or a larger
+                value to speed up the integration at the cost of coarser
+                output.
+
+                Examples::
+
+                    # Default: ~500 output points
+                    obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False])
+
+                    # Fine resolution: ~5000 output points
+                    obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False],
+                                      max_step=10.)
+
+                    # Coarse resolution: ~50 output points (faster)
+                    obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False],
+                                      max_step=1000.)
+
+            max_steps : int, optional
+                Maximum number of steps (and thus output points) the solver
+                will take. Pre-allocates JAX arrays to this size. Default:
+                100000.
+            rtol : float, optional
+                Relative tolerance for the adaptive step controller.
+                Default: 1e-5.
+            atol : float, optional
+                Absolute tolerance for the adaptive step controller.
+                Default: 1e-5.
+            solver_type : str, optional
+                Diffrax solver to use: ``'Dopri5'``, ``'Bosh3'``, or
+                ``'Kvaerno5'``. Default: ``'Dopri5'``.
 
         Returns
         -------
-        sol : OdeSolution
-            Bunch object that contains the following fields:
+        sols : list of RandomOdeResult
+            A list with one result per trajectory in the batch. Each result
+            is also accessible as ``self.sol`` (first trajectory) or
+            ``self.sols``. Each result contains:
 
-                * t: integration times found by solve_ivp
-                * rho: density matrix
-                * v: atomic velocity
-                * r: atomic position
-
-            It contains other important elements, which can be discerned from
-            scipy's solve_ivp documentation.
+                * t: integration times, shape ``(n_steps,)``
+                * rho: density matrix, shape ``(n, n, n_steps)``
+                * v: atomic velocity, shape ``(3, n_steps)``
+                * r: atomic position, shape ``(3, n_steps)``
         """
         if y0_batch is None:
             y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
@@ -810,7 +840,7 @@ class obe(governingeq):
             
             dvdt = (F * free_axes) / self.hamiltonian.mass + self.constant_accel
             drdt = v
-            drhodt = jnp.real(self.__drhodt(r, t, rho)) if self.transform_into_re_im else self.__drhodt(r, t, rho)
+            drhodt = self.__drhodt(r, t, rho)
 
             return jnp.concatenate((drhodt, dvdt, drdt))
         
@@ -855,19 +885,22 @@ class obe(governingeq):
             return y_jump, num_of_scatters, new_dt_max, key
         
 
+        if 'max_step' not in kwargs:
+            kwargs['max_step'] = (t_span[1] - t_span[0]) / 500
+
         if not random_recoil_flag:
             def dummy_recoil(t, y, dt, key):
                 return y, 0, jnp.inf, key
-                
+
             self.sols = solve_ivp_random(
                 fun=dydt,
                 random_func=dummy_recoil,
                 t_span=t_span,
                 y0_batch=y0_batch,
-                keys_batch=keys_batch, 
+                keys_batch=keys_batch,
                 **kwargs
             )
-            
+
         else:
             self.sols = solve_ivp_random(
                 fun=dydt,
@@ -882,6 +915,9 @@ class obe(governingeq):
         # Remake the solution:
         self.__reshape_sol()
 
+        # For convenience, expose the first trajectory as self.sol:
+        if self.sols:
+            self.sol = self.sols[0]
 
         return self.sols
 
