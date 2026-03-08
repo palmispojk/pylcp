@@ -371,3 +371,54 @@ class Test1DMOTForceProfile:
         # Pick a point away from origin but within the trapping region
         idx = np.argmin(np.abs(x - x[len(x)//2 + len(x)//4]))
         assert abs(float(fp.F[0, idx])) > 1e-6
+
+
+# ---------------------------------------------------------------------------
+# TestRandomRecoilKickDistribution
+# ---------------------------------------------------------------------------
+
+class TestRandomRecoilKickDistribution:
+    """Verify random_recoil kicks use two independent random unit vectors.
+
+    The sum of two independent random unit vectors has an average magnitude
+    of ~4/pi ≈ 1.27 (in 3D) and a distribution that ranges from 0 to 2.
+    A single vector scaled by 2 would always have magnitude exactly 2.
+    """
+
+    @pytest.fixture
+    def recoil_func(self, single_beam_beams, zero_B, ham):
+        req = rateeq(single_beam_beams, zero_B, ham)
+        # Trigger internal setup by generating a force profile first
+        R = np.zeros((3, 1))
+        V = np.zeros((3, 1))
+        req.generate_force_profile(R, V, name='test')
+        free_axes = jnp.array([1., 1., 1.])
+        n_states = ham.n
+        return req._make_random_recoil_func(n_states, free_axes, max_P=0.1)
+
+    def test_kick_magnitude_varies(self, recoil_func):
+        """Kick magnitudes must not all be identical (rules out fixed * 2)."""
+        n_states = 4  # F=0 (1) + F'=1 (3)
+        # Build a state where excited population is large so scatters happen
+        N = jnp.array([0.1, 0.3, 0.3, 0.3])
+        v = jnp.zeros(3)
+        r = jnp.zeros(3)
+        y = jnp.concatenate([N, v, r])
+
+        magnitudes = []
+        key = jax.random.PRNGKey(0)
+        dt = jnp.float64(10.0)  # large dt to guarantee scatters
+        for i in range(200):
+            key_i = jax.random.PRNGKey(i)
+            y_out, n_scat, _, _ = recoil_func(0., y, dt, key_i)
+            dv = y_out[n_states:n_states+3] - y[n_states:n_states+3]
+            mag = float(jnp.linalg.norm(dv))
+            if mag > 0:
+                magnitudes.append(mag)
+
+        assert len(magnitudes) > 10, "Too few scatter events to test"
+        # If kicks are vec1+vec2, magnitudes vary; if *2, they're all identical
+        assert np.std(magnitudes) > 1e-6, (
+            "All kick magnitudes are identical — likely using a single "
+            "random vector * 2 instead of two independent random vectors"
+        )

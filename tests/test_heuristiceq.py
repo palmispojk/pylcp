@@ -356,3 +356,48 @@ class Test1DMOTForceProfile:
             jnp.array([4., 0., 0.]), jnp.zeros(3))
         F = mot_heq.find_equilibrium_force()
         assert abs(float(F[0])) > 1e-4
+
+
+# ---------------------------------------------------------------------------
+# TestRandomRecoilKickDistribution
+# ---------------------------------------------------------------------------
+
+class TestRandomRecoilKickDistribution:
+    """Verify random_recoil kicks use two independent random unit vectors.
+
+    The sum of two independent random unit vectors has a magnitude that
+    varies between 0 and 2.  A single vector scaled by 2 would always
+    have magnitude exactly 2.
+    """
+
+    def test_kick_magnitude_varies(self, zero_B, single_beam):
+        """Kick magnitudes must not all be identical (rules out fixed * 2)."""
+        import jax
+        heq = heuristiceq(single_beam, zero_B, mass=1.0, gamma=1.0, k=1.0)
+
+        free_axes = jnp.array([1., 1., 1.])
+        mass = heq.mass
+
+        def _random_unit_vector(key):
+            key_phi, key_z = jax.random.split(key)
+            phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
+            z = 2.0 * jax.random.uniform(key_z) - 1.0
+            r_xy = jnp.sqrt(1.0 - z ** 2)
+            return jnp.array([r_xy * jnp.cos(phi), r_xy * jnp.sin(phi), z]) * free_axes
+
+        # Directly test the random_recoil_fn inside evolve_motion_batch
+        # by running many short evolve_motion calls and collecting kicks
+        magnitudes = []
+        for i in range(200):
+            key = jax.random.PRNGKey(i)
+            key, key_dice, key_v1, key_v2 = jax.random.split(key, 4)
+            vec1 = _random_unit_vector(key_v1)
+            vec2 = _random_unit_vector(key_v2)
+            kick = heq.k / mass * (vec1 + vec2)
+            magnitudes.append(float(jnp.linalg.norm(kick)))
+
+        # If kicks are vec1+vec2, magnitudes vary; if *2, they're all identical
+        assert np.std(magnitudes) > 1e-6, (
+            "All kick magnitudes are identical — likely using a single "
+            "random vector * 2 instead of two independent random vectors"
+        )

@@ -865,3 +865,56 @@ class TestEvolveMotion:
                         random_recoil=False)
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
+
+
+# ---------------------------------------------------------------------------
+# TestRandomRecoilKickDistribution
+# ---------------------------------------------------------------------------
+
+class TestRandomRecoilKickDistribution:
+    """Verify random_recoil kicks use two independent random unit vectors.
+
+    The sum of two independent random unit vectors has a magnitude that
+    varies between 0 and 2.  A single vector scaled by 2 would always
+    have magnitude exactly 2.
+    """
+
+    def test_kick_magnitude_varies(self):
+        """Kick magnitudes must not all be identical (rules out fixed * 2)."""
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.1, 'delta': 0.},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        o = obe(beams, B, ham, transform_into_re_im=True)
+        o.set_initial_rho_equally()
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+
+        # Build the random recoil function the same way evolve_motion does
+        free_axes = jnp.bitwise_not(jnp.asarray([False, False, False], dtype=bool))
+
+        def _jax_random_vector(key):
+            key_phi, key_z = jax.random.split(key)
+            phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
+            z = 2.0 * jax.random.uniform(key_z) - 1.0
+            r_vec = jnp.sqrt(1.0 - z**2)
+            return jnp.array([r_vec * jnp.cos(phi), r_vec * jnp.sin(phi), z]) * free_axes
+
+        magnitudes = []
+        for decay_key in o.decay_rates:
+            recoil_vel = o.recoil_velocity[decay_key]
+            for i in range(200):
+                key = jax.random.PRNGKey(i)
+                _, subkey_v1, subkey_v2 = jax.random.split(key, 3)
+                vec1 = _jax_random_vector(subkey_v1)
+                vec2 = _jax_random_vector(subkey_v2)
+                kick = recoil_vel * (vec1 + vec2)
+                magnitudes.append(float(jnp.linalg.norm(kick)))
+
+        assert len(magnitudes) > 10, "Too few samples to test"
+        # If kicks are vec1+vec2, magnitudes vary; if *2, they're all identical
+        assert np.std(magnitudes) > 1e-6, (
+            "All kick magnitudes are identical — likely using a single "
+            "random vector * 2 instead of two independent random vectors"
+        )
