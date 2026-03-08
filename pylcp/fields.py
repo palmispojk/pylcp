@@ -311,9 +311,9 @@ class laserBeam(object):
     def __init__(self, kvec=None, s=None, pol=None, delta=None,
                  phase=0., pol_coord='spherical', eps=1e-5):
         self._kvec = jnp.array(kvec) if kvec is not None else jnp.array([0., 0., 1.])
-        self._s = s if callable(s) else (float(s) if s is not None else 1.0)
-        self._delta = delta if callable(delta) else (float(delta) if delta is not None else 0.0)
-        self._phase = phase if callable(phase) else (float(phase) if phase is not None else 0.0)
+        self._s = s if callable(s) else (float(jnp.real(s)) if s is not None else 1.0)
+        self._delta = delta if callable(delta) else (float(jnp.real(delta)) if delta is not None else 0.0)
+        self._phase = phase if callable(phase) else (float(jnp.real(phase)) if phase is not None else 0.0)
         self.eps = eps
 
         if pol is not None:
