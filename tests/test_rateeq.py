@@ -301,3 +301,73 @@ class TestFindEquilibriumForce:
         req.set_initial_pop_from_equilibrium()
         F = req.find_equilibrium_force()
         assert not jnp.any(jnp.isnan(F))
+
+
+# ---------------------------------------------------------------------------
+# Test1DMOTForceProfile – regression tests for magnetic field gradient
+# ---------------------------------------------------------------------------
+
+class Test1DMOTForceProfile:
+    """1D MOT with linear B-field gradient: force profile must be restoring.
+
+    This is the primary regression test for the Zeeman shift bug in the JAX
+    force-profile path (_generate_force_profile_jax).
+    """
+
+    @pytest.fixture
+    def mot_fp(self):
+        """Build a rateeq 1D MOT and return its force profile.
+
+        Uses alpha scaled so that the Zeeman shift matches the detuning
+        at x = ±x_res, i.e.  alpha * x_res * mu_z_per_state = |delta|.
+        """
+        from pylcp.fields import magField
+        ham = make_ham(gamma=1.0, k=1.0, mass=1.0)
+        # mu_z per excited mF state (physical units)
+        mu_val = 1399624.49171  # |diag(mu_e[1])[0]|
+        delta = -4.0
+        x_res = 5.0  # resonance position
+        alpha = abs(delta) / (x_res * mu_val)
+        beams = laserBeams([
+            {'kvec': [1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': delta},
+            {'kvec': [-1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': delta},
+        ])
+        B = magField(lambda R: -alpha * R)
+        req = rateeq(beams, B, ham)
+        x = np.linspace(-10, 10, 21) * x_res / 10.0
+        R = np.array([x, np.zeros_like(x), np.zeros_like(x)])
+        V = np.zeros_like(R)
+        fp = req.generate_force_profile(R, V)
+        return fp, x
+
+    def test_force_profile_no_nan(self, mot_fp):
+        """Force profile with a B-field gradient must not contain NaN."""
+        fp, _ = mot_fp
+        assert not np.any(np.isnan(fp.F))
+
+    def test_force_at_origin_is_zero(self, mot_fp):
+        """By symmetry the force at x=0 (where B=0) must vanish."""
+        fp, x = mot_fp
+        origin_idx = np.argmin(np.abs(x))
+        assert float(fp.F[0, origin_idx]) == pytest.approx(0., abs=1e-10)
+
+    def test_force_is_restoring(self, mot_fp):
+        """For x>0 the force must point in -x (restoring), and vice versa."""
+        fp, x = mot_fp
+        pos_mask = x > 1.0
+        neg_mask = x < -1.0
+        assert np.all(fp.F[0, pos_mask] < 0.), "Force should be negative for x>0"
+        assert np.all(fp.F[0, neg_mask] > 0.), "Force should be positive for x<0"
+
+    def test_force_is_antisymmetric(self, mot_fp):
+        """F(x) ≈ -F(-x) for the symmetric 1D MOT."""
+        fp, _ = mot_fp
+        F_x = np.array(fp.F[0])
+        assert np.allclose(F_x, -F_x[::-1], atol=1e-10)
+
+    def test_force_nonzero_away_from_origin(self, mot_fp):
+        """Force must be non-zero near the resonance position."""
+        fp, x = mot_fp
+        # Pick a point away from origin but within the trapping region
+        idx = np.argmin(np.abs(x - x[len(x)//2 + len(x)//4]))
+        assert abs(float(fp.F[0, idx])) > 1e-6

@@ -475,8 +475,25 @@ class rateeq(governingeq):
             n     = int(self.hamiltonian.rotated_hamiltonian.ns[ind[0]])
             m_off = int(sum(self.hamiltonian.rotated_hamiltonian.ns[:ind[1]]))
             m     = int(self.hamiltonian.rotated_hamiltonian.ns[ind[1]])
+
+            # Precompute magnetic moment diagonals for Zeeman shift.
+            def _mu_z_diag(block_idx, size):
+                blk = np.diag(self.hamiltonian.blocks)[block_idx]
+                if isinstance(blk, tuple):
+                    return jnp.real(jnp.array(
+                        np.diag(blk[1].matrix[1]), dtype=jnp.float64))
+                elif isinstance(blk, self.hamiltonian.vector_block):
+                    return jnp.real(jnp.array(
+                        np.diag(blk.matrix[1]), dtype=jnp.float64))
+                return jnp.zeros(size, dtype=jnp.float64)
+
+            mu_z_1 = _mu_z_diag(ind[0], n)
+            mu_z_2 = _mu_z_diag(ind[1], m)
+            mu_z_2g, mu_z_1g = jnp.meshgrid(mu_z_2, mu_z_1)
+            mu_diff = mu_z_2g - mu_z_1g  # (n, m)
+
             pump_data[key] = dict(d_q=d_q, gamma=gamma,
-                                  E2g=E2g, E1g=E1g,
+                                  E2g=E2g, E1g=E1g, mu_diff=mu_diff,
                                   n_off=n_off, n=n, m_off=m_off, m=m)
 
         # Per-key offsets for the force calculation (original hamiltonian).
@@ -550,6 +567,7 @@ class rateeq(governingeq):
             for key, kd in pump_data.items():
                 d_q, gamma = kd['d_q'], kd['gamma']
                 E2g, E1g   = kd['E2g'], kd['E1g']
+                mu_diff    = kd['mu_diff']
                 n_off, n_k, m_off, m_k = (kd['n_off'], kd['n'],
                                           kd['m_off'], kd['m'])
 
@@ -560,11 +578,15 @@ class rateeq(governingeq):
 
                 kvec_store[key] = kvecs
 
+                # Zeeman shift: E(B) = E(0) - B*mu_z, so
+                # -(E2(B)-E1(B)) = -(E2g-E1g) + Bmag*mu_diff
+                zeeman = Bmag * mu_diff
+
                 def beam_Rij(kvec, intensity, proj, delta):
                     fijq = jnp.abs(
                         d_q[0]*proj[2] + d_q[1]*proj[1] + d_q[2]*proj[0])**2
                     return (gamma * intensity / 2 * fijq /
-                            (1 + 4*(-(E2g - E1g) + delta
+                            (1 + 4*(-(E2g - E1g) + zeeman + delta
                                     - jnp.dot(kvec, v))**2 / gamma**2))
 
                 Rijl = jax.vmap(beam_Rij)(kvecs, intensities, projs, deltas)
@@ -594,6 +616,7 @@ class rateeq(governingeq):
             fmag = jnp.zeros(3, dtype=jnp.float64)
             if self.include_mag_forces:
                 gradBmag = self.magField.gradFieldMag(r)
+                gradBmag = jnp.nan_to_num(gradBmag, nan=0.0)
                 for ind1, ind2, mat in mag_mats:
                     if mat is not None:
                         fmag = fmag + jnp.sum(mat @ N[ind1:ind2]) * gradBmag
@@ -1162,6 +1185,7 @@ class rateeq(governingeq):
             for key, kd in pump_data.items():
                 d_q, gamma = kd['d_q'], kd['gamma']
                 E2g, E1g   = kd['E2g'], kd['E1g']
+                mu_diff    = kd['mu_diff']
                 n_off, n_k, m_off, m_k = (kd['n_off'], kd['n'],
                                           kd['m_off'], kd['m'])
 
@@ -1172,11 +1196,15 @@ class rateeq(governingeq):
 
                 kvec_store[key] = kvecs
 
+                # Zeeman shift: E(B) = E(0) - B*mu_z, so
+                # -(E2(B)-E1(B)) = -(E2g-E1g) + Bmag*mu_diff
+                zeeman = Bmag * mu_diff
+
                 def beam_Rij(kvec, intensity, proj, delta):
                     fijq = jnp.abs(
                         d_q[0]*proj[2] + d_q[1]*proj[1] + d_q[2]*proj[0])**2
                     return (gamma * intensity / 2 * fijq /
-                            (1 + 4*(-(E2g - E1g) + delta
+                            (1 + 4*(-(E2g - E1g) + zeeman + delta
                                     - jnp.dot(kvec, v))**2 / gamma**2))
 
                 Rijl = jax.vmap(beam_Rij)(kvecs, intensities, projs, deltas)
@@ -1214,6 +1242,7 @@ class rateeq(governingeq):
             fmag = jnp.zeros(3, dtype=jnp.float64)
             if self.include_mag_forces:
                 gradBmag = self.magField.gradFieldMag(r)
+                gradBmag = jnp.nan_to_num(gradBmag, nan=0.0)
                 for ind1, ind2, mat in mag_mats:
                     if mat is not None:
                         fmag = fmag + jnp.sum(mat @ Neq[ind1:ind2]) * gradBmag
