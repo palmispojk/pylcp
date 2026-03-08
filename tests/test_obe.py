@@ -831,8 +831,8 @@ class TestEvolveMotion:
     def test_evolve_motion_transform_dtype_consistency(self, mot_obe_transform):
         """With transform_into_re_im=True, y0 and dydt must both be real-valued.
 
-        This catches the dtype mismatch where __drhodt returns complex but y0
-        is float64, which causes diffrax buffer dtype errors.
+        The ev_mat matrices are stored as float64 when transform_into_re_im=True,
+        so __drhodt naturally returns float64 without needing jnp.real().
         """
         o = mot_obe_transform
         o.set_initial_position(jnp.zeros(3))
@@ -843,11 +843,13 @@ class TestEvolveMotion:
         assert y0.dtype == jnp.float64, \
             f"y0 should be float64 with transform_into_re_im=True, got {y0.dtype}"
 
-        # Simulate what evolve_motion's dydt does internally
+        # __drhodt should return float64 directly (no jnp.real() needed)
         rho = y0[:-6]
         r = y0[-3:]
-        drhodt_raw = o._obe__drhodt(r, 0.0, rho)
-        drhodt = jnp.real(drhodt_raw)  # this is what the fix applies
+        drhodt = o._obe__drhodt(r, 0.0, rho)
+        assert drhodt.dtype == jnp.float64, \
+            f"__drhodt should return float64 with transform_into_re_im=True, got {drhodt.dtype}"
+
         F = o.force(r, 0.0, rho, return_details=False)
         dydt_out = jnp.concatenate([drhodt, F / o.hamiltonian.mass, jnp.zeros(3)])
         assert dydt_out.dtype == y0.dtype, \
