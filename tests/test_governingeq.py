@@ -205,9 +205,9 @@ class TestFindEquilibriumPosition:
 # ---------------------------------------------------------------------------
 
 class TestTrappingFrequencies:
-    def test_single_axis_returns_array(self, linear_geq):
+    def test_single_axis_returns_scalar(self, linear_geq):
         omega = linear_geq.trapping_frequencies([0], eps=0.001)
-        assert omega.shape == (1,)
+        assert isinstance(omega, float)
 
     def test_omega_positive_for_restoring_force(self, linear_geq):
         omega = linear_geq.trapping_frequencies([0, 1, 2], eps=0.001)
@@ -216,7 +216,7 @@ class TestTrappingFrequencies:
     def test_omega_correct_value(self, linear_geq):
         # With k=1, mass=1: omega = sqrt(k/mass) = 1.0
         omega = linear_geq.trapping_frequencies([0], eps=1e-4)
-        assert float(omega[0]) == pytest.approx(1.0, rel=1e-3)
+        assert omega == pytest.approx(1.0, rel=1e-3)
 
     def test_all_three_axes_same_for_isotropic(self, linear_geq):
         omega = linear_geq.trapping_frequencies([0, 1, 2], eps=1e-4)
@@ -228,7 +228,7 @@ class TestTrappingFrequencies:
         geq = _LinearForceGovEq(simple_beams, zero_magfield, k=k, mass=1.0)
         omega = geq.trapping_frequencies([0], eps=1e-4)
         # omega = sqrt(k/mass) = sqrt(4) = 2.0
-        assert float(omega[0]) == pytest.approx(2.0, rel=1e-3)
+        assert omega == pytest.approx(2.0, rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -236,19 +236,19 @@ class TestTrappingFrequencies:
 # ---------------------------------------------------------------------------
 
 class TestDampingCoeff:
-    def test_single_axis_returns_array(self, damped_geq):
+    def test_single_axis_returns_scalar(self, damped_geq):
         beta = damped_geq.damping_coeff([0], eps=0.001)
-        assert beta.shape == (1,)
+        assert isinstance(beta, float)
 
     def test_beta_correct_value(self, damped_geq):
         # With beta=2.0: beta_coeff = -dF/dv = 2.0
         beta = damped_geq.damping_coeff([0], eps=1e-4)
-        assert float(beta[0]) == pytest.approx(2.0, rel=1e-3)
+        assert beta == pytest.approx(2.0, rel=1e-3)
 
     def test_no_velocity_damping_gives_zero(self, linear_geq):
         # _LinearForceGovEq has no velocity dependence → beta = 0
         beta = linear_geq.damping_coeff([0], eps=1e-4)
-        assert float(beta[0]) == pytest.approx(0.0, abs=1e-6)
+        assert beta == pytest.approx(0.0, abs=1e-6)
 
     def test_all_three_axes(self, damped_geq):
         beta = damped_geq.damping_coeff([0, 1, 2], eps=1e-4)

@@ -326,7 +326,10 @@ class governingeq(object):
             else:
                 self.omega = self.omega.at[axis].set(0.0)
 
-        return self.omega[jnp.asarray(axes)]
+        result = self.omega[jnp.asarray(axes)]
+        if len(axes) == 1:
+            return float(result[0])
+        return result
 
     def damping_coeff(self, axes, r=None, eps=0.01, **kwargs):
         """
@@ -386,4 +389,7 @@ class governingeq(object):
             else:
                 self.beta = self.beta.at[axis].set(0)
 
-        return self.beta[jnp.asarray(axes)]
+        result = self.beta[jnp.asarray(axes)]
+        if len(axes) == 1:
+            return float(result[0])
+        return result
