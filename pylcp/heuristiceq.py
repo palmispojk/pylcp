@@ -2,7 +2,8 @@ import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from .integration_tools_gpu import solve_ivp_random
+from .integration_tools_gpu import solve_ivp_random as solve_ivp_random_gpu
+from scipy.integrate import solve_ivp as _scipy_solve_ivp
 from .common import base_force_profile
 from .governingeq import governingeq
 
@@ -129,13 +130,77 @@ class heuristiceq(governingeq):
         F = jnp.sum(F_laser_ge, axis=1)     # (3,)
         return F, {'g->e': F_laser_ge}
 
-    def evolve_motion(self, t_span, y0_batch, keys_batch,
-                      freeze_axis=[False, False, False],
-                      random_recoil=False,
-                      max_scatter_probability=0.1,
+    def evolve_motion(self, t_span, freeze_axis=[False, False, False],
                       **kwargs):
         """
-        Evolve the motion of atoms in time using JAX/diffrax.
+        Evolve the motion of a single atom using scipy.
+
+        Uses ``self.r0`` and ``self.v0`` as initial conditions (set via
+        :meth:`set_initial_position_and_velocity`).  Delegates to
+        :func:`scipy.integrate.solve_ivp`, so all scipy kwargs are supported,
+        including ``events`` for early termination and ``max_step``.
+
+        Parameters
+        ----------
+        t_span : tuple
+            ``(t0, tf)`` integration interval.
+        freeze_axis : list of bool
+            Freeze motion along the specified axes. Default: [False, False, False]
+        **kwargs
+            Passed to :func:`scipy.integrate.solve_ivp` (e.g. ``events``,
+            ``max_step``, ``method``, ``dense_output``).
+
+        Returns
+        -------
+        sol : scipy OdeResult
+            Also stored in ``self.sol``.  Has attributes ``t``, ``y``, ``r``,
+            ``v``, and (if events were given) ``t_events``, ``y_events``.
+        """
+        free_axes = np.array([not f for f in freeze_axis], dtype=np.float64)
+        mass = self.mass
+        constant_accel = np.array(self.constant_accel)
+
+        # Cache JIT-compiled force on the instance so it's only traced once.
+        # Safe as long as beam parameters don't change on the same instance.
+        # If you mutate beam parameters, delete self._jit_force first.
+        if not hasattr(self, '_jit_force'):
+            @jax.jit
+            def _jit_force(r, v, t):
+                return self.force(r, v, t)
+            self._jit_force = _jit_force
+
+        _jit_force = self._jit_force
+
+        def dydt(t, y):
+            v = y[:3]
+            r = y[3:6]
+            F, _ = _jit_force(
+                jnp.asarray(r), jnp.asarray(v), jnp.float64(t))
+            F = np.asarray(F)
+            dvdt = F / mass * free_axes + constant_accel
+            return np.concatenate([dvdt, v])
+
+        y0 = np.concatenate([np.asarray(self.v0),
+                             np.asarray(self.r0)])
+
+        self.sol = _scipy_solve_ivp(
+            fun=dydt,
+            t_span=t_span,
+            y0=y0,
+            **kwargs)
+
+        self.sol.v = self.sol.y[:3]
+        self.sol.r = self.sol.y[3:]
+
+        return self.sol
+
+    def evolve_motion_batch(self, t_span, y0_batch, keys_batch,
+                            freeze_axis=[False, False, False],
+                            random_recoil=False,
+                            max_scatter_probability=0.1,
+                            **kwargs):
+        """
+        Evolve the motion of many atoms in parallel using JAX/diffrax.
 
         State vector layout per atom: ``[v (3), r (3)]`` → shape ``(6,)``.
 
@@ -146,7 +211,7 @@ class heuristiceq(governingeq):
         y0_batch : jax.Array, shape (N, 6)
             Initial conditions ``[v, r]`` for N atoms.
         keys_batch : jax.Array, shape (N, ...)
-            JAX PRNG keys, one per atom (required even without random recoil).
+            JAX PRNG keys, one per atom.
         freeze_axis : list of bool
             Freeze motion along the specified axes. Default: [False, False, False]
         random_recoil : bool
@@ -160,7 +225,7 @@ class heuristiceq(governingeq):
         Returns
         -------
         sols : list of RandomOdeResult
-            One result per atom.  Each has attributes ``t``, ``y``, ``r``, ``v``.
+            One result per atom with ``t``, ``y``, ``r``, ``v``.
         """
         free_axes = jnp.asarray([not f for f in freeze_axis], dtype=jnp.float64)
         mass = self.mass
@@ -205,7 +270,7 @@ class heuristiceq(governingeq):
 
         random_func = random_recoil_fn if random_recoil else dummy_recoil
 
-        self.sols = solve_ivp_random(
+        self.sols = solve_ivp_random_gpu(
             fun=dydt,
             random_func=random_func,
             t_span=t_span,
@@ -277,6 +342,8 @@ class heuristiceq(governingeq):
 
         self.profile[name] = base_force_profile(R, V, self.laserBeams, None)
 
+        grid_shape = np.asarray(R[0]).shape  # e.g. (Nx, Ny) or (N,)
+
         # Flatten position/velocity grids to (3, N) then transpose to (N, 3)
         R_jnp = jnp.asarray(R).reshape(3, -1).T  # (N, 3)
         V_jnp = jnp.asarray(V).reshape(3, -1).T  # (N, 3)
@@ -287,20 +354,11 @@ class heuristiceq(governingeq):
         )(R_jnp, V_jnp)
         # F_all: (N, 3),  F_laser_all: {'g->e': (N, 3, n_beams)}
 
-        # Write results back using nditer for multi-index mapping
-        it = np.nditer(
-            [R[0], R[1], R[2], V[0], V[1], V[2]],
-            flags=['refs_ok', 'multi_index'],
-            op_flags=[['readonly']] * 6
-        )
-        for atom_idx, _ in enumerate(it):
-            mi = it.multi_index
-            self.profile[name].store_data(
-                mi,
-                None,
-                F_all[atom_idx],
-                {key: F_laser_all[key][atom_idx] for key in F_laser_all},
-                jnp.zeros(3)
-            )
+        # Write results back in bulk (reshape flat arrays to grid shape)
+        self.profile[name].F = F_all.T.reshape((3,) + grid_shape)
+        for key in F_laser_all:
+            # F_laser_all[key]: (N, 3, n_beams) → (3, ..grid.., n_beams)
+            f_flat = F_laser_all[key].reshape(grid_shape + (3, -1))
+            self.profile[name].f[key] = jnp.moveaxis(f_flat, len(grid_shape), 0)
 
         return self.profile[name]
