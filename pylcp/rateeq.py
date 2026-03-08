@@ -480,11 +480,11 @@ class rateeq(governingeq):
             def _mu_z_diag(block_idx, size):
                 blk = np.diag(self.hamiltonian.blocks)[block_idx]
                 if isinstance(blk, tuple):
-                    return jnp.real(jnp.array(
-                        np.diag(blk[1].matrix[1]), dtype=jnp.float64))
+                    return jnp.array(
+                        np.real(np.diag(blk[1].matrix[1])), dtype=jnp.float64)
                 elif isinstance(blk, self.hamiltonian.vector_block):
-                    return jnp.real(jnp.array(
-                        np.diag(blk.matrix[1]), dtype=jnp.float64))
+                    return jnp.array(
+                        np.real(np.diag(blk.matrix[1])), dtype=jnp.float64)
                 return jnp.zeros(size, dtype=jnp.float64)
 
             mu_z_1 = _mu_z_diag(ind[0], n)
