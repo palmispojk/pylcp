@@ -12,17 +12,20 @@
 #
 import os
 import sys
+import tomllib
+
 sys.path.insert(0, os.path.abspath('..'))
 
+# -- Read project metadata from pyproject.toml -------------------------------
+
+with open(os.path.join(os.path.dirname(__file__), '..', 'pyproject.toml'), 'rb') as f:
+    pyproject = tomllib.load(f)
 
 # -- Project information -----------------------------------------------------
 
-project = 'pylcp'
-# copyright = '2020, Steve Eckel, Daniel Barker, Eric Norrgard, and others'
-author = 'Steve Eckel, Daniel Barker, Eric Norrgard, and others'
-
-# The full version, including alpha/beta/rc tags
-release = '1.0.0'
+project = pyproject['project']['name']
+author = ', '.join(a['name'] for a in pyproject['project']['authors'])
+release = pyproject['project']['version']
 
 
 # -- General configuration ---------------------------------------------------
