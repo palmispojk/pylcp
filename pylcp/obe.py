@@ -714,6 +714,7 @@ class obe(governingeq):
         rtol = kwargs.get('rtol', 1e-5)
         atol = kwargs.get('atol', 1e-5)
         method = kwargs.get('method', 'Dopri5')
+        max_steps = kwargs.get('max_steps', 4096)
 
         if y0_batch is None:
             y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
@@ -724,7 +725,8 @@ class obe(governingeq):
         # reuses the kernel for every subsequent call (e.g. convergence loop).
         ts_grid, batched_ys = solve_ivp_dense(
             self._dydt, t_span, y0_batch,
-            n_points=n_points, rtol=rtol, atol=atol, solver_type=method,
+            n_points=n_points, max_steps=max_steps,
+            rtol=rtol, atol=atol, solver_type=method,
         )
         # batched_ys shape: (n_atoms, n_points, state_dim)
 
@@ -1414,11 +1416,15 @@ class obe(governingeq):
             Ng = len(group_indices)
             y0_group = y0_batch[group_indices]  # (Ng, state_dim)
 
+            # Scale max_steps with chunk duration so long chunks don't hit the limit.
+            group_max_steps = max(int(np.ceil(group_chunk_deltat * 16)), 4096)
+
+            # Use fewer dense output points during convergence; the force
+            # average only needs a coarse grid.  Full Npts for the final pass.
+            Npts_conv = max(int(Npts) // 10, 101)
+
             cumul_f_sum         = jnp.zeros((Ng, 3))
             cumul_rho_sum       = jnp.zeros((Ng, n_rho))
-            cumul_f_laser_sum   = None
-            cumul_f_laser_q_sum = None
-            cumul_f_mag_sum     = jnp.zeros((Ng, 3))
             total_pts           = 0
             old_f_avg           = jnp.full((Ng, 3), jnp.inf)
 
@@ -1427,7 +1433,8 @@ class obe(governingeq):
                 self.evolve_density(
                     [ii * group_chunk_deltat, (ii + 1) * group_chunk_deltat],
                     y0_group,
-                    n_points=int(Npts),
+                    n_points=Npts_conv,
+                    max_steps=group_max_steps,
                     **kwargs
                 )
                 t = self.sol.t
@@ -1436,20 +1443,14 @@ class obe(governingeq):
                 rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)
                 r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
 
-                f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
-                    lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
+                # Use return_details=False during convergence (much cheaper:
+                # computes total gradient instead of per-beam breakdown).
+                f_all = jax.vmap(
+                    lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=False)
                 )(r_all, rho_flat_all)
 
                 cumul_f_sum += jnp.sum(f_all, axis=2)
                 cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)
-                cumul_f_mag_sum += jnp.sum(f_mag_all, axis=2)
-                if cumul_f_laser_sum is None:
-                    cumul_f_laser_sum   = {k: jnp.sum(v, axis=-1) for k, v in f_laser_all.items()}
-                    cumul_f_laser_q_sum = {k: jnp.sum(v, axis=-1) for k, v in f_laser_q_all.items()}
-                else:
-                    for k in f_laser_all:
-                        cumul_f_laser_sum[k]   += jnp.sum(f_laser_all[k],   axis=-1)
-                        cumul_f_laser_q_sum[k] += jnp.sum(f_laser_q_all[k], axis=-1)
                 total_pts += n_pts
 
                 f_avg = cumul_f_sum / total_pts
@@ -1469,10 +1470,34 @@ class obe(governingeq):
                 y0_group = self.sol.y[:, -1, :]
                 ii += 1
 
+            # Final pass at full Npts with return_details=True to get
+            # the per-beam/per-q force breakdown at full resolution.
+            self.evolve_density(
+                [ii * group_chunk_deltat, (ii + 1) * group_chunk_deltat],
+                y0_group,
+                n_points=int(Npts),
+                max_steps=group_max_steps,
+                **kwargs
+            )
+            t = self.sol.t
+            n_pts = t.shape[0]
+            rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)
+            r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
+
+            f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
+                lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
+            )(r_all, rho_flat_all)
+
+            # Include the final full-resolution chunk in cumulative averages
+            cumul_f_sum += jnp.sum(f_all, axis=2)
+            cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)
+            total_pts += n_pts
+            f_avg = cumul_f_sum / total_pts
+
             # Store group results into per-atom arrays
             f_avg_np = np.array(f_avg)
             rho_flat_mean = np.array(cumul_rho_sum / total_pts)
-            f_mag_avg_np = np.array(cumul_f_mag_sum / total_pts)
+            f_mag_avg_np = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
 
             for local_idx, global_idx in enumerate(group_indices):
                 final_f_avg[global_idx] = f_avg_np[local_idx]
@@ -1480,8 +1505,9 @@ class obe(governingeq):
                 final_f_mag_avg[global_idx] = f_mag_avg_np[local_idx]
                 final_iters[global_idx] = ii
 
-            f_laser_group   = {k: np.array(v / total_pts) for k, v in cumul_f_laser_sum.items()}
-            f_laser_q_group = {k: np.array(v / total_pts) for k, v in cumul_f_laser_q_sum.items()}
+            # Per-beam/per-q averages from the final (converged) chunk only
+            f_laser_group   = {k: np.array(jnp.sum(v, axis=-1) / n_pts) for k, v in f_laser_all.items()}
+            f_laser_q_group = {k: np.array(jnp.sum(v, axis=-1) / n_pts) for k, v in f_laser_q_all.items()}
             if final_f_laser_avg is None:
                 final_f_laser_avg   = {k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_group.items()}
                 final_f_laser_q_avg = {k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_q_group.items()}
