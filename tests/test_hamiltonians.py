@@ -25,9 +25,14 @@ def is_hermitian(M, atol=1e-10):
 
 
 def is_spherical_rank1_mu(M, atol=1e-10):
-    """Verify the rank-1 spherical tensor property:
-      mu_q[1] (q=0) is Hermitian
-      conj(mu_q[2].T) == -mu_q[0]  i.e. (mu_{+1})† = -mu_{-1}
+    """Verify the rank-1 spherical tensor conjugation property.
+
+    For a rank-1 spherical tensor T_q the components satisfy:
+        T₀ is Hermitian  (T₀† = T₀)
+        T₊₁† = −T₋₁      (or equivalently conj(T₊₁ᵀ) = −T₋₁)
+
+    This ensures the Hamiltonian H = −μ⃗·B⃗ is Hermitian when
+    contracted with a real magnetic field in spherical components.
     """
     M0 = np.array(M[0])
     M1 = np.array(M[1])
@@ -132,6 +137,15 @@ class TestDqijNorm:
 # ---------------------------------------------------------------------------
 
 class TestSingleF:
+    """singleF(F, gF): zero-field Hamiltonian and μ_q for a single F level.
+
+    Constructs the (2F+1)×(2F+1) zero-field Hamiltonian H₀ = 0 (all
+    sublevels degenerate) and the rank-1 spherical magnetic moment
+    operator μ_q with components q = −1, 0, +1.
+
+    The q=0 component (π) is diagonal in the |F, mF⟩ basis with
+    entries proportional to −gF·mF·μB, and scales linearly with gF."""
+
     def test_H0_shape_F1(self):
         H0, _ = ham.singleF(F=1, gF=1)
         assert H0.shape == (3, 3)
@@ -186,6 +200,14 @@ class TestSingleF:
 # ---------------------------------------------------------------------------
 
 class TestHyperfineUncoupled:
+    """Hyperfine Hamiltonian in the uncoupled |mJ, mI⟩ basis.
+
+    The Hilbert space has (2J+1)(2I+1) states.  H₀ contains the
+    magnetic dipole (Ahfs) and electric quadrupole (Bhfs) hyperfine
+    interactions.  μ_q includes both electronic (gJ) and nuclear (gI)
+    Zeeman contributions.  Both H₀ and μ_q must be Hermitian (with
+    the rank-1 conjugation property for μ_q)."""
+
     def test_shape_J_half_I_half(self):
         H0, mu_q = ham.hyperfine_uncoupled(J=0.5, I=0.5, gJ=2., gI=0., Ahfs=1.)
         assert H0.shape == (4, 4)
@@ -216,6 +238,17 @@ class TestHyperfineUncoupled:
 # ---------------------------------------------------------------------------
 
 class TestHyperfineCoupled:
+    """Hyperfine Hamiltonian in the coupled |F, mF⟩ basis.
+
+    H₀ is diagonal in the coupled basis with eigenvalues given by
+    the interval rule:  E(F) = Ahfs/2 · [F(F+1) − I(I+1) − J(J+1)].
+    For J=I=1/2 and Ahfs=1 this gives E(F=0) = −3/4 and E(F=1) = +1/4.
+
+    Negative Ahfs inverts the level ordering (the "inverted" hyperfine
+    structure seen in some excited states).  Non-zero Bhfs (electric
+    quadrupole, requires J≥1 and I≥1) shifts eigenvalues beyond the
+    magnetic dipole pattern."""
+
     def test_shape_J_half_I_half(self):
         H0, mu_q = ham.hyperfine_coupled(J=0.5, I=0.5, gJ=2., gI=0., Ahfs=1.)
         assert H0.shape == (4, 4)
@@ -285,6 +318,14 @@ class TestHyperfineCoupled:
 # ---------------------------------------------------------------------------
 
 class TestFineStructureUncoupled:
+    """Fine structure Hamiltonian in the uncoupled |mL, mS, mI⟩ basis.
+
+    The Hilbert space has (2L+1)(2S+1)(2I+1) states.  The Hamiltonian
+    includes spin-orbit coupling ξ·L⃗·S⃗ and three hyperfine
+    interactions: contact (a_c), orbital (a_orb), and dipolar (a_dip).
+    For L≥2, the dipolar and orbital terms introduce off-diagonal
+    elements that must still produce a Hermitian matrix."""
+
     def test_shape_L1_S_half_I_half(self):
         H0, mu_q = ham.fine_structure_uncoupled(
             L=1, S=0.5, I=0.5, xi=1., a_c=0., a_orb=0., a_dip=0.,
@@ -345,6 +386,14 @@ class TestFineStructureUncoupled:
 # ---------------------------------------------------------------------------
 
 class TestDqijTwoFineStructureManifoldsUncoupled:
+    """Dipole matrix elements between fine structure manifolds in the
+    uncoupled |mL, mS, mI⟩ basis.
+
+    The electric dipole operator only changes L by ±1 and preserves
+    mS and mI.  For a given polarization q, the selection rule is
+    mL(ground) = mL(excited) + q.  All other matrix elements must
+    vanish identically."""
+
     def _s_to_p_bases(self):
         """S-state (L=0) → P-state (L=1) with S=1/2, I=0."""
         basis_g = [(0, 0.5, 0), (0, -0.5, 0)]
@@ -389,6 +438,16 @@ class TestDqijTwoFineStructureManifoldsUncoupled:
 # ---------------------------------------------------------------------------
 
 class TestDqijTwoHyperfineManifolds:
+    """Dipole matrix elements between full hyperfine manifolds.
+
+    Couples all F levels of the ground state (J) to all F′ levels of
+    the excited state (J′) for a given nuclear spin I.  The resulting
+    d^q_{ij} matrix has shape (3, n_ground, n_excited).
+
+    When normalize=True, each column (excited state) has unit norm,
+    ensuring that the total spontaneous decay rate from each excited
+    state sums to 1."""
+
     def test_shape_J0_Jp1_I0(self):
         d_q = ham.dqij_two_hyperfine_manifolds(J=0, Jp=1, I=0)
         assert d_q.shape == (3, 1, 3)
@@ -428,6 +487,13 @@ class TestDqijTwoHyperfineManifolds:
 # ---------------------------------------------------------------------------
 
 class TestDqijTwoBareHyperfine:
+    """Dipole matrix elements between two bare hyperfine levels F and F′.
+
+    This is the simplest dipole element calculation — a single ground
+    level F coupled to a single excited level F′ (no summing over
+    multiple F values).  Selection rules require ΔmF = q, so for
+    F=0→F′=1 each q component has exactly one nonzero entry."""
+
     def test_shape_F0_Fp1(self):
         d_q = ham.dqij_two_bare_hyperfine(0, 1)
         assert d_q.shape == (3, 1, 3)
@@ -460,6 +526,17 @@ class TestDqijTwoBareHyperfine:
 # ---------------------------------------------------------------------------
 
 class TestXstate:
+    """X²Σ⁺ electronic ground state of a diatomic molecule (e.g. CaF, SrF).
+
+    The state is characterised by rotational quantum number N, electron
+    spin S=1/2, and nuclear spin I.  Coupling of N⃗, S⃗, and I⃗ gives
+    total angular momentum levels through Hund's case (b) coupling.
+    The Hamiltonian includes spin-rotation (γ), Fermi contact (b),
+    and dipolar (c) hyperfine interactions, plus Zeeman coupling.
+
+    The unitary matrix U transforms from the uncoupled to the
+    eigenstate basis and must satisfy U†U = 1."""
+
     def test_shape_N0_I_half(self):
         H0, mu_p, U = XFmolecules.Xstate(N=0, I=0.5)
         # N=0, S=1/2 → J=1/2 → F=0,1 → 4 states
@@ -512,6 +589,14 @@ class TestXstate:
 # ---------------------------------------------------------------------------
 
 class TestAstate:
+    """A²Π electronic excited state of a diatomic molecule.
+
+    Characterised by total electronic angular momentum J (Hund's case a),
+    nuclear spin I, and parity P = ±1.  The hyperfine structure includes
+    magnetic dipole (a), electric quadrupole (b), and nuclear spin-orbit
+    (c) interactions.  Multiple J and/or P values can be combined into
+    a single block-diagonal Hamiltonian."""
+
     def test_shape_J_half_I_half_single_P(self):
         H0, mu_p = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
         # J=1/2, I=1/2 → F=0,1 → 4 states
@@ -551,6 +636,14 @@ class TestAstate:
 # ---------------------------------------------------------------------------
 
 class TestDipoleXandAstates:
+    """Dipole matrix elements between X²Σ⁺ and A²Π molecular states.
+
+    These matrix elements connect the ground (X) and excited (A)
+    electronic states via the electric dipole operator.  The
+    transformation matrix U_X rotates the X-state basis from the
+    uncoupled to the eigenstate representation before computing
+    the dipole coupling."""
+
     @pytest.fixture(scope='class')
     def bases(self):
         _, _, U_X, Xbasis = XFmolecules.Xstate(N=1, I=0.5, return_basis=True)
@@ -586,7 +679,23 @@ class TestDipoleXandAstates:
 # ---------------------------------------------------------------------------
 
 def breitrabi(B, gJ, gI, AHFS, J=1/2, I=3/2):
-    """Analytical Breit-Rabi formula for J=1/2 ground states."""
+    """Analytical Breit-Rabi formula for J=1/2 ground states.
+
+    The Breit-Rabi formula gives the exact eigenvalues of the hyperfine
+    Hamiltonian for a J=1/2 state in a magnetic field.  For each pair
+    (mJ, mI) with total projection m = mI + mJ, the energy is:
+
+        E = -ΔHFS/(2(2I+1)) + gI·μB·m·B
+            ± (ΔHFS/2)·√(1 + 4m·x/(2I+1) + x²)
+
+    where ΔHFS = (I+1/2)·AHFS is the zero-field hyperfine splitting and
+    x = (gJ - gI)·μB·B / ΔHFS is the dimensionless field parameter.
+    The special case m = -(I+J) uses the linear branch (1 - x).
+
+    Note: this formula uses a specific sign convention for gI that may
+    differ from the Hamiltonian by a sign, limiting agreement to ~0.05%
+    at low fields (B < 10 G).
+    """
     muB = cts.value("Bohr magneton in Hz/T") * 1e-4
     dHFS = (I + 1/2) * AHFS
     x = (gJ - gI) * muB * B / dHFS
@@ -611,7 +720,13 @@ def breitrabi(B, gJ, gI, AHFS, J=1/2, I=3/2):
 
 
 def diagonalize_hamiltonian(B_arr, H0, mu_q, Bhat=np.array([0., 0., 1.])):
-    """Diagonalize H0 + B * (mu_q · Bhat) for each B in B_arr, return sorted eigenvalues."""
+    """Diagonalize H = H₀ − (−1)^q · B · Bq · μq for each B, return sorted eigenvalues.
+
+    The magnetic interaction is expressed in the spherical tensor basis:
+    the Cartesian field direction B̂ is converted to spherical components
+    Bq via cart2spherical, and the Hamiltonian is constructed as
+    H = H₀ − Σ_q (−1)^q · B · B*_{-q} · μ_q, summing over q = −1, 0, +1.
+    """
     Bhat = Bhat / np.linalg.norm(Bhat)
     Bq = cart2spherical(Bhat)
     nstates = H0.shape[0]
@@ -629,8 +744,20 @@ def diagonalize_hamiltonian(B_arr, H0, mu_q, Bhat=np.array([0., 0., 1.])):
 # ---------------------------------------------------------------------------
 
 class TestSpinInMagneticField:
-    """Verify that the spherical tensor algebra (singleF) produces the same
-    Hamiltonian and dynamics as standard Pauli matrices for spin-1/2.
+    """Spherical tensor algebra vs Pauli matrices for spin-1/2.
+
+    pylcp constructs magnetic moment operators μ_q in the spherical tensor
+    basis (q = −1, 0, +1), which is natural for coupling to spherical
+    polarization components but less intuitive than the standard Pauli
+    matrix formulation (σ_x, σ_y, σ_z).
+
+    For spin-1/2 with a g-factor gF, both representations must produce:
+    - Identical eigenvalue spectra for any B-field direction.
+    - Identical time evolution of ⟨S⟩ = (⟨Sx⟩, ⟨Sy⟩, ⟨Sz⟩), which
+      precesses on the Bloch sphere with constant magnitude |⟨S⟩| = 1/2.
+
+    This validates that the spherical↔Cartesian conversion and the sign
+    conventions in singleF are correct.
 
     Adapted from tests/hamiltonians/00_spin_in_magnetic_field.ipynb.
     """
@@ -662,8 +789,14 @@ class TestSpinInMagneticField:
         np.testing.assert_allclose(evals_sph, evals_pauli, atol=1e-12)
 
     def test_expectation_values_match_pauli(self):
-        """Spin expectation values from density matrix evolution (singleF)
-        must match Schrödinger evolution with Pauli matrices."""
+        """Spin precession: ⟨S⟩ from singleF must match Pauli evolution.
+
+        A spin-1/2 in an off-axis field B = (1,1,0) precesses around B̂.
+        The magnitude |⟨S⟩| must remain exactly 1/2 at all times (pure
+        state on the Bloch sphere).  We evolve using both the spherical
+        tensor Hamiltonian and the Pauli Hamiltonian and verify that the
+        spin magnitude agrees to within atol=1e-4 (limited by ODE solver
+        tolerances)."""
         from scipy.integrate import solve_ivp
 
         B = np.array([1., 1., 0.])
@@ -712,7 +845,16 @@ class TestSpinInMagneticField:
 # ---------------------------------------------------------------------------
 
 class TestLinearZeemanEffect:
-    """Verify Zeeman splitting for singleF Hamiltonian.
+    """Linear Zeeman effect for a single hyperfine level F.
+
+    An angular momentum state F has (2F+1) magnetic sublevels mF that are
+    degenerate at zero field.  In a uniform magnetic field B, they split as:
+
+        E(mF) = −gF · mF · μB · B
+
+    This linear splitting is exact for the singleF Hamiltonian (which has
+    no quadratic corrections).  The energy spectrum must also be invariant
+    under rotations of the field direction — only |B| matters.
 
     Adapted from tests/hamiltonians/01_linear_Zeeman_effect.ipynb.
     """
@@ -736,7 +878,12 @@ class TestLinearZeemanEffect:
         np.testing.assert_allclose(evals, expected, atol=1e-10)
 
     def test_field_direction_invariance(self):
-        """Eigenvalue spectra should be identical regardless of B-field direction."""
+        """Eigenvalue spectra should be identical regardless of B-field direction.
+
+        The Hamiltonian is a scalar (rank-0 tensor) formed from the
+        contraction of μ_q (rank 1) with B_q (rank 1).  Rotating B̂
+        changes the individual spherical components B_q but not the
+        scalar contraction, so eigenvalues must be invariant."""
         F = 2
         H_0, mu_q = ham.singleF(F, muB=1)
         B_val = 5.0
@@ -773,7 +920,20 @@ class TestLinearZeemanEffect:
 # ---------------------------------------------------------------------------
 
 class TestBreitRabiValidation:
-    """Validate hyperfine Hamiltonians against the analytical Breit-Rabi formula.
+    """Hyperfine structure: Hamiltonian vs analytical Breit-Rabi formula.
+
+    For a J=1/2 ground state (e.g. alkali atoms), the Breit-Rabi formula
+    gives exact eigenvalues of the hyperfine + Zeeman Hamiltonian.  pylcp
+    constructs this Hamiltonian numerically in either the coupled |F,mF⟩
+    or uncoupled |mJ,mI⟩ basis.
+
+    Both basis representations must agree with each other, and at low
+    fields (B ≲ 10 G) they must agree with the analytical formula.  At
+    higher fields, a systematic ~0.05% discrepancy arises from differing
+    sign conventions for gI between the formula and the Hamiltonian.
+
+    The eigenvalue spectrum must also be invariant under rotation of the
+    B-field direction (rotational symmetry of the scalar Hamiltonian).
 
     Adapted from tests/hamiltonians/02_hyperfine_Hamilotians.ipynb.
     """
@@ -782,8 +942,11 @@ class TestBreitRabiValidation:
 
     @pytest.mark.parametrize("species", ["7Li", "87Rb"])
     def test_ground_state_breitrabi_low_field(self, species):
-        """At low fields, Hamiltonian eigenvalues should closely track the
-        Breit-Rabi formula."""
+        """At low fields (0.1–10 G), Hamiltonian eigenvalues should track the
+        Breit-Rabi formula to within rtol=5e-4.
+
+        The tolerance reflects a systematic gI sign convention difference
+        between the analytical formula and the Hamiltonian construction."""
         a = atom(species)
         B = np.linspace(0.1, 10, 21)
         H0, mu_q = ham.hyperfine_uncoupled(
@@ -797,7 +960,12 @@ class TestBreitRabiValidation:
 
     @pytest.mark.parametrize("species", ["7Li", "87Rb"])
     def test_coupled_uncoupled_bases_agree(self, species):
-        """Coupled and uncoupled bases must give close eigenvalue spectra."""
+        """Coupled |F,mF⟩ and uncoupled |mJ,mI⟩ bases must give identical
+        eigenvalues at low fields (0.01–1 G) to rtol=1e-7.
+
+        Both bases span the same Hilbert space; the Clebsch-Gordan
+        transformation between them is unitary, so eigenvalues must be
+        identical up to numerical precision."""
         a = atom(species)
         B = np.linspace(0.01, 1.0, 21)
         H0_uc, mu_uc = ham.hyperfine_uncoupled(
@@ -826,8 +994,12 @@ class TestBreitRabiValidation:
 
     @pytest.mark.parametrize("species,Bmax", [("7Li", 0.5), ("87Rb", 5.0)])
     def test_excited_state_coupled_uncoupled_agree(self, species, Bmax):
-        """Excited P_{3/2} state eigenvalues must agree in both bases.
-        Uses a lower B range for 7Li to stay below level crossing regions."""
+        """Excited P₃/₂ state eigenvalues must agree in both bases.
+
+        The P₃/₂ manifold has more sublevels and includes the electric
+        quadrupole interaction (Bhfs).  ⁷Li has level crossings at ~1–2 G,
+        causing sorted-eigenvalue comparison to fail above those fields,
+        so we use Bmax=0.5 G for ⁷Li and 5 G for ⁸⁷Rb."""
         a = atom(species)
         B = np.linspace(0.01, Bmax, 11)
         H0_uc, mu_uc = ham.hyperfine_uncoupled(
@@ -841,8 +1013,13 @@ class TestBreitRabiValidation:
         np.testing.assert_allclose(Es_uc, Es_c, rtol=5e-4)
 
     def test_unit_conversion_consistency(self):
-        """Results in real units (Hz) and natural units (gamma) must agree
-        after proper scaling."""
+        """Results in real units (Hz) and natural units (Γ) must agree
+        after proper scaling.
+
+        pylcp supports working in "natural" units where energies are
+        measured in units of the excited-state linewidth Γ (gammaHz).
+        Scaling Ahfs → Ahfs/Γ, μB → 1, and B → (μB/Γ)·B must produce
+        eigenvalues that, when multiplied by Γ, match the Hz result."""
         a = atom("7Li")
         muB_real = cts.value("Bohr magneton in Hz/T") * 1e-4
         B = np.linspace(0.1, 500, 31)
@@ -870,21 +1047,35 @@ class TestBreitRabiValidation:
 # ---------------------------------------------------------------------------
 
 class TestTransitionRateValues:
-    """Verify numerical values of transition rate matrix elements.
+    """Dipole matrix elements and selection rules.
+
+    The electric dipole operator connects ground and excited hyperfine
+    manifolds.  Its matrix elements d^q_{ij} (for polarization q = −1, 0, +1)
+    are products of Clebsch-Gordan coefficients and reduced matrix elements.
+
+    Key physical constraints:
+    - Selection rules: only transitions with ΔmF = q are allowed.
+    - For F=1→F'=1, the mF=0→mF'=0 transition is forbidden for q=0
+      (this follows from the 3j-symbol vanishing when all projections are 0).
+    - Sum rule: for normalized d^q_{ij}, summing |d^q_{ij}|² over all
+      ground states i and polarizations q for a given excited state j
+      must yield 1 (completeness of the basis).
 
     Adapted from tests/hamiltonians/03_transition_rates.ipynb.
     """
 
     def test_F0_to_F1_selection_rules(self):
-        """F=0 → F'=1 should have exactly one nonzero element per q."""
+        """F=0→F'=1: one ground state, so exactly one nonzero element per q."""
         dijq = ham.dqij_two_bare_hyperfine(0, 1, normalize=False)
         for q in range(3):
             nonzero = np.count_nonzero(np.abs(dijq[q]) > 1e-14)
             assert nonzero == 1, f"q={q-1}: expected 1 nonzero element, got {nonzero}"
 
     def test_F1_to_F1_vanishing_diagonal(self):
-        """F=1 → F'=1 dipole elements: transitions with ΔmF=q must satisfy
-        the triangle rule, and mF=0→mF'=0 for q=0 must vanish."""
+        """F=1→F'=1, q=0: the mF=0→mF'=0 element must vanish.
+
+        This is a consequence of the Wigner 3j-symbol
+        (1  1  1; 0  0  0) = 0, which forbids this transition."""
         dijq = ham.dqij_two_bare_hyperfine(1, 1, normalize=False)
         # For q=0 (dijq[1]), the m=0 → m'=0 element must vanish
         assert float(np.abs(dijq[1, 1, 1])) == pytest.approx(0., abs=1e-14)
@@ -899,16 +1090,22 @@ class TestTransitionRateValues:
             assert nonzero > 0, f"q={q-1}: expected nonzero elements"
 
     def test_normalized_rates_sum_rule(self):
-        """For each excited state, the sum of squared dipole elements over
-        all ground states and polarizations should equal 1 (normalized)."""
+        """Sum rule: Σ_{q,i} |d^q_{ij}|² = 1 for each excited state j.
+
+        When normalize=True, the dipole elements are scaled so that the
+        total spontaneous decay rate from each excited state equals 1.
+        This is required for self-consistent rate equations and OBE."""
         dijq = ham.dqij_two_bare_hyperfine(1, 2, normalize=True)
         for k in range(dijq.shape[2]):
             rate_sum = np.sum(np.abs(dijq[:, :, k])**2)
             assert float(rate_sum) == pytest.approx(1.0, abs=1e-10)
 
     def test_full_D2_manifold_structure(self):
-        """Full D2 transition (J=1/2 → J'=3/2, I=3/2 as in Na) should produce
-        a non-empty matrix with correct shape."""
+        """Full D2 line (J=1/2→J'=3/2, I=3/2 as in Na): correct dimensions.
+
+        The D2 line couples all ground hyperfine levels (F=I±1/2) to all
+        excited levels (F'=I−3/2 … I+3/2), giving 8 ground and 16
+        excited states for I=3/2."""
         dijq, basis_g, basis_e = ham.dqij_two_hyperfine_manifolds(
             1/2, 3/2, 3/2, normalize=True, return_basis=True)
         n_g = int((2 * 0.5 + 1) * (2 * 1.5 + 1))  # 8 ground states
@@ -932,14 +1129,30 @@ class TestTransitionRateValues:
 # ---------------------------------------------------------------------------
 
 class TestFineStructurePhysics:
-    """Physics validation for fine_structure_uncoupled Hamiltonians.
+    """Fine structure in the uncoupled |L, S, I, mL, mS, mI⟩ basis.
+
+    For light alkali atoms (notably ⁷Li), the excited-state fine structure
+    splitting ξ is comparable to the hyperfine splitting, so the coupled
+    |J, F, mF⟩ basis is not a good description at moderate fields.  The
+    uncoupled (L, S, I) basis handles this correctly and includes:
+
+    - Spin-orbit coupling ξ·L⃗·S⃗ (fine structure).
+    - Contact, orbital, and dipolar hyperfine interactions (aₘ, aₒᵣᵦ, aᵈᵢₚ).
+    - Zeeman interaction with separate gL, gS, gI g-factors.
+
+    At zero field the eigenstates must cluster into P₁/₂ and P₃/₂
+    manifolds separated by ~ξ.  At very high fields (Paschen-Back regime,
+    B ≫ ξ/μB) the spin-orbit coupling is overwhelmed and energies scale
+    linearly with B.
+
+    Uses ⁷Li parameters from NIST spectroscopic data.
 
     Adapted from tests/hamiltonians/04_fine_structure_uncoupled_basis.ipynb.
     """
 
     @pytest.fixture(scope='class')
     def li7_params(self):
-        """Li-7 fine structure parameters."""
+        """⁷Li fine structure parameters from NIST spectroscopic data."""
         xi = 6701.16             # fine structure splitting (MHz)
         a_c = -9.5788            # contact splitting (MHz)
         a_orb = 8.6727           # orbital splitting (MHz)
@@ -953,8 +1166,12 @@ class TestFineStructurePhysics:
                     gL=gL, gS=gS, gI=gI, aa=aa, muB=muB)
 
     def test_ground_state_agrees_with_coupled(self, li7_params):
-        """Li-7 ground state fine structure uncoupled should give
-        the same eigenvalues as hyperfine_coupled at low fields."""
+        """⁷Li ground state (L=0): uncoupled and coupled bases must agree.
+
+        For L=0 the spin-orbit term vanishes and fine_structure_uncoupled
+        reduces to a pure hyperfine Hamiltonian.  The eigenvalues must
+        match hyperfine_coupled to within atol=0.5 MHz (limited by slight
+        differences in the gI sign convention between the two codes)."""
         p = li7_params
         a = atom('7Li')
 
@@ -985,8 +1202,12 @@ class TestFineStructurePhysics:
         np.testing.assert_allclose(Es_y, Es_z, atol=1e-6)
 
     def test_fine_structure_splitting_present(self, li7_params):
-        """At B=0, the fine structure splitting should separate the P_{1/2}
-        and P_{3/2} manifolds by approximately xi."""
+        """At B=0, L·S coupling splits the P state into P₁/₂ and P₃/₂.
+
+        The gap between the highest P₁/₂ eigenvalue and the lowest P₃/₂
+        eigenvalue should be on the order of ξ (6701 MHz for ⁷Li).  The
+        exact gap differs from ξ due to hyperfine corrections within
+        each manifold, but must be at least ξ/2."""
         p = li7_params
         H_e, mu_e = ham.fine_structure_uncoupled(
             1, 1/2, 3/2, p['xi'], p['a_c'], p['a_orb'], p['a_dip'],
@@ -998,7 +1219,12 @@ class TestFineStructurePhysics:
         assert gap > p['xi'] / 2, "Fine structure gap is too small"
 
     def test_dipole_elements_selection_rules(self, li7_params):
-        """Dipole matrix elements in uncoupled basis should respect ΔL=±1."""
+        """Dipole matrix elements in the uncoupled basis must respect ΔL=±1.
+
+        The electric dipole operator only connects states differing by
+        one unit of orbital angular momentum.  The matrix d^q_{ij} must
+        have shape (3, n_ground, n_excited) with nonzero elements only
+        for ground (L=0) → excited (L=1) transitions."""
         p = li7_params
         _, _, basis_g = ham.fine_structure_uncoupled(
             0, 1/2, 3/2, 0., p['aa'], 0., 0., p['gL'], p['gS'], p['gI'],
@@ -1016,8 +1242,13 @@ class TestFineStructurePhysics:
         assert np.count_nonzero(np.abs(d_q) > 1e-14) > 0
 
     def test_high_field_paschen_back(self, li7_params):
-        """At very high fields, the total energy spread should scale
-        linearly with B (Paschen-Back regime)."""
+        """Paschen-Back regime: energy spread scales linearly with B.
+
+        When μB·B ≫ ξ (spin-orbit coupling), L and S decouple from each
+        other and precess independently around B.  Each state's energy
+        becomes E ≈ (gL·mL + gS·mS + gI·mI)·μB·B, so the total energy
+        spread across all states scales linearly with B.  We verify this
+        at B = 50, 100, 200 kG where spread(B₂)/spread(B₁) = B₂/B₁."""
         p = li7_params
         H_e, mu_e = ham.fine_structure_uncoupled(
             1, 1/2, 3/2, p['xi'], p['a_c'], p['a_orb'], p['a_dip'],

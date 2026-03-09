@@ -115,6 +115,12 @@ class TestConstantMagneticField:
 
 
 class TestQuadrupoleMagneticField:
+    """Quadrupole magnetic field B⃗ = α·(−x/2, −y/2, z).
+
+    The field vanishes at the origin and increases linearly in all
+    directions. Maxwell's ∇·B⃗ = 0 constraint fixes the radial gradient
+    to half the axial gradient with opposite sign."""
+
     def test_origin_is_zero(self):
         B = quadrupoleMagneticField(1.0)
         assert jnp.allclose(B.Field(R0, 0.), jnp.zeros(3))
@@ -133,6 +139,13 @@ class TestQuadrupoleMagneticField:
 
 
 class TestIPMagneticField:
+    """Ioffe-Pritchard magnetic field.
+
+    At the origin the field is a uniform bias B₀ along ẑ.  Away from
+    the origin, linear (B₁) and quadratic (B₂) gradients add radial
+    and axial confinement, producing the characteristic IP trap
+    potential used for magnetic trapping of neutral atoms."""
+
     def test_origin_gives_B0_along_z(self):
         B = iPMagneticField(B0=1.0, B1=0.5, B2=0.1)
         result = B.Field(R0, 0.)
@@ -146,6 +159,13 @@ class TestIPMagneticField:
 # ---------------------------------------------------------------------------
 
 class TestLaserBeam:
+    """Single laser beam: polarization, intensity, detuning, and fields.
+
+    A laserBeam is defined by its wave vector k⃗ (propagation direction
+    and magnitude |k| = 2π/λ), polarization (σ⁺, σ⁻, or arbitrary
+    spherical/Cartesian vector), saturation parameter s, and detuning δ
+    from resonance.  Polarization must be transverse (ε⃗ ⊥ k⃗)."""
+
     def test_default_construction(self):
         beam = laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=-2.0)
         assert float(beam.intensity()) == pytest.approx(1.0)
@@ -291,6 +311,11 @@ class TestInfinitePlaneWaveBeam:
 # ---------------------------------------------------------------------------
 
 class TestGaussianBeam:
+    """Gaussian beam with intensity profile I(r) = s · exp(−2r²/w²).
+
+    The beam waist w defines the 1/e² intensity radius.  At
+    r = w/√2 the intensity drops to s·e⁻¹."""
+
     def test_peak_intensity(self):
         beam = gaussianBeam(kvec=[0., 0., 1.], pol=+1, s=5.0, delta=0.0, wb=1.0)
         assert float(beam.intensity(R0)) == pytest.approx(5.0)
@@ -462,6 +487,13 @@ class TestLaserBeams:
 # ---------------------------------------------------------------------------
 
 class TestConventional3DMOTBeams:
+    """Standard 3D magneto-optical trap (MOT) beam configuration.
+
+    Six beams form three counter-propagating pairs along ±x̂, ±ŷ, ±ẑ.
+    The sum of all k⃗-vectors vanishes (balanced radiation pressure at
+    rest). Each pair has opposite circular polarization to create the
+    position-dependent force needed for trapping in a quadrupole B-field."""
+
     def test_six_beams(self):
         mot = conventional3DMOTBeams(k=1.0, pol=+1, s=1.0, delta=-2.0)
         assert mot.num_of_beams == 6
@@ -529,14 +561,28 @@ class TestVmapCompatibility:
 # ---------------------------------------------------------------------------
 
 class TestPolarizationProjection:
-    """Test that polarization projection onto different quantization axes
-    produces physically correct results.
+    """Polarization projection onto a quantization axis.
+
+    When a laser beam interacts with an atom, the relevant quantity is the
+    decomposition of its polarization into spherical components
+    (ε₋₁, ε₀, ε₊₁) — i.e. (σ⁻, π, σ⁺) — defined with respect to the
+    local quantization axis (usually set by the magnetic field direction).
+
+    The decomposition is performed via Wigner rotation matrices (spherical
+    tensor algebra) and must satisfy:
+
+    - Unitarity: |ε₋₁|² + |ε₀|² + |ε₊₁|² = 1 for any quantization axis.
+    - Consistency: different but mathematically equivalent polarization
+      definitions (integer flag, spherical vector, Cartesian vector) must
+      yield the same physical projection.
+    - Correct limits: σ⁺ light propagating along ẑ with quantization axis
+      ẑ must project purely onto ε₊₁.
 
     Adapted from tests/lasers/00_polarization_projection.py.
     """
 
     def test_two_sigma_plus_definitions_agree(self):
-        """Two equivalent ways to define σ+ light (integer flag and spherical
+        """Two equivalent ways to define σ⁺ light (integer flag and spherical
         coordinates) must give the same polarization projection."""
         laser_int = laserBeam(kvec=[0., 0., 1.], pol=+1)
         laser_sph = laserBeam(kvec=[0., 0., 1.],
@@ -580,8 +626,12 @@ class TestPolarizationProjection:
         np.testing.assert_allclose(total, np.ones(len(ths)), atol=1e-10)
 
     def test_linear_pol_perpendicular_to_kvec(self):
-        """X-polarized light propagating along z, projected onto z-axis,
-        should give equal σ+ and σ- with no π component."""
+        """X-polarized light propagating along ẑ, projected onto the ẑ axis,
+        should give equal σ⁺ and σ⁻ with no π component.
+
+        Linear polarization along x̂ can be written as:
+            ε̂_x = -(ε̂₊₁ - ε̂₋₁)/√2
+        so the squared amplitudes for σ⁺ and σ⁻ are each 1/2."""
         laser = laserBeam(kvec=[0., 0., 1.],
                           pol=np.array([1., 0., 0.]), pol_coord='cartesian')
         proj = np.array(laser.project_pol(np.array([[0.], [0.], [1.]])))
@@ -602,8 +652,13 @@ class TestPolarizationProjection:
             float(np.abs(proj[2, 0])**2), abs=1e-10)
 
     def test_pol_projection_rotated_quant_axis(self):
-        """Polarization projection should be smooth and consistent when
-        sweeping quantization axis through a non-trivial azimuthal angle."""
+        """Unitarity must hold when the quantization axis is swept continuously.
+
+        As the quantization axis rotates from ẑ through x̂ (or ŷ) and back,
+        the individual σ⁺/π/σ⁻ amplitudes redistribute, but their squared
+        sum must remain exactly 1.  This tests the Wigner D-matrix
+        implementation for non-trivial rotation angles. The atol=1e-6
+        accounts for JAX float32 arithmetic."""
         laser = laserBeam(kvec=[0., 0., 1.], pol=+1)
         ths = np.linspace(0, np.pi, 51)
         # Sweep quantization axis in the xz-plane

@@ -14,6 +14,13 @@ from pylcp.atom import state, transition, atom
 # ---------------------------------------------------------------------------
 
 class TestState:
+    """Atomic energy level with quantum numbers (n, S, L, J) and spectroscopic data.
+
+    Energy is set via wavelength λ (E = 0.01/λ in cm⁻¹) or directly as E.
+    The spontaneous decay rate γ = 1/τ where τ is the natural lifetime.
+    Hyperfine structure constants A_hfs, B_hfs, C_hfs parameterize
+    H_hfs = A_hfs(I⃗·J⃗) + higher-order terms."""
+
     def test_energy_from_lam(self):
         s = state(n=1, S=0, L=0, J=0, lam=500e-9)
         assert s.energy == pytest.approx(0.01 / 500e-9, rel=1e-10)
@@ -80,6 +87,14 @@ class TestState:
 # ---------------------------------------------------------------------------
 
 class TestTransition:
+    """Optical transition connecting two atomic states.
+
+    Wavenumber k = E_excited − E_ground, wavelength λ = 0.01/k,
+    frequency ν = c/λ, angular frequency ω = 2πν.  Derived quantities:
+    saturation intensity I_sat, recoil acceleration a₀ = ℏkΓ/(2m),
+    recoil velocity v₀ = ℏk/m, characteristic length x₀ = v₀²/a₀,
+    characteristic time t₀ = v₀/a₀, and magnetic field scale B_Γ."""
+
     def setup_method(self):
         self.ground = state(n=5, S=1/2, L=0, J=1/2, lam=np.inf, tau=np.inf,
                             gJ=2.0023)
@@ -134,6 +149,12 @@ ALT_SPECIES = ["Li6", "Li7", "Na23", "K39", "K40", "K41", "Rb85", "Rb87", "Cs133
 
 
 class TestAtomConstruction:
+    """Construct atoms for all supported alkali species.
+
+    Each atom has ≥3 states (ground + D1 + D2), monotonically increasing
+    energies, zero ground-state energy (E₀ = 0), infinite ground-state
+    lifetime (τ = ∞, γ = 0), and finite excited-state lifetimes."""
+
     @pytest.mark.parametrize("species", ALL_SPECIES + ALT_SPECIES)
     def test_all_species_construct(self, species):
         a = atom(species)
@@ -176,6 +197,12 @@ class TestAtomConstruction:
 
 
 class TestAtomPhysicalValues:
+    """Validate physical constants against known literature values.
+
+    Checks nuclear spins I (e.g. ⁸⁷Rb: I=3/2, ⁴⁰K: I=4), atomic masses,
+    D-line wavelengths (⁸⁷Rb D2 ≈ 780.241 nm, ⁸⁵Rb D1 ≈ 794.979 nm),
+    and fine-structure quantum numbers J=1/2 (P₁/₂) vs J=3/2 (P₃/₂)."""
+
     def test_7Li_nuclear_spin(self):
         assert atom("7Li").I == 3/2
 

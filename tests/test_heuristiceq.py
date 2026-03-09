@@ -98,6 +98,13 @@ class TestHeuristiceqInit:
 # ---------------------------------------------------------------------------
 
 class TestScatteringRate:
+    """Heuristic two-level scattering rate: R = (Γ/2)·s/(1 + s + (2δ_eff/Γ)²).
+
+    Here s is the saturation parameter and δ_eff = δ − k⃗·v⃗ is the
+    effective detuning including the Doppler shift.  Rate must be
+    non-negative, increase with intensity s, and decrease when the
+    Doppler shift pushes δ_eff away from resonance."""
+
     def test_returns_correct_shape_single_beam(self, heq):
         R = jnp.zeros(3)
         V = jnp.zeros(3)
@@ -161,6 +168,12 @@ class TestScatteringRate:
 # ---------------------------------------------------------------------------
 
 class TestForce:
+    """Radiation pressure force F⃗ = ℏk⃗ · R per beam.
+
+    A single +z beam gives force only in +z.  Two symmetric
+    counter-propagating beams give zero net force at v⃗ = 0⃗.
+    Force scales with intensity (higher s → larger |F⃗|)."""
+
     def test_F_shape(self, heq):
         F, _ = heq.force(jnp.zeros(3), jnp.zeros(3), t=0.)
         assert F.shape == (3,)
@@ -208,6 +221,12 @@ class TestForce:
 # ---------------------------------------------------------------------------
 
 class TestFindEquilibriumForce:
+    """Evaluate force at the current position r⃗₀ and velocity v⃗₀.
+
+    Symmetric beams give zero force at the origin.  A Doppler-shifted
+    atom (v⃗₀ ≠ 0⃗) scatters less from a co-propagating beam, reducing
+    the force compared to v⃗₀ = 0⃗."""
+
     def test_returns_shape_3(self, heq):
         F = heq.find_equilibrium_force()
         assert F.shape == (3,)
@@ -301,7 +320,12 @@ class TestGenerateForceProfile:
 # ---------------------------------------------------------------------------
 
 class Test1DMOTForceProfile:
-    """1D MOT with linear B-field gradient: force must be restoring and non-zero."""
+    """1D magneto-optical trap with linear B-field gradient B⃗ = −αr⃗.
+
+    The Zeeman shift makes σ⁺/σ⁻ beams address different m_F transitions
+    depending on position, producing a restoring force: F(x>0) < 0 and
+    F(x<0) > 0.  By symmetry F(0) = 0 and F(x) = −F(−x) (antisymmetric).
+    Force must be non-zero at the resonance position x_res ≈ δ/α."""
 
     @pytest.fixture
     def mot_heq(self):

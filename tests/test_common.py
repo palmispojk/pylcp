@@ -41,6 +41,13 @@ def _dummy_laserBeams(keys_and_sizes):
 # ---------------------------------------------------------------------------
 
 class TestCart2Spherical:
+    """Cartesian → spherical basis conversion: A⃗ = (Ax, Ay, Az) → (A₋₁, A₀, A₊₁).
+
+    The spherical basis vectors are ε₊₁ = -(x̂ + iŷ)/√2, ε₀ = ẑ,
+    ε₋₁ = (x̂ - iŷ)/√2.  A Cartesian ẑ maps to pure ε₀ (π component),
+    while x̂ has equal |ε₊₁| and |ε₋₁| with zero ε₀.  The norm is
+    preserved: |A⃗|² = Σ_q |A_q|²."""
+
     def test_z_axis_is_pure_pi_zero(self):
         # ẑ maps to m=0 component only
         s = cart2spherical(jnp.array([0., 0., 1.]))
@@ -74,6 +81,11 @@ class TestCart2Spherical:
 
 
 class TestSpherical2Cart:
+    """Spherical → Cartesian inverse transform: (A₋₁, A₀, A₊₁) → (Ax, Ay, Az).
+
+    Round-trip cart2spherical ∘ spherical2cart (and vice versa) must
+    recover the original vector exactly."""
+
     def test_m0_is_z(self):
         # pure m=0 → ẑ
         A = jnp.array([0., 1., 0.], dtype=jnp.complex64)
@@ -97,6 +109,11 @@ class TestSpherical2Cart:
 # ---------------------------------------------------------------------------
 
 class TestSphericalDot:
+    """Spherical dot product: A⃗·B⃗ = Σ_q (-1)^q A_q B_{-q}.
+
+    For real vectors this must equal the Cartesian dot product A⃗·B⃗.
+    Orthogonal vectors give zero, and the self-dot gives |A⃗|²."""
+
     def test_same_as_cartesian_dot_for_real(self):
         # For real vectors, spherical_dot(cart2spherical(A), cart2spherical(B))
         # should equal the Cartesian dot product A·B.
@@ -168,6 +185,12 @@ class TestProgressBar:
 # ---------------------------------------------------------------------------
 
 class TestBaseForceProfile:
+    """Pre-allocated container for force profile data over a spatial grid.
+
+    Stores equilibrium populations N_eq (n_points × n_states), total force
+    F⃗ (3 × n_points), and per-beam forces f[key] (3 × n_points × n_beams)
+    for each laser transition key."""
+
     def setup_method(self):
         self.R = jnp.zeros((3, 4))  # 4 spatial points
         self.V = jnp.zeros((3, 4))
@@ -234,6 +257,14 @@ class TestBaseForceProfile:
 # ---------------------------------------------------------------------------
 
 class TestRandomVector:
+    """Uniformly distributed random unit vectors on the sphere, circle, or line.
+
+    In 3D the vector is uniformly sampled on S² (the unit sphere).  Axis
+    constraints lock specific components to zero (e.g. [True, True, False]
+    gives a random direction in the xy-plane).  Must have unit norm |v⃗| = 1,
+    be isotropic (⟨v⃗⟩ ≈ 0⃗ over many samples), and be compatible with
+    JAX vmap for batched generation."""
+
     def test_3d_returns_shape_3(self):
         key = jax.random.PRNGKey(0)
         v = random_vector(key)

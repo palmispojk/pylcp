@@ -173,6 +173,17 @@ class TestSetInitialPop:
 # ---------------------------------------------------------------------------
 
 class TestConstructEvolutionMatrix:
+    """Rate evolution matrix Rev for the population vector dN/dt = Rev·N.
+
+    Rev encodes both laser-driven transitions (absorption/stimulated
+    emission) and spontaneous decay.  Physical constraints:
+
+    - Column sums = 0: probability is conserved (dΣNᵢ/dt = 0).
+    - Diagonal ≤ 0: each state loses population at rate |Rev_ii|.
+    - Off-diagonal ≥ 0: population flows from state j to state i
+      at rate Rev_ij ≥ 0.
+    - Higher laser intensity → larger off-diagonal pumping rates."""
+
     def test_returns_matrix_and_rijl(self, req, ham):
         Rev, Rijl = req.construct_evolution_matrix(
             jnp.zeros(3), jnp.zeros(3), t=0.)
@@ -225,6 +236,12 @@ class TestConstructEvolutionMatrix:
 # ---------------------------------------------------------------------------
 
 class TestEquilibriumPopulations:
+    """Steady-state populations Neq satisfying Rev·Neq = 0.
+
+    At equilibrium, absorption balances spontaneous + stimulated emission.
+    With no laser (s=0), all population must remain in the ground state
+    (the only dark state).  Populations must sum to 1 and be non-negative."""
+
     def test_populations_sum_to_one(self, req):
         Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.)
         assert float(jnp.sum(Neq)) == pytest.approx(1.0, abs=1e-6)
@@ -310,8 +327,14 @@ class TestFindEquilibriumForce:
 class Test1DMOTForceProfile:
     """1D MOT with linear B-field gradient: force profile must be restoring.
 
-    This is the primary regression test for the Zeeman shift bug in the JAX
-    force-profile path (_generate_force_profile_jax).
+    In a magneto-optical trap, a position-dependent Zeeman shift brings
+    different mF transitions into resonance on opposite sides of the
+    trap centre.  With correctly chosen beam polarizations, this creates
+    a restoring force F(x) that is antisymmetric: F(x) = −F(−x) and
+    vanishes at x=0 (where B=0).
+
+    This is the primary regression test for the Zeeman shift bug in the
+    JAX force-profile path (_generate_force_profile_jax).
     """
 
     @pytest.fixture
@@ -429,7 +452,19 @@ class TestRandomRecoilKickDistribution:
 # ---------------------------------------------------------------------------
 
 class TestQuadrupoleTrapMotion:
-    """Test atom motion in a quadrupole magnetic trap using rate equations.
+    """Atom motion in a quadrupole magnetic trap (rate equations).
+
+    A spin-1/2 atom with gF=2 in a quadrupole field B⃗ = (−x/2, −y/2, z)
+    experiences a state-dependent force F⃗ = −∇(mF·gF·μB·|B⃗|).  For the
+    weak-field-seeking state (mF·gF > 0), this creates a confining
+    potential V ∝ |B⃗| that is linear in displacement (not harmonic).
+
+    The quadrupole has an anisotropic gradient: the axial (z) gradient
+    is twice the radial (x, y) gradient due to ∇·B⃗ = 0.  This leads to
+    different oscillation frequencies along z vs the radial directions.
+
+    The rate equation solver tracks populations and motion classically,
+    assuming the internal state follows the local field adiabatically.
 
     Adapted from tests/magnetic_traps/00_motion_rateeq.py.
     """
@@ -462,9 +497,14 @@ class TestQuadrupoleTrapMotion:
         assert np.any(z > 0.), "Position should remain physical"
 
     def test_anisotropic_frequency(self, trap_rateeq):
-        """In a quadrupole trap with B = (-x/2, -y/2, z), the z-gradient
-        is twice the radial gradient, so the z-oscillation period should
-        differ from the radial period."""
+        """Anisotropic oscillation: z and radial frequencies must differ.
+
+        Maxwell's equation ∇·B⃗ = 0 constrains the quadrupole gradients:
+        ∂Bz/∂z = −∂Bx/∂x − ∂By/∂y.  For our field B⃗ = (−x/2, −y/2, z),
+        the z-gradient (1 T/m) is twice the radial gradient (0.5 T/m).
+        Since the restoring force ∝ gradient, the z and radial oscillation
+        frequencies differ.  We verify both axes oscillate and show
+        distinct dominant FFT frequencies."""
         h, B = trap_rateeq
         z0 = 2.0
 

@@ -35,6 +35,12 @@ def make_F0_to_F1():
 # ---------------------------------------------------------------------------
 
 class TestBlock:
+    """hamiltonian.block: a single matrix block representing one manifold.
+
+    Each block stores an n×n (or n×m) matrix for one state label (e.g. 'g'
+    or 'e').  A block is "diagonal" if all off-diagonal elements are zero —
+    this enables fast-path optimisations in the evolution matrices."""
+
     def test_scalar_block(self):
         b = hamiltonian.block('test', jnp.eye(2))
         assert b.n == 2
@@ -72,6 +78,12 @@ class TestBlock:
 # ---------------------------------------------------------------------------
 
 class TestVectorBlock:
+    """vector_block: rank-1 spherical tensor stored as a 3×n×n array.
+
+    The three slices correspond to q = −1, 0, +1.  Used for the magnetic
+    dipole moment μ_q (Zeeman interaction H_Z = −Σ_q (−1)^q μ_q B_{−q})
+    and the electric dipole operator d_q."""
+
     def test_shape(self):
         M = jnp.zeros((3, 2, 2))
         vb = hamiltonian.vector_block('mu', M)
@@ -99,6 +111,11 @@ class TestVectorBlock:
 # ---------------------------------------------------------------------------
 
 class TestAddH0Block:
+    """Add the field-free Hamiltonian H₀ for a single manifold.
+
+    H₀ must be square (Hermitian) since it represents energy levels within
+    one manifold (e.g. ground or excited).  Duplicate labels are forbidden."""
+
     def test_single_block(self):
         ham = hamiltonian()
         ham.add_H_0_block('g', jnp.zeros((2, 2)))
@@ -134,6 +151,11 @@ class TestAddH0Block:
 # ---------------------------------------------------------------------------
 
 class TestAddMuQBlock:
+    """Add the magnetic dipole moment μ_q in the spherical basis (q=−1,0,+1).
+
+    First dimension must be 3 for the three spherical components.  The
+    Zeeman interaction is H_Z = −μ⃗·B⃗ = −Σ_q (−1)^q μ_q B_{−q}."""
+
     def test_mu_before_H0(self):
         ham = hamiltonian()
         mu = jnp.zeros((3, 2, 2))
@@ -163,6 +185,12 @@ class TestAddMuQBlock:
 # ---------------------------------------------------------------------------
 
 class TestAddDQBlock:
+    """Add the electric dipole transition operator d_q connecting two manifolds.
+
+    Shape is 3 × n_g × n_e for the three polarization components (σ⁻, π, σ⁺).
+    Selection rules enforce Δm_F = q.  The conjugate transpose d_q† connects
+    e→g and is stored automatically."""
+
     def setup_method(self):
         self.ham = hamiltonian()
         self.ham.add_H_0_block('g', jnp.zeros((1, 1)))
@@ -209,6 +237,11 @@ class TestAddDQBlock:
 # ---------------------------------------------------------------------------
 
 class TestFiveArgConstructor:
+    """Convenience constructor: hamiltonian(H0_g, H0_e, μ_g, μ_e, d_q).
+
+    Builds a two-manifold system (one ground 'g', one excited 'e') with
+    a single laser transition g→e in one call."""
+
     def test_two_level_construction(self):
         H0_g, H0_e, mu_g, mu_e, d_q = make_two_level()
         ham = hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q)
@@ -232,6 +265,12 @@ class TestFiveArgConstructor:
 # ---------------------------------------------------------------------------
 
 class TestMakeFullMatrices:
+    """Assemble block-diagonal full matrices from individual manifold blocks.
+
+    Produces the full H₀, μ_q (3×n×n), d_q (3×n×n), and their Cartesian
+    counterparts μ and d via the spherical-to-Cartesian transform.  Also
+    stores d_q† (conjugate transpose) for each laser key."""
+
     def setup_method(self):
         H0_g, H0_e, mu_g, mu_e, d_q = make_F0_to_F1()
         self.ham = hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q)
@@ -283,6 +322,12 @@ class TestMakeFullMatrices:
 # ---------------------------------------------------------------------------
 
 class TestReturnFullH:
+    """Total Hamiltonian H = H₀ − μ⃗·B⃗ − d⃗·E⃗ for given field vectors.
+
+    Electric and magnetic fields are passed in the spherical basis.
+    H must be Hermitian.  Non-zero B breaks degeneracy via Zeeman splitting.
+    E⃗ can be passed as an array or as a dict keyed by laser transition."""
+
     def setup_method(self):
         H0_g, H0_e, mu_g, mu_e, d_q = make_F0_to_F1()
         self.ham = hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q)
@@ -331,6 +376,12 @@ class TestReturnFullH:
 # ---------------------------------------------------------------------------
 
 class TestDiagStaticField:
+    """Diagonalize H₀ + H_Z(B₀) at a static magnetic field strength B₀.
+
+    The resulting H₀ is diagonal (eigenvalues are real), and the
+    transformation matrices U are unitary (U†U = I).  This is used to
+    work in the energy eigenbasis at a given field strength."""
+
     def setup_method(self):
         H0_g, mu_g = hamiltonians.singleF(F=1, gF=1)
         H0_e, mu_e = hamiltonians.singleF(F=2, gF=1)
@@ -389,6 +440,14 @@ class TestPrintStructure:
 # ---------------------------------------------------------------------------
 
 class TestHamiltoniansModule:
+    """Helper functions in the hamiltonians module.
+
+    singleF: builds H₀ and μ_q for a single F manifold with 2F+1 states.
+    dqij_two_bare_hyperfine: dipole matrix elements ⟨F,m_F|d_q|F',m_F'⟩
+    with selection rule Δm_F = q.  hyperfine_coupled: full (2J+1)(2I+1)
+    coupled basis.  dqij_two_hyperfine_manifolds: dipole elements between
+    full hyperfine manifolds."""
+
     def test_singleF_shapes(self):
         H0, mu_q = hamiltonians.singleF(F=1, gF=1)
         assert H0.shape == (3, 3)

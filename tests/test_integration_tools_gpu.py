@@ -95,7 +95,13 @@ class TestRandomOdeResult:
 # ---------------------------------------------------------------------------
 
 class TestSolveIvpDense:
-    """Tests for the GPU-batched dense ODE solver."""
+    """GPU-batched deterministic ODE solver (solve_ivp_dense).
+
+    Validates against analytical solutions: exponential decay dy/dt = −y
+    → y(t) = y₀·e⁻ᵗ, and harmonic oscillator d/dt[x,v] = [v,−x] with
+    energy conservation E = ½(x² + v²) = const.  Tests batching (multiple
+    y₀ solved in parallel), solver backends (Dopri5, Bosh3, Kvaerno5),
+    tolerance effects, and the dt₀ scaling fix for long time spans."""
 
     # --- shape / structure ---
 
@@ -223,7 +229,14 @@ class TestSolveIvpDense:
 # ---------------------------------------------------------------------------
 
 class TestSolveIvpRandom:
-    """Tests for the stochastic GPU ODE solver."""
+    """Stochastic ODE solver interleaving integration with random scattering.
+
+    Each result is a RandomOdeResult carrying y(t) plus scattered-event
+    times t_random, event counts n_random, and boolean indices inds_random.
+    Without scattering (dummy_random) the solution matches y₀·e⁻ᵗ.  With
+    always_scatter every step records an event.  Tests batch independence,
+    early termination (max_steps too small → success=False), and the dt₀
+    scaling fix for long spans."""
 
     def _key(self, seed=42):
         return jax.random.PRNGKey(seed)

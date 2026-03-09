@@ -182,6 +182,11 @@ class TestSetPositionVelocity:
 # ---------------------------------------------------------------------------
 
 class TestFindEquilibriumPosition:
+    """Find the position r⃗_eq where the net force vanishes: F⃗(r⃗_eq) = 0⃗.
+
+    Uses root-finding (Brent's method for 1D, general solver for multi-axis).
+    For the test's linear restoring force F = -kr, the equilibrium is at r = 0."""
+
     def test_single_axis_finds_zero(self, linear_geq):
         # F = -k*r, equilibrium at r=0 for any k>0
         r_eq = linear_geq.find_equilibrium_position(
@@ -205,6 +210,12 @@ class TestFindEquilibriumPosition:
 # ---------------------------------------------------------------------------
 
 class TestTrappingFrequencies:
+    """Trapping frequency ω from the force gradient: ω = √(−∂F/∂r / m).
+
+    For a harmonic potential F = -kr this gives ω = √(k/m).  Verifies
+    correct scaling (k=1,m=1 → ω=1; k=4,m=1 → ω=2) and that an
+    isotropic force gives identical frequencies on all three axes."""
+
     def test_single_axis_returns_scalar(self, linear_geq):
         omega = linear_geq.trapping_frequencies([0], eps=0.001)
         assert isinstance(omega, float)
@@ -236,6 +247,12 @@ class TestTrappingFrequencies:
 # ---------------------------------------------------------------------------
 
 class TestDampingCoeff:
+    """Velocity damping coefficient β = −∂F/∂v.
+
+    For the damped model F = -kr - βv, this gives β = 2.0.  A purely
+    position-dependent force (no velocity dependence) has β = 0.
+    Positive β means the force opposes motion — essential for laser cooling."""
+
     def test_single_axis_returns_scalar(self, damped_geq):
         beta = damped_geq.damping_coeff([0], eps=0.001)
         assert isinstance(beta, float)
