@@ -9,7 +9,8 @@ import jax.numpy as jnp
 from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense
 
 from .rateeq import rateeq
-from .common import (cart2spherical, spherical2cart, base_force_profile)
+from .common import (cart2spherical, spherical2cart, base_force_profile,
+                     progressBar)
 from .governingeq import governingeq
 
 
@@ -1328,6 +1329,7 @@ class obe(governingeq):
         rel          = kwargs.pop('rel',          1e-5)
         abs_tol      = kwargs.pop('abs',          1e-9)
         initial_rho  = kwargs.pop('initial_rho',  'rateeq')
+        progress_bar = kwargs.pop('progress_bar', False)
 
         if not name:
             name = '{0:d}'.format(len(self.profile))
@@ -1338,29 +1340,6 @@ class obe(governingeq):
         R_np = np.array(R).reshape(3, -1)
         V_np = np.array(V).reshape(3, -1)
         N    = R_np.shape[1]
-
-        # Determine a single chunk_deltat for all atoms (use minimum)
-        if deltat_func is not None:
-            deltats = [deltat_func(R_np[:, i], V_np[:, i]) for i in range(N)]
-            valid   = [float(d) for d in deltats if d is not None]
-            if valid:
-                chunk_deltat = min(valid)
-        elif deltat_v is not None or deltat_r is not None:
-            deltats = []
-            for i in range(N):
-                r_i, v_i = R_np[:, i], V_np[:, i]
-                d = None
-                if deltat_v is not None:
-                    vabs = np.sqrt(np.sum(v_i**2))
-                    d = float(deltat_tmax) if vabs == 0 else min(2*np.pi*deltat_v/vabs, float(deltat_tmax))
-                if deltat_r is not None:
-                    rabs = np.sqrt(np.sum(r_i**2))
-                    d_r  = float(deltat_tmax) if rabs == 0 else min(2*np.pi*deltat_r/rabs, float(deltat_tmax))
-                    d    = d_r if d is None else min(d, d_r)
-                if d is not None:
-                    deltats.append(d)
-            if deltats:
-                chunk_deltat = min(deltats)
 
         # Build initial rho for every atom
         rho0_list = []
@@ -1383,80 +1362,152 @@ class obe(governingeq):
             [rho0_batch, V_jnp, R_jnp], axis=1
         )                                                     # (N, state_dim)
 
-        # Use cumulative running averages so that convergence is robust
-        # even when chunk_deltat is short (e.g. driven by fastest atoms).
-        n_rho               = rho0_batch.shape[1]
-        cumul_f_sum         = jnp.zeros((N, 3))
-        cumul_rho_sum       = jnp.zeros((N, n_rho))
-        cumul_f_laser_sum   = None
-        cumul_f_laser_q_sum = None
-        cumul_f_mag_sum     = jnp.zeros((N, 3))
-        total_pts           = 0
-        old_f_avg           = jnp.full((N, 3), jnp.inf)
+        # Group atoms by their ideal chunk_deltat so that slow atoms get long
+        # chunks (fast convergence) and fast atoms get short chunks (accuracy).
+        # This avoids forcing ALL atoms to use the smallest chunk_deltat.
+        per_atom_deltat = np.full(N, chunk_deltat, dtype=float)
+        if deltat_func is not None:
+            for i in range(N):
+                d = deltat_func(R_np[:, i], V_np[:, i])
+                if d is not None:
+                    per_atom_deltat[i] = float(d)
+        elif deltat_v is not None or deltat_r is not None:
+            for i in range(N):
+                r_i, v_i = R_np[:, i], V_np[:, i]
+                d = None
+                if deltat_v is not None:
+                    vabs = np.sqrt(np.sum(v_i**2))
+                    d = float(deltat_tmax) if vabs == 0 else min(2*np.pi*deltat_v/vabs, float(deltat_tmax))
+                if deltat_r is not None:
+                    rabs = np.sqrt(np.sum(r_i**2))
+                    d_r = float(deltat_tmax) if rabs == 0 else min(2*np.pi*deltat_r/rabs, float(deltat_tmax))
+                    d = d_r if d is None else min(d, d_r)
+                if d is not None:
+                    per_atom_deltat[i] = d
 
-        ii = 0
-        while True:
-            self.evolve_density(
-                [ii * chunk_deltat, (ii + 1) * chunk_deltat],
-                y0_batch,
-                n_points=int(Npts),
-                **kwargs
-            )
-            t = self.sol.t  # (n_pts,)
-            n_pts = t.shape[0]
+        # Bin atoms into groups with similar chunk_deltat (within factor of 2)
+        log_dt = np.log2(np.maximum(per_atom_deltat, 1e-30))
+        bin_ids = np.floor(log_dt).astype(int)
+        unique_bins = np.unique(bin_ids)
 
-            # self.sol.y: (N, n_pts, state_dim)
-            rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)    # (N, n², n_pts)
-            r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)  # (N, 3, n_pts)
+        groups = []
+        for b in unique_bins:
+            mask = bin_ids == b
+            indices = np.where(mask)[0]
+            group_deltat = float(np.min(per_atom_deltat[indices]))
+            groups.append((indices, group_deltat))
 
-            # Compute forces for all atoms in parallel
-            f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
-                lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
-            )(r_all, rho_flat_all)
-            # f_all: (N, 3, n_pts);  f_laser_all: {key: (N, 3, beams, n_pts)}
-            # f_laser_q_all: {key: (N, 3, 3, beams, n_pts)};  f_mag_all: (N, 3, n_pts)
+        # Allocate per-atom result storage
+        n_rho = rho0_batch.shape[1]
+        final_f_avg           = np.zeros((N, 3))
+        final_rho_flat_mean   = np.zeros((N, n_rho))
+        final_f_mag_avg       = np.zeros((N, 3))
+        final_f_laser_avg     = None
+        final_f_laser_q_avg   = None
+        final_iters           = np.zeros(N, dtype=int)
 
-            # Accumulate running sums for a proper cumulative average
-            cumul_f_sum += jnp.sum(f_all, axis=2)              # (N, 3)
-            cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)     # (N, n²)
-            cumul_f_mag_sum += jnp.sum(f_mag_all, axis=2)      # (N, 3)
-            if cumul_f_laser_sum is None:
-                cumul_f_laser_sum   = {k: jnp.sum(v, axis=-1) for k, v in f_laser_all.items()}
-                cumul_f_laser_q_sum = {k: jnp.sum(v, axis=-1) for k, v in f_laser_q_all.items()}
-            else:
-                for k in f_laser_all:
-                    cumul_f_laser_sum[k]   += jnp.sum(f_laser_all[k],   axis=-1)
-                    cumul_f_laser_q_sum[k] += jnp.sum(f_laser_q_all[k], axis=-1)
-            total_pts += n_pts
+        if progress_bar:
+            progress = progressBar()
+            atoms_done = 0
 
-            f_avg = cumul_f_sum / total_pts  # (N, 3)
+        for gi, (group_indices, group_chunk_deltat) in enumerate(groups):
+            Ng = len(group_indices)
+            y0_group = y0_batch[group_indices]  # (Ng, state_dim)
 
-            f_sq    = jnp.sum(f_avg ** 2, axis=1)                        # (N,)
-            diff_sq = jnp.sum((old_f_avg - f_avg) ** 2, axis=1)          # (N,)
-            all_converged = bool(jnp.all(
-                (f_sq < abs_tol)
-                | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
-                | (diff_sq < abs_tol)
-            ))
+            cumul_f_sum         = jnp.zeros((Ng, 3))
+            cumul_rho_sum       = jnp.zeros((Ng, n_rho))
+            cumul_f_laser_sum   = None
+            cumul_f_laser_q_sum = None
+            cumul_f_mag_sum     = jnp.zeros((Ng, 3))
+            total_pts           = 0
+            old_f_avg           = jnp.full((Ng, 3), jnp.inf)
 
-            if all_converged or ii >= itermax - 1:
-                break
+            ii = 0
+            while True:
+                self.evolve_density(
+                    [ii * group_chunk_deltat, (ii + 1) * group_chunk_deltat],
+                    y0_group,
+                    n_points=int(Npts),
+                    **kwargs
+                )
+                t = self.sol.t
+                n_pts = t.shape[0]
 
-            old_f_avg = f_avg
-            # Seed next chunk directly from the last time point
-            y0_batch = self.sol.y[:, -1, :]  # (N, state_dim)
-            ii += 1
+                rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)
+                r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
 
-        # Cumulative time-averaged quantities
-        f_laser_avg   = {k: v / total_pts for k, v in cumul_f_laser_sum.items()}   # (N,3,beams)
-        f_laser_avg_q = {k: v / total_pts for k, v in cumul_f_laser_q_sum.items()} # (N,3,3,beams)
-        f_mag_avg     = cumul_f_mag_sum / total_pts                                 # (N,3)
+                f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
+                    lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
+                )(r_all, rho_flat_all)
+
+                cumul_f_sum += jnp.sum(f_all, axis=2)
+                cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)
+                cumul_f_mag_sum += jnp.sum(f_mag_all, axis=2)
+                if cumul_f_laser_sum is None:
+                    cumul_f_laser_sum   = {k: jnp.sum(v, axis=-1) for k, v in f_laser_all.items()}
+                    cumul_f_laser_q_sum = {k: jnp.sum(v, axis=-1) for k, v in f_laser_q_all.items()}
+                else:
+                    for k in f_laser_all:
+                        cumul_f_laser_sum[k]   += jnp.sum(f_laser_all[k],   axis=-1)
+                        cumul_f_laser_q_sum[k] += jnp.sum(f_laser_q_all[k], axis=-1)
+                total_pts += n_pts
+
+                f_avg = cumul_f_sum / total_pts
+
+                f_sq    = jnp.sum(f_avg ** 2, axis=1)
+                diff_sq = jnp.sum((old_f_avg - f_avg) ** 2, axis=1)
+                all_converged = bool(jnp.all(
+                    (f_sq < abs_tol)
+                    | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
+                    | (diff_sq < abs_tol)
+                ))
+
+                if all_converged or ii >= itermax - 1:
+                    break
+
+                old_f_avg = f_avg
+                y0_group = self.sol.y[:, -1, :]
+                ii += 1
+
+            # Store group results into per-atom arrays
+            f_avg_np = np.array(f_avg)
+            rho_flat_mean = np.array(cumul_rho_sum / total_pts)
+            f_mag_avg_np = np.array(cumul_f_mag_sum / total_pts)
+
+            for local_idx, global_idx in enumerate(group_indices):
+                final_f_avg[global_idx] = f_avg_np[local_idx]
+                final_rho_flat_mean[global_idx] = rho_flat_mean[local_idx]
+                final_f_mag_avg[global_idx] = f_mag_avg_np[local_idx]
+                final_iters[global_idx] = ii
+
+            f_laser_group   = {k: np.array(v / total_pts) for k, v in cumul_f_laser_sum.items()}
+            f_laser_q_group = {k: np.array(v / total_pts) for k, v in cumul_f_laser_q_sum.items()}
+            if final_f_laser_avg is None:
+                final_f_laser_avg   = {k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_group.items()}
+                final_f_laser_q_avg = {k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_q_group.items()}
+            for k in f_laser_group:
+                for local_idx, global_idx in enumerate(group_indices):
+                    final_f_laser_avg[k][global_idx]   = f_laser_group[k][local_idx]
+                    final_f_laser_q_avg[k][global_idx]  = f_laser_q_group[k][local_idx]
+
+            if progress_bar:
+                atoms_done += Ng
+                progress.update(atoms_done / N)
+
+        if progress_bar:
+            progress.update(1.0)
+
+        # Convert final arrays back to jnp for downstream compatibility
+        f_avg         = jnp.array(final_f_avg)
+        f_laser_avg   = {k: jnp.array(v) for k, v in final_f_laser_avg.items()}
+        f_laser_avg_q = {k: jnp.array(v) for k, v in final_f_laser_q_avg.items()}
+        f_mag_avg     = jnp.array(final_f_mag_avg)
 
         # Equilibrium populations: cumulative mean rho → diagonal
-        rho_flat_mean = cumul_rho_sum / total_pts   # (N, n²)
+        rho_flat_mean_jnp = jnp.array(final_rho_flat_mean)
         def get_Neq(rho_flat_i):
             return jnp.real(jnp.diagonal(self.__reshape_rho(rho_flat_i)))
-        Neq_all = jax.vmap(get_Neq)(rho_flat_mean)        # (N, n)
+        Neq_all = jax.vmap(get_Neq)(rho_flat_mean_jnp)        # (N, n)
 
         # Write results back into the force_profile using nditer for multi-index
         it = np.nditer(
@@ -1472,7 +1523,7 @@ class obe(governingeq):
                 f_avg[atom_idx],
                 {key: f_laser_avg[key][atom_idx]   for key in f_laser_avg},
                 f_mag_avg[atom_idx],
-                ii,
+                int(final_iters[atom_idx]),
                 {key: f_laser_avg_q[key][atom_idx] for key in f_laser_avg_q},
             )
 
