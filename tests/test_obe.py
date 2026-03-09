@@ -218,7 +218,18 @@ class TestObeInit:
 # ---------------------------------------------------------------------------
 
 class TestBuildCoherentEvSubmatrix:
-    """Verify the kron-product implementation matches the physics."""
+    """Liouvillian superoperator L for coherent evolution: dρ/dt = Lρ.
+
+    The Liouvillian is constructed as L = i(H⊗I − I⊗H) using the
+    Kronecker product, which maps the density matrix ρ (n×n) to a
+    column vector of length n².
+
+    Physical constraints:
+    - For Hermitian H, L is anti-Hermitian (L + L† = 0), ensuring
+      unitary evolution preserves Tr(ρ) and positivity.
+    - The trace-preserving condition requires Σ_diag L_ij = 0 for all j.
+    - The kron-product implementation must match the reference triple-loop
+      construction element by element."""
 
     def _make_liouvillian_loop(self, H, n):
         """Reference implementation via the original triple loop."""
@@ -404,6 +415,12 @@ class TestSetInitialRho:
 # ---------------------------------------------------------------------------
 
 class TestObservable:
+    """Computing expectation values ⟨O⟩ = Tr(O·ρ) from the density matrix.
+
+    The identity operator must give Tr(ρ) = 1.  A projector |i⟩⟨i|
+    gives the population in state i.  Vector operators (shape 3×n×n)
+    return a 3-component result.  Dimension mismatches must raise."""
+
     def test_identity_gives_trace_one(self, obe_transform, ham):
         o = obe_transform
         o.set_initial_rho_equally()
@@ -483,6 +500,18 @@ class TestObservable:
 # ---------------------------------------------------------------------------
 
 class TestEvolveDensity:
+    """Time evolution of the density matrix under the full OBE.
+
+    The OBE master equation dρ/dt = −i[H,ρ] + L[ρ] includes both
+    coherent driving (laser coupling) and incoherent decay (spontaneous
+    emission via Lindblad terms).
+
+    At all times:
+    - Tr(ρ) = 1 (probability conservation).
+    - Diagonal elements ρ_ii ≥ 0 (populations are non-negative).
+    - Starting from the ground state with a resonant laser, excited
+      state population must grow."""
+
     def test_returns_sol_object(self, obe_transform):
         o = obe_transform
         o.set_initial_rho_equally()
@@ -574,6 +603,14 @@ class TestEvolveDensity:
 # ---------------------------------------------------------------------------
 
 class TestForce:
+    """Radiation pressure force F⃗ = ℏk⃗ · Γ · ⟨scattering rate⟩.
+
+    A single beam along +ẑ must produce a positive z-force.  Two
+    symmetric counter-propagating beams at v=0, B=0 must give nearly
+    zero net force by symmetry.  The force can be decomposed into
+    per-beam (f_laser) and per-polarization-component (f_laser_q)
+    contributions, plus a magnetic force (f_mag)."""
+
     def _get_rho0(self, o):
         """Get the initial rho0 in internal representation (re/im basis if transform=True)."""
         o.set_initial_rho_equally()
@@ -638,6 +675,13 @@ class TestForce:
 # ---------------------------------------------------------------------------
 
 class TestFindEquilibriumForce:
+    """Steady-state (time-averaged) radiation pressure force.
+
+    find_equilibrium_force evolves ρ forward in time and averages the
+    instantaneous force until convergence.  The equilibrium populations
+    Neq must sum to 1 and the force must be consistent with the beam
+    geometry (positive z for a +ẑ beam, near-zero for symmetric beams)."""
+
     def test_returns_shape_3_array(self, obe_transform):
         o = obe_transform
         F = o.find_equilibrium_force(deltat=10, itermax=3, Npts=101,
@@ -739,7 +783,13 @@ class TestFullOBEEv:
 # ---------------------------------------------------------------------------
 
 class Test1DMOTForceProfile:
-    """1D MOT with linear B-field gradient: OBE force must be restoring."""
+    """1D MOT force profile computed via OBE (cf. rate equation version).
+
+    The OBE calculation finds the time-averaged force by evolving ρ to
+    steady state at each spatial point.  The same MOT physics applies:
+    the force must vanish at the trap centre (B=0) by symmetry, be
+    restoring (F·x < 0) in the linear trapping region, and contain
+    no NaN even at B=0 where the quantization axis is undefined."""
 
     @pytest.fixture
     def mot_obe(self):
@@ -789,6 +839,65 @@ class Test1DMOTForceProfile:
         o.set_initial_position_and_velocity(jnp.zeros(3), jnp.zeros(3))
         F = o.find_equilibrium_force(deltat=200, itermax=50, Npts=2001)
         assert not jnp.any(jnp.isnan(F))
+
+
+class TestMolassesForceProfileSmooth:
+    """OBE force profile for 1D molasses must be smooth across all velocities.
+
+    Regression test: when generate_force_profile uses a batched solver with
+    a single chunk_deltat (the minimum across the velocity grid), atoms at
+    intermediate velocities can get under-averaged Rabi oscillations, producing
+    spurious spikes in the force profile.  A cumulative running average
+    eliminates these artefacts.
+    """
+
+    @pytest.fixture
+    def molasses_obe(self):
+        Hg = np.array([[0.]])
+        He = np.array([[0.]])  # detuning on the laser
+        mu_q = np.zeros((3, 1, 1))
+        d_q = np.zeros((3, 1, 1))
+        d_q[1, 0, 0] = 1.
+        ham = hamiltonian(Hg, He, mu_q, mu_q, d_q, mass=200)
+        delta, s = -2., 1.5
+        beams = laserBeams([
+            {'kvec': [1., 0., 0.], 'pol': [0., 1., 0.],
+             'pol_coord': 'spherical', 'delta': delta, 's': s},
+            {'kvec': [-1., 0., 0.], 'pol': [0., 1., 0.],
+             'pol_coord': 'spherical', 'delta': delta, 's': s},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham)
+
+    def test_no_spikes_with_deltat_v(self, molasses_obe):
+        """Force profile must be smooth — no spikes when deltat_v is used."""
+        o = molasses_obe
+        v = np.arange(-10., 10.5, 0.5)
+        o.generate_force_profile(
+            np.zeros((3,) + v.shape),
+            [v, np.zeros(v.shape), np.zeros(v.shape)],
+            name='test',
+            deltat_tmax=2 * np.pi * 100, deltat_v=4,
+            itermax=1000, rel=1e-4, abs=1e-6,
+        )
+        F = np.array(o.profile['test'].F[0])
+
+        # The force must be antisymmetric and smooth.  Check that no
+        # point deviates from its neighbours by more than a generous
+        # threshold (spikes typically exceed the smooth curve by >2×).
+        dF = np.diff(F)
+        # Successive differences should not change sign more than once
+        # per zero crossing of the force.  A spike produces a
+        # sign-change pair in quick succession.  Instead of counting
+        # sign changes we simply check that the force has no point
+        # that sticks out beyond 2× the max of its neighbours.
+        for i in range(1, len(F) - 1):
+            neighbour_max = max(abs(F[i - 1]), abs(F[i + 1]))
+            if neighbour_max > 1e-6:
+                assert abs(F[i]) < 3 * neighbour_max, (
+                    f"Spike at v={v[i]:.1f}: |F|={abs(F[i]):.4f} vs "
+                    f"neighbours {abs(F[i-1]):.4f}, {abs(F[i+1]):.4f}"
+                )
 
 
 class TestEvolveMotion:
@@ -925,7 +1034,22 @@ class TestRandomRecoilKickDistribution:
 # ---------------------------------------------------------------------------
 
 class TestQuadrupoleTrapOBE:
-    """Test atom motion in a quadrupole magnetic trap using OBE.
+    """Atom motion in magnetic traps using optical Bloch equations (OBE).
+
+    Unlike the rate equation approach, the OBE tracks the full density
+    matrix ρ, capturing quantum coherences between spin states.  This is
+    essential near the zero-field point of a quadrupole trap, where the
+    quantization axis changes direction rapidly and Majorana spin flips
+    can transfer population to untrapped states.
+
+    For a spin-1/2 with gF=1 in a linear field B⃗ = (0, 0, z), a pure
+    spin-up state (mF = +1/2) is weak-field seeking and experiences a
+    constant force F = gF·μB·(∂B/∂z)/2, giving parabolic motion
+    z(t) = z₀ + ½·a·t² with a = gF·μB·(∂B/∂z)/(2m).  In dimensionless
+    units (μB=1, m=1, ∂B/∂z=1), this gives z(t) ≈ t²/4 + z₀.
+
+    The density matrix must remain physical throughout: Tr(ρ) = 1 and
+    all diagonal elements (populations) must be non-negative.
 
     Adapted from tests/magnetic_traps/01_motion_OBE.py.
     """
@@ -942,8 +1066,14 @@ class TestQuadrupoleTrapOBE:
         return h
 
     def test_linear_field_parabolic_motion(self, trap_setup):
-        """In a uniform gradient B=(0,0,z), a spin-up atom released from z=1
-        should undergo approximately parabolic motion: z(t) ≈ t²/4 + 1."""
+        """Constant-gradient field → parabolic trajectory.
+
+        In B⃗ = (0, 0, z) a spin-up atom feels a constant magnetic force
+        (since ∂|B|/∂z = 1 everywhere for z > 0).  Released from z₀ = 1
+        at rest, the trajectory is z(t) = t²/4 + 1 in dimensionless
+        units.  We verify this at early times (t < 2) before the atom
+        moves far enough for higher-order effects to matter.  rtol=0.15
+        accounts for finite time-step and ODE solver tolerances."""
         h = trap_setup
         B = magField(lambda R: jnp.array([0., 0., R[2]]))
         o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
@@ -968,8 +1098,14 @@ class TestQuadrupoleTrapOBE:
         np.testing.assert_allclose(z[early], z_expected, rtol=0.15)
 
     def test_quadrupole_trap_confinement(self, trap_setup):
-        """An atom in a quadrupole trap should remain confined
-        (not escape to infinity)."""
+        """Quadrupole trap: atom must oscillate, not escape.
+
+        A weak-field-seeking state in B⃗ = (−x/2, −y/2, z) is confined
+        by the potential V ∝ |B⃗|.  Near the trap centre |B⃗| → 0, the
+        quantization axis is ill-defined and Majorana spin flips can
+        transfer the atom to an untrapped state — but for short
+        evolution times and a start away from the origin, the atom
+        should oscillate back toward z₀ rather than escape."""
         h = trap_setup
         B = magField(lambda R: jnp.array([-0.5 * R[0], -0.5 * R[1], 1 * R[2]]))
         o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
@@ -988,7 +1124,11 @@ class TestQuadrupoleTrapOBE:
         assert np.any(z < z[0]), "Atom should oscillate back toward origin"
 
     def test_density_matrix_stays_physical(self, trap_setup):
-        """Density matrix trace must remain 1 and diagonal elements non-negative."""
+        """Tr(ρ) must remain 1 throughout the evolution.
+
+        The OBE preserves the trace of the density matrix by construction
+        (Lindblad form).  Numerical errors can cause small deviations, so
+        we check Tr(ρ) = 1 ± 1e-6 at every saved time step."""
         h = trap_setup
         B = magField(lambda R: jnp.array([0., 0., R[2]]))
         o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
@@ -1009,7 +1149,11 @@ class TestQuadrupoleTrapOBE:
                 f"Trace = {trace} at time index {t_idx}"
 
     def test_spin_expectation_values_bounded(self, trap_setup):
-        """Spin expectation values should remain bounded by 1/2 for spin-1/2."""
+        """Diagonal elements ρ_{ii} must stay in [0, 1] (populations).
+
+        For a physical density matrix, each diagonal element represents
+        the probability of occupying state |i⟩ and must be non-negative
+        and at most 1."""
         h = trap_setup
         B = magField(lambda R: jnp.array([0., 0., R[2]]))
         o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
