@@ -346,6 +346,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, so
             y0=y0,
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
             saveat=SaveAt(ts=ts_grid),
+            max_steps=max(16 * n_points, 4096),
         )
         return sol.ys  # (n_points, state_dim)
 
