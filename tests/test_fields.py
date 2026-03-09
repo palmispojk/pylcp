@@ -298,12 +298,27 @@ class TestInfinitePlaneWaveBeam:
         assert dE.shape == (3, 3)
 
     def test_gradient_analytic_vs_jax(self):
-        # The analytic gradient (-i * outer(k, E)) should match jax.jacfwd result
-        beam = infinitePlaneWaveBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.0)
+        # The analytic gradient (-i * outer(k, E)) should equal jacfwd transposed
+        # to match the [grad_dir, field_comp] convention: M[i,j] = dE_j/dR_i.
+        # Use x-beam so the gradient matrix is non-symmetric (z-beam is diagonal
+        # and passes trivially even with wrong convention).
+        beam = infinitePlaneWaveBeam(kvec=[1., 0., 0.], pol=+1, s=1.0, delta=0.0)
         dE_analytic = beam.electric_field_gradient(R0, 0.)
-        # Compute numerically via parent class method
-        dE_numeric = jax.jacfwd(lambda R: beam.electric_field(R, 0.))(R0)
-        assert jnp.allclose(dE_analytic, dE_numeric, atol=1e-5)
+        dE_jac = jax.jacfwd(lambda R: beam.electric_field(R, 0.))(R0)
+        assert jnp.allclose(dE_analytic, dE_jac.T, atol=1e-5)
+
+    @pytest.mark.parametrize("kvec", [[1., 0., 0.], [0., 1., 0.], [0., 0., 1.]])
+    def test_gradient_matches_base_laserBeam(self, kvec):
+        # infinitePlaneWaveBeam and base laserBeam must return the same gradient
+        # convention [grad_dir, field_comp] for all beam directions.
+        ipw = infinitePlaneWaveBeam(kvec=kvec, pol=+1, s=1.0, delta=0.0)
+        base = laserBeam(kvec=kvec, pol=+1, s=1.0, delta=0.0)
+        dE_ipw = ipw.electric_field_gradient(R0, 0.)
+        dE_base = base.electric_field_gradient(R0, 0.)
+        assert jnp.allclose(dE_ipw, dE_base, atol=1e-5), (
+            f"Gradient mismatch for kvec={kvec}:\n"
+            f"infinitePlaneWaveBeam:\n{dE_ipw}\nlaserBeam:\n{dE_base}"
+        )
 
 
 # ---------------------------------------------------------------------------
