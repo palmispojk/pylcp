@@ -299,8 +299,8 @@ def solve_ivp_random(
     return results
 
 
-@functools.partial(jax.jit, static_argnames=('func', 'n_points', 'rtol', 'atol', 'solver_type'))
-def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, solver_type='Dopri5'):
+@functools.partial(jax.jit, static_argnames=('func', 'n_points', 'max_steps', 'rtol', 'atol', 'solver_type'))
+def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-5, solver_type='Dopri5'):
     """
     JIT-compiled batched ODE solve returning solution on a fixed time grid.
 
@@ -316,6 +316,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, so
         t0, t1: Start and end time (JAX float64 scalars).
         y0_batch: Initial conditions, shape (N, state_dim).
         n_points: Number of equally-spaced output time points (static).
+        max_steps: Maximum number of adaptive solver steps (static). Default: 4096.
         rtol, atol: Adaptive step-size controller tolerances (static).
         solver_type: 'Dopri5', 'Bosh3', or 'Kvaerno5' (static).
 
@@ -346,7 +347,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, so
             y0=y0,
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
             saveat=SaveAt(ts=ts_grid),
-            max_steps=max(16 * n_points, 4096),
+            max_steps=max_steps,
         )
         return sol.ys  # (n_points, state_dim)
 
@@ -354,7 +355,8 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, rtol, atol, so
 
 
 def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
-                    rtol=1e-5, atol=1e-5, solver_type='Dopri5'):
+                    max_steps=4096, rtol=1e-5, atol=1e-5,
+                    solver_type='Dopri5'):
     """
     Solve a batched ODE and return the solution on a fixed time grid.
 
@@ -373,6 +375,7 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
         t_span: (t0, t1) integration interval.
         y0_batch: Initial conditions, shape (N, state_dim).
         n_points: Number of equally-spaced output time points. Default 1001.
+        max_steps: Maximum number of adaptive solver steps. Default: 4096.
         rtol: Relative tolerance. Default 1e-5.
         atol: Absolute tolerance. Default 1e-5.
         solver_type: 'Dopri5' (default), 'Bosh3', or 'Kvaerno5'.
@@ -385,7 +388,7 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
     t1 = jnp.asarray(t_span[1], dtype=jnp.float64)
     y0_batch = jnp.asarray(y0_batch)
     ys, ts = _batched_dense_trajectories(
-        func, t0, t1, y0_batch, n_points, rtol, atol, solver_type
+        func, t0, t1, y0_batch, n_points, max_steps, rtol, atol, solver_type
     )
     return ts, ys
 
