@@ -709,8 +709,10 @@ class laserBeam(object):
     def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0):
         def e_field_R(R_val):
             return self.electric_field(R_val, t)
-            
-        return jax.jacfwd(e_field_R)(R)
+
+        # Transpose so convention is [grad_dir, field_comp], i.e.
+        # M[i, j] = dE_j / dR_i, matching infinitePlaneWaveBeam.
+        return jax.jacfwd(e_field_R)(R).T
 
 
 class infinitePlaneWaveBeam(laserBeam):
