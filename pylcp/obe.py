@@ -1029,6 +1029,10 @@ class obe(governingeq):
             f_laser = {}
             
 
+        # Precomputed constants for the q-component vectorisation.
+        _q_signs = jnp.array([-1., 1., -1.])   # (-1)^q for q = -1, 2, 1
+        _q_col   = jnp.array([2, 1, 0])        # column index 2-jj
+
         # Helper: evaluate field gradient at r (3,) or (3, n_pts) and t scalar/(n_pts,)
         def _grad(beam_func, r_in, t_in):
             if jnp.asarray(r_in).ndim == 2:  # time series
@@ -1036,7 +1040,7 @@ class obe(governingeq):
                 dE = jax.vmap(lambda ri, ti: beam_func(ri, ti))(
                     jnp.real(r_in).T, t_arr  # (n_pts, 3)
                 )
-                return jnp.moveaxis(dE, 0, -1)  # (3, 3, n_pts)
+                return jnp.moveaxis(dE, 0, -1)  # (..., n_pts)
             else:
                 return beam_func(jnp.real(r_in), t_in)
 
@@ -1064,22 +1068,35 @@ class obe(governingeq):
                 for jj, q in enumerate([-1., 2., 1.]):
                     f += jnp.real((-1) ** q * gamma * mu_q_av[jj] * delE[:, 2-jj])/2
             else:
-                num_beams = self.laserBeams[key].num_of_beams
+                # Vectorised per-beam force: get all beam gradients in one
+                # fused call instead of a Python loop over individual beams.
+                # _grad returns (n_beams, 3_spatial, 3_grad, [n_pts])
+                delE_all = _grad(
+                    self.laserBeams[key].electric_field_gradient, r, t)
 
-                f_laser_q_key = jnp.zeros((3, 3, num_beams) + rho_mat.shape[2:])
-                f_laser_key = jnp.zeros((3, num_beams) + rho_mat.shape[2:])
+                # Select the gradient column for each q component:
+                # delE_q shape: (n_beams, 3_spatial, 3_q, [n_pts])
+                delE_q = delE_all[:, :, _q_col]
 
-                # Now, dot it into each laser beam:
-                for ii, beam in enumerate(self.laserBeams[key].beam_vector):
-                    delE = _grad(beam.electric_field_gradient, r, t)
+                # Broadcast multiply — no Python loops over beams or q.
+                # mu_q_av: (3_q, [n_pts]),  signs: (3_q,)
+                # Target: (3_spatial, 3_q, n_beams, [n_pts])
+                # Rearrange delE_q: move beam axis (0) to position 2
+                delE_q = jnp.moveaxis(delE_q, 0, 2)  # (3_s, 3_q, n_b, [n_pts])
 
-                    for jj, q in enumerate([-1., 2., 1.]):
-                        val = jnp.real((-1) ** q * gamma * mu_q_av[jj] * delE[:, 2-jj])/2
-                        f_laser_q_key = f_laser_q_key.at[:, jj, ii].add(val)
+                # Expand signs and mu_q_av for broadcasting
+                if rho_mat.ndim == 2:  # single point
+                    s = _q_signs[None, :, None]           # (1, 3_q, 1)
+                    m = mu_q_av[None, :, None]             # (1, 3_q, 1)
+                else:  # time series
+                    s = _q_signs[None, :, None, None]     # (1, 3_q, 1, 1)
+                    m = mu_q_av[None, :, None, :]          # (1, 3_q, 1, n_pts)
 
-                    f_laser_key = f_laser_key.at[:, ii].set(jnp.sum(f_laser_q_key[:, :, ii], axis=1))
+                f_laser_q_key = jnp.real(s * gamma * m * delE_q) / 2
+                # f_laser_q_key: (3_s, 3_q, n_beams, [n_pts])
 
-                f = f + jnp.sum(f_laser_key, axis=1)
+                f_laser_key = jnp.sum(f_laser_q_key, axis=1)  # (3_s, n_beams, [n_pts])
+                f = f + jnp.sum(f_laser_key, axis=1)           # (3_s, [n_pts])
 
                 f_laser_q[key] = f_laser_q_key
                 f_laser[key] = f_laser_key
@@ -1366,7 +1383,16 @@ class obe(governingeq):
             [rho0_batch, V_jnp, R_jnp], axis=1
         )                                                     # (N, state_dim)
 
-        old_f_avg = jnp.full((N, 3), jnp.inf)
+        # Use cumulative running averages so that convergence is robust
+        # even when chunk_deltat is short (e.g. driven by fastest atoms).
+        n_rho               = rho0_batch.shape[1]
+        cumul_f_sum         = jnp.zeros((N, 3))
+        cumul_rho_sum       = jnp.zeros((N, n_rho))
+        cumul_f_laser_sum   = None
+        cumul_f_laser_q_sum = None
+        cumul_f_mag_sum     = jnp.zeros((N, 3))
+        total_pts           = 0
+        old_f_avg           = jnp.full((N, 3), jnp.inf)
 
         ii = 0
         while True:
@@ -1377,6 +1403,7 @@ class obe(governingeq):
                 **kwargs
             )
             t = self.sol.t  # (n_pts,)
+            n_pts = t.shape[0]
 
             # self.sol.y: (N, n_pts, state_dim)
             rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)    # (N, n², n_pts)
@@ -1389,7 +1416,20 @@ class obe(governingeq):
             # f_all: (N, 3, n_pts);  f_laser_all: {key: (N, 3, beams, n_pts)}
             # f_laser_q_all: {key: (N, 3, 3, beams, n_pts)};  f_mag_all: (N, 3, n_pts)
 
-            f_avg = jnp.mean(f_all, axis=2)  # (N, 3)
+            # Accumulate running sums for a proper cumulative average
+            cumul_f_sum += jnp.sum(f_all, axis=2)              # (N, 3)
+            cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)     # (N, n²)
+            cumul_f_mag_sum += jnp.sum(f_mag_all, axis=2)      # (N, 3)
+            if cumul_f_laser_sum is None:
+                cumul_f_laser_sum   = {k: jnp.sum(v, axis=-1) for k, v in f_laser_all.items()}
+                cumul_f_laser_q_sum = {k: jnp.sum(v, axis=-1) for k, v in f_laser_q_all.items()}
+            else:
+                for k in f_laser_all:
+                    cumul_f_laser_sum[k]   += jnp.sum(f_laser_all[k],   axis=-1)
+                    cumul_f_laser_q_sum[k] += jnp.sum(f_laser_q_all[k], axis=-1)
+            total_pts += n_pts
+
+            f_avg = cumul_f_sum / total_pts  # (N, 3)
 
             f_sq    = jnp.sum(f_avg ** 2, axis=1)                        # (N,)
             diff_sq = jnp.sum((old_f_avg - f_avg) ** 2, axis=1)          # (N,)
@@ -1407,13 +1447,13 @@ class obe(governingeq):
             y0_batch = self.sol.y[:, -1, :]  # (N, state_dim)
             ii += 1
 
-        # Time-average all detailed quantities
-        f_laser_avg   = {key: jnp.mean(f_laser_all[key],   axis=3) for key in f_laser_all}   # (N,3,beams)
-        f_laser_avg_q = {key: jnp.mean(f_laser_q_all[key], axis=4) for key in f_laser_q_all} # (N,3,3,beams)
-        f_mag_avg     = jnp.mean(f_mag_all, axis=2)                                           # (N,3)
+        # Cumulative time-averaged quantities
+        f_laser_avg   = {k: v / total_pts for k, v in cumul_f_laser_sum.items()}   # (N,3,beams)
+        f_laser_avg_q = {k: v / total_pts for k, v in cumul_f_laser_q_sum.items()} # (N,3,3,beams)
+        f_mag_avg     = cumul_f_mag_sum / total_pts                                 # (N,3)
 
-        # Equilibrium populations: mean rho over time → diagonal
-        rho_flat_mean = jnp.mean(rho_flat_all, axis=2)   # (N, n²)
+        # Equilibrium populations: cumulative mean rho → diagonal
+        rho_flat_mean = cumul_rho_sum / total_pts   # (N, n²)
         def get_Neq(rho_flat_i):
             return jnp.real(jnp.diagonal(self.__reshape_rho(rho_flat_i)))
         Neq_all = jax.vmap(get_Neq)(rho_flat_mean)        # (N, n)
