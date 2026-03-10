@@ -280,9 +280,9 @@ class hamiltonian():
             Matrix that describes the electric field dependent part of
             this dipole matrix element.  The first manifold must
         k : float, optional
-            The mangitude of the k-vector for this $d_q$ block.  Default: 1
+            The magnitude of the k-vector for this :math:`d_q` block.  Default: 1
         gamma : float, optional
-            The mangitude of the decay rate associated with this $d_q$ block.
+            The magnitude of the decay rate associated with this :math:`d_q` block.
             Default: 1
         """
         d_q = jnp.asarray(d_q, dtype=jnp.complex128)

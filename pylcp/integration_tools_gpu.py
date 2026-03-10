@@ -423,7 +423,7 @@ if __name__ == '__main__':
     keys_batch = jax.random.split(initial_key, 3)
 
     # Runs the batched solver on 3 atoms
-    sols = solve_ivp_random(dydt, func2, [0., 10 * jnp.pi], y0_batch, keys_batch, max_step=0.1, method='Dopri5')
+    sols = solve_ivp_random(dydt, func2, [0., 10 * jnp.pi], y0_batch, keys_batch, max_step=0.1, solver_type='Dopri5')
 
     # only plot one atom instead of all 3
     sol = sols[0] 

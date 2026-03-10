@@ -7,15 +7,21 @@ from scipy.spatial.transform import Rotation
 
 
 def return_constant_val(R, t, val):
-    """Fixed backward compatability for returning the constant value with jnp, previously numpy
+    """Fixed backward compatibility for returning the constant value with jnp, previously numpy
 
-    Args:
-        R (_type_): Not used position argument
-        t (_type_): Not used time argument
-        val (array_like or callable): _description_
+    Parameters
+    ----------
+    R : array_like
+        Not used; position argument kept for API compatibility.
+    t : float
+        Not used; time argument kept for API compatibility.
+    val : array_like or scalar
+        The constant value to return.
 
-    Returns:
-        _type_: _description_
+    Returns
+    -------
+    val : array_like or scalar
+        The value passed in, unchanged.
     """
     return val
 
@@ -40,7 +46,7 @@ def promote_to_lambda(val, var_name='', kind='Rt'):
         var_name : str, optional
             Name of the variable attempting to be promoted.  Useful for error
             messages. Default: empty string.
-        type : str, optional
+        kind : str, optional
             The arguments of the lambda function we are creating.  If `Rt`,
             the lambda function returned has ``(R, t)`` as its arguments.  If
             `t`, it has only `t` as its arguments.  Default: `Rt`.
@@ -97,7 +103,7 @@ class magField(object):
     """
     Base magnetic field class
 
-    Stores a magnetic defined magnetic field and calculates useful derivatives
+    Stores a magnetic field and calculates useful derivatives
     for `pylcp`.
 
     Parameters
@@ -139,7 +145,7 @@ class magField(object):
         Returns
         -------
         B : float
-            the magnetic field mangitude at position R and time t.
+            the magnetic field magnitude at position R and time t.
         """
         return jnp.linalg.norm(self.Field(R, t))
 

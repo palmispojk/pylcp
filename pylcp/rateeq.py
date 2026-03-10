@@ -24,7 +24,7 @@ class force_profile(base_force_profile):
     Rate equation force profile
 
     The force profile object stores all of the calculated quantities created by
-    the rateeq.generate_force_profile() method.  It has following attributes:
+    the rateeq.generate_force_profile() method.  It has the following attributes:
 
     Attributes
     ----------
@@ -78,7 +78,7 @@ class rateeq(governingeq):
     ----------
     laserBeams : dictionary of pylcp.laserBeams, pylcp.laserBeams, or list of pylcp.laserBeam
         The laserBeams that will be used in constructing the optical Bloch
-        equations.  which transitions in the block diagonal hamiltonian.  It can
+        equations, addressing transitions in the block diagonal hamiltonian.  It can
         be any of the following:
 
             * A dictionary of pylcp.laserBeams: if this is the case, the keys of
@@ -88,16 +88,16 @@ class rateeq(governingeq):
             * pylcp.laserBeams: a single set of laser beams is assumed to
               address the transition `g->e`.
             * a list of pylcp.laserBeam: automatically promoted to a
-              pylcp.laserBeams object assumed to address the transtion `g->e`.
+              pylcp.laserBeams object assumed to address the transition `g->e`.
     magField : pylcp.magField or callable
         The function or object that defines the magnetic field.
     hamiltonian : pylcp.hamiltonian
         The internal hamiltonian of the particle.
     a : array_like, shape (3,), optional
-        A default acceleraiton to apply to the particle's motion, usually
+        A default acceleration to apply to the particle's motion, usually
         gravity. Default: [0., 0., 0.]
     include_mag_forces : boolean
-        Optional flag to inculde magnetic forces in the force calculation.
+        Optional flag to include magnetic forces in the force calculation.
         Default: True
     r0 : array_like, shape (3,), optional
         Initial position.  Default: [0., 0., 0.]

@@ -5,7 +5,7 @@ import numba
 @numba.njit
 def reflected_int_single_point(R, zgrating, back_project_x, back_project_y, cos_th_center,
                                 sin_th_center, center_hole, th_lower, th_upper, r_stop, s_max, wb):
-    # Calcualte the transformed location back at the grating:
+    # Calculate the transformed location back at the grating:
     Rp = np.array([R[0] - (R[2]-zgrating)*back_project_x,
                    R[1] - (R[2]-zgrating)*back_project_y,
                    zgrating])
@@ -82,8 +82,8 @@ class infiniteGratingMOTBeams(laserBeams):
                 reflected_pol[0] is the polar angle (0 corresponding to sigma^-
                 and pi corresponding to sigma^+) and reflected_pol[1] is the
                 azimuthal angle (0 corresponding to p and pi corresponding to s)
-                'jones_vector': relected_pol[0]*svec + reflected_pol[1]*pvec
-                'waveplate': relected_pol[0] specified the angle of the slow
+                'jones_vector': reflected_pol[0]*svec + reflected_pol[1]*pvec
+                'waveplate': reflected_pol[0] specified the angle of the slow
                 axis relative to the p-vector.  reflection_pol[1] specifies the
                 phase delay.
             eta: diffraction efficiency of each of the reflected beams
@@ -461,8 +461,8 @@ class maskedGaussianGratingMOTBeams(infiniteGratingMOTBeams):
                 sigma^- and pi corresponding to sigma^+) and reflected_pol[1]
                 is the azimuthal angle (0 corresponding to p and pi
                 corresponding to s)
-                'jones_vector': relected_pol[0]*svec + reflected_pol[1]*pvec
-                'waveplate': relected_pol[0] specified the angle of the slow
+                'jones_vector': reflected_pol[0]*svec + reflected_pol[1]*pvec
+                'waveplate': reflected_pol[0] specified the angle of the slow
                 axis relative to the p-vector. Reflection_pol[1] specifies the
                 phase delay.
 

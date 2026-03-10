@@ -18,7 +18,7 @@ class governingeq(object):
     ----------
     laserBeams : dictionary of pylcp.laserBeams, pylcp.laserBeams, or list of pylcp.laserBeam
         The laserBeams that will be used in constructing the optical Bloch
-        equations.  which transitions in the block diagonal hamiltonian.  It can
+        equations, addressing transitions in the block diagonal hamiltonian.  It can
         be any of the following:
 
             * A dictionary of pylcp.laserBeams: if this is the case, the keys of
@@ -28,14 +28,14 @@ class governingeq(object):
             * pylcp.laserBeams: a single set of laser beams is assumed to
               address the transition `g->e`.
             * a list of pylcp.laserBeam: automatically promoted to a
-              pylcp.laserBeams object assumed to address the transtion `g->e`.
+              pylcp.laserBeams object assumed to address the transition `g->e`.
 
     magField : pylcp.magField or callable
         The function or object that defines the magnetic field.
     hamiltonian : pylcp.hamiltonian or None
         The internal hamiltonian of the particle.
     a : array_like, shape (3,), optional
-        A default acceleraiton to apply to the particle's motion, usually
+        A default acceleration to apply to the particle's motion, usually
         gravity. Default: [0., 0., 0.]
     r0 : array_like, shape (3,)
         Initial position.  Default: [0.,0.,0.]
@@ -144,7 +144,7 @@ class governingeq(object):
         Parameters
         ----------
         v0 : array_like, shape (3,)
-            Initial position.  Default: [0.,0.,0.]
+            Initial velocity.  Default: [0.,0.,0.]
         """
         self.v0 = jnp.asarray(v0, dtype=jnp.float64)
         self.sol = None
@@ -183,11 +183,11 @@ class governingeq(object):
         R : array_like, shape(3, ...)
             Position vector.  First dimension of the array must be length 3, and
             corresponds to :math:`x`, :math:`y`, and :math:`z` components,
-            repsectively.
+            respectively.
         V : array_like, shape(3, ...)
             Velocity vector.  First dimension of the array must be length 3, and
             corresponds to :math:`v_x`, :math:`v_y`, and :math:`v_z` components,
-            repsectively.
+            respectively.
         name : str, optional
             Name for the profile.  Stored in profile dictionary in this object.
             If None, uses the next integer, cast as a string, (i.e., '0') as
@@ -215,7 +215,7 @@ class governingeq(object):
             A list of axis indices to compute the trapping frequencies along.
             Here, :math:`\\hat{x}` is index 0, :math:`\\hat{y}` is index 1, and
             :math:`\\hat{z}` is index 2.  For example, `axes=[2]` calculates
-            the trapping frquency along :math:`\\hat{z}`.
+            the trapping frequency along :math:`\\hat{z}`.
         kwargs :
             Any additional keyword arguments to pass to find_equilibrium_force()
 
@@ -270,7 +270,7 @@ class governingeq(object):
             A list of axis indices to compute the trapping frequencies along.
             Here, :math:`\\hat{x}` is index 0, :math:`\\hat{y}` is index 1, and
             :math:`\\hat{z}` is index 2.  For example, `axes=[2]` calculates
-            the trapping frquency along :math:`\\hat{z}`.
+            the trapping frequency along :math:`\\hat{z}`.
         r : array_like, optional
             The position at which to calculate the damping coefficient.  By
             default r=None, which defaults to calculating at the equilibrium

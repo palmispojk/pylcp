@@ -27,7 +27,7 @@ class state():
             from the ground state.  electronic angular momentum of the state.
         E : float, optional
             Energy of the state above the ground state in :math:`\\text{cm}^{-1}`.
-        tau : float, optioanl
+        tau : float, optional
             Lifetime of the state in s.  If not specified, it is assumed to
             be infinite (the ground state).
         gJ : float
@@ -50,7 +50,7 @@ class state():
 
     Notes
     -----
-    All the parameters passed to the class on creation are stored as attrributes,
+    All the parameters passed to the class on creation are stored as attributes,
     with the exception of `lam` and `E`, one of which defines the stored
     attribute `energy`.  One of these two optional variable must be specified.
 
@@ -151,7 +151,7 @@ class atom():
     Attributes
     ----------
         I : float
-            Nuclear spin of the isoptope
+            Nuclear spin of the isotope
         gI : float
             Nuclear g-factor of the isotope.  Note that the nuclear g-factor
             is specified relative to the Bohr magneton, not the nuclear
