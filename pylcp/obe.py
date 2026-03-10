@@ -20,7 +20,7 @@ class force_profile(base_force_profile):
     Optical Bloch equation force profile
 
     The force profile object stores all of the calculated quantities created by
-    the rateeq.generate_force_profile() method.  It has the following
+    the obe.generate_force_profile() method.  It has the following
     attributes:
 
     Attributes
@@ -75,7 +75,7 @@ class obe(governingeq):
     ----------
     laserBeams : dictionary of pylcp.laserBeams, pylcp.laserBeams, or list of pylcp.laserBeam
         The laserBeams that will be used in constructing the optical Bloch
-        equations.  which transitions in the block diagonal hamiltonian.  It can
+        equations, addressing transitions in the block diagonal hamiltonian.  It can
         be any of the following:
 
             * A dictionary of pylcp.laserBeams: if this is the case, the keys of
@@ -85,28 +85,22 @@ class obe(governingeq):
             * pylcp.laserBeams: a single set of laser beams is assumed to
               address the transition `g->e`.
             * a list of pylcp.laserBeam: automatically promoted to a
-              pylcp.laserBeams object assumed to address the transtion `g->e`.
+              pylcp.laserBeams object assumed to address the transition `g->e`.
 
     magField : pylcp.magField or callable
         The function or object that defines the magnetic field.
     hamiltonian : pylcp.hamiltonian
         The internal hamiltonian of the particle.
     a : array_like, shape (3,), optional
-        A default acceleraiton to apply to the particle's motion, usually
+        A default acceleration to apply to the particle's motion, usually
         gravity. Default: [0., 0., 0.]
     transform_into_re_im : boolean
         Optional flag to transform the optical Bloch equations into real and
-        imaginary components.  This helps to decrease computaiton time as it
+        imaginary components.  This helps to decrease computation time as it
         uses the symmetry :math:`\\rho_{ji}=\\rho_{ij}^*` to cut the number
         of equations nearly in half.  Default: True
-    use_sparse_matrices : boolean or None
-        Optional flag to use sparse matrices.  If none, it will use sparse
-        matrices only if the number of internal states > 10, which would result
-        in the evolution matrix for the density operators being a 100x100
-        matrix.  At that size, there may be some speed up with sparse matrices.
-        Default: None
     include_mag_forces : boolean
-        Optional flag to inculde magnetic forces in the force calculation.
+        Optional flag to include magnetic forces in the force calculation.
         Default: True
     r0 : array_like, shape (3,), optional
         Initial position.  Default: [0., 0., 0.]
@@ -209,7 +203,7 @@ class obe(governingeq):
 
     def __density_index(self, ii, jj):
         """
-        This function returns the index in the rho vector that corresponds to element rho_{ij}.  If
+        Returns the index in the rho vector that corresponds to element rho_{ij}.
         """
         return ii + jj * self.hamiltonian.n
 
@@ -692,24 +686,23 @@ class obe(governingeq):
         t_span : list or array_like
             A two element list or array that specify the initial and final time
             of integration.
-        progress_bar : boolean
-            Show a progress bar as the calculation proceeds.  Default:False
+        y0_batch : array_like, shape (n_atoms, state_dim), optional
+            Batch of initial state vectors. If None, uses ``self.rho0``,
+            ``self.v0``, and ``self.r0``. Default: None.
+        n_points : int, optional
+            Number of output time points. Default: 1000.
         **kwargs :
-            Additional keyword arguments get passed to solve_ivp, which is
-            what actually does the integration.
+            Additional keyword arguments passed to ``solve_ivp_dense``
+            (e.g., ``rtol``, ``atol``, ``method``, ``max_steps``).
 
         Returns
         -------
-        sol : OdeSolution
-            Bunch object that contains the following fields:
+        sol : Bunch
+            Object with the following fields:
 
-                * t: integration times found by solve_ivp
-                * rho: density matrix
-                * v: atomic velocity (constant)
-                * r: atomic position
-
-            It contains other important elements, which can be discerned from
-            scipy's solve_ivp documentation.
+                * t: integration times, shape ``(n_points,)``
+                * rho: density matrix, shape ``(n, n, n_points)``
+                * y: raw batched state array, shape ``(n_atoms, n_points, state_dim)``
         """
         rtol = kwargs.get('rtol', 1e-5)
         atol = kwargs.get('atol', 1e-5)
