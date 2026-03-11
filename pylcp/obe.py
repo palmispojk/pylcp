@@ -3,6 +3,7 @@ Tools for solving the OBE for laser cooling
 author: spe
 """
 import functools
+import gc
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -1411,12 +1412,15 @@ class obe(governingeq):
             progress = progressBar()
             atoms_done = 0
 
+        # Use a single max_steps for all groups so JAX compiles the diffrax
+        # solver only once (max_steps is a static JIT argument).  The adaptive
+        # stepper still picks its own step sizes; this is just an upper bound.
+        max_group_deltat = max(dt for _, dt in groups)
+        fixed_max_steps = max(int(np.ceil(max_group_deltat * 16)), 4096)
+
         for gi, (group_indices, group_chunk_deltat) in enumerate(groups):
             Ng = len(group_indices)
             y0_group = y0_batch[group_indices]  # (Ng, state_dim)
-
-            # Scale max_steps with chunk duration so long chunks don't hit the limit.
-            group_max_steps = max(int(np.ceil(group_chunk_deltat * 16)), 4096)
 
             # Use fewer dense output points during convergence; the force
             # average only needs a coarse grid.  Full Npts for the final pass.
@@ -1424,10 +1428,6 @@ class obe(governingeq):
 
             # Per-atom convergence using consecutive chunk comparison — matches
             # the original serial find_equilibrium_force behaviour exactly.
-            # Cumulative averaging converges prematurely at ~1/i rate, causing
-            # different groups to stop at inconsistent total integration times
-            # and producing jagged force profiles.  Consecutive comparison
-            # requires genuine chunk-to-chunk stability before an atom exits.
             old_f_chunk    = jnp.full((Ng, 3), jnp.inf)
             atom_converged = jnp.zeros(Ng, dtype=bool)
             converged_f    = jnp.zeros((Ng, 3))
@@ -1439,7 +1439,7 @@ class obe(governingeq):
                     [ii * group_chunk_deltat, (ii + 1) * group_chunk_deltat],
                     y0_group,
                     n_points=Npts_conv,
-                    max_steps=group_max_steps,
+                    max_steps=fixed_max_steps,
                     **kwargs
                 )
                 t = self.sol.t
@@ -1485,7 +1485,7 @@ class obe(governingeq):
                 [ii * group_chunk_deltat, (ii + 1) * group_chunk_deltat],
                 y0_group,
                 n_points=int(Npts),
-                max_steps=group_max_steps,
+                max_steps=fixed_max_steps,
                 **kwargs
             )
             t = self.sol.t
@@ -1497,7 +1497,10 @@ class obe(governingeq):
                 lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
             )(r_all, rho_flat_all)
 
-            f_avg_np      = np.array(f_conv)
+            # Use the full-resolution final pass for f_avg, not the coarse
+            # convergence estimates (Npts_conv has 10x fewer points,
+            # so its time-averages are noisier and cause jagged profiles).
+            f_avg_np      = np.array(jnp.sum(f_all, axis=2) / n_pts)
             rho_flat_mean = np.array(rho_conv)
             f_mag_avg_np  = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
 
@@ -1517,6 +1520,10 @@ class obe(governingeq):
                 for local_idx, global_idx in enumerate(group_indices):
                     final_f_laser_avg[k][global_idx]   = f_laser_group[k][local_idx]
                     final_f_laser_q_avg[k][global_idx]  = f_laser_q_group[k][local_idx]
+
+            # Free large JAX arrays to keep memory bounded across groups.
+            del rho_flat_all, r_all, f_all, f_laser_all, f_laser_q_all, f_mag_all
+            gc.collect()
 
             if progress_bar:
                 atoms_done += Ng
