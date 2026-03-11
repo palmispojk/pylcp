@@ -110,7 +110,7 @@ def _batched_random_trajectories(
     else:
         raise ValueError(f"Solver '{solver_type}' is not one of the specified solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
     
-    term = ODETerm(lambda t, y, args: func(t, y))
+    term = ODETerm(func)
     
     def cond_fun(state):
         return (state['t'] < tf) & (state['step_idx'] < max_steps)
@@ -300,7 +300,7 @@ def solve_ivp_random(
 
 
 @functools.partial(jax.jit, static_argnames=('func', 'n_points', 'max_steps', 'rtol', 'atol', 'solver_type'))
-def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-5, solver_type='Dopri5'):
+def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-5, solver_type='Dopri5', args=None):
     """
     JIT-compiled batched ODE solve returning solution on a fixed time grid.
 
@@ -309,9 +309,16 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
     once per unique (func, n_points, rtol, atol, solver_type) combination and
     then reuses the compiled XLA kernel for all subsequent calls.
 
+    ``func`` must have the calling signature ``func(t, y, args) -> dy/dt``.
+    Pass physics data via ``args`` (a JAX pytree) to enable sharing a single
+    compiled kernel across multiple OBE instances that have the same Hamiltonian
+    structure (same matrix shapes).  When ``func`` is a stable module-level
+    function object, JAX's JIT cache key is the same for every caller,
+    so compilation happens once per (n_points, args-pytree-shape) pair.
+
     Args:
-        func: RHS of the ODE, calling signature func(t, y) -> dy/dt.
-              Must be a stable Python object (e.g. a functools.cached_property)
+        func: RHS of the ODE, calling signature func(t, y, args) -> dy/dt.
+              Must be a stable Python object (e.g. a module-level function)
               so the JIT cache key stays constant across calls.
         t0, t1: Start and end time (JAX float64 scalars).
         y0_batch: Initial conditions, shape (N, state_dim).
@@ -319,6 +326,10 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         max_steps: Maximum number of adaptive solver steps (static). Default: 4096.
         rtol, atol: Adaptive step-size controller tolerances (static).
         solver_type: 'Dopri5', 'Bosh3', or 'Kvaerno5' (static).
+        args: JAX pytree passed as the third argument to func at every step.
+              Traced dynamically — different values with the same pytree
+              structure reuse the compiled kernel without recompilation.
+              Default: None.
 
     Returns:
         ys: shape (N, n_points, state_dim)
@@ -334,7 +345,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         raise ValueError(f"Solver '{solver_type}' not recognised. "
                          f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
 
-    term = ODETerm(lambda t, y, args: func(t, y))
+    term = ODETerm(func)
     ts_grid = jnp.linspace(t0, t1, n_points)
 
     def solve_one(y0):
@@ -345,6 +356,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
             t1=t1,
             dt0=jnp.asarray((t1 - t0) / n_points, dtype=t0.dtype),
             y0=y0,
+            args=args,
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
             saveat=SaveAt(ts=ts_grid),
             max_steps=max_steps,
@@ -356,7 +368,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
 
 def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
                     max_steps=4096, rtol=1e-5, atol=1e-5,
-                    solver_type='Dopri5'):
+                    solver_type='Dopri5', args=None):
     """
     Solve a batched ODE and return the solution on a fixed time grid.
 
@@ -366,12 +378,13 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
     combination; subsequent calls with different t_span or y0_batch reuse the
     compiled kernel directly.
 
-    For best performance, pass a function with a *stable Python identity*
-    (e.g. a method stored as a ``functools.cached_property``) so the JIT cache
-    is not invalidated between calls.
+    For best performance, pass a module-level function as ``func`` and supply
+    all physics data via ``args`` (a JAX pytree).  A module-level function has
+    a stable Python identity so the JIT cache key is shared across all callers
+    with the same Hamiltonian structure, reducing total compilation time.
 
     Args:
-        func: RHS of the ODE, calling signature func(t, y) -> dy/dt.
+        func: RHS of the ODE, calling signature func(t, y, args) -> dy/dt.
         t_span: (t0, t1) integration interval.
         y0_batch: Initial conditions, shape (N, state_dim).
         n_points: Number of equally-spaced output time points. Default 1001.
@@ -379,6 +392,8 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
         rtol: Relative tolerance. Default 1e-5.
         atol: Absolute tolerance. Default 1e-5.
         solver_type: 'Dopri5' (default), 'Bosh3', or 'Kvaerno5'.
+        args: JAX pytree passed through to func as its third argument.
+              Default: None.
 
     Returns:
         ts: jax.Array, shape (n_points,)
@@ -388,7 +403,7 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
     t1 = jnp.asarray(t_span[1], dtype=jnp.float64)
     y0_batch = jnp.asarray(y0_batch)
     ys, ts = _batched_dense_trajectories(
-        func, t0, t1, y0_batch, n_points, max_steps, rtol, atol, solver_type
+        func, t0, t1, y0_batch, n_points, max_steps, rtol, atol, solver_type, args
     )
     return ts, ys
 
