@@ -22,12 +22,12 @@ from pylcp.integration_tools_gpu import (
 # Shared ODE definitions
 # ---------------------------------------------------------------------------
 
-def exp_decay(t, y):
+def exp_decay(t, y, args):
     """dy/dt = -y  ->  y(t) = y0 * exp(-t)."""
     return -y
 
 
-def harmonic(t, y):
+def harmonic(t, y, args):
     """Simple harmonic oscillator: d/dt [x, v] = [v, -x]."""
     return jnp.array([-y[1], y[0]])
 
