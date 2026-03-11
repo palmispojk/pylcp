@@ -149,7 +149,7 @@ def _batched_random_trajectories(
         # materialising two full-array copies via jnp.where(cond, arr1, arr2).
         t_rand_new = state['t_random'].at[idx].set(
             jnp.where(n_scatters > 0, t_next, jnp.float64(0.)))
-        n_rand_new = state['n_random'].at[idx].set(n_scatters)
+        n_rand_new = state['n_random'].at[idx].set(jnp.int32(n_scatters))
         
         return {
             't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
