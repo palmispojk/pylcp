@@ -525,6 +525,12 @@ class hamiltonian():
                 # it later if it gets interesting.
                 self.U[ii] = jnp.eye(self.ns[ii], dtype=jnp.complex128)
 
+        # Skip re-diagonalization if B hasn't changed since the last call.
+        if hasattr(self, '_last_diag_B') and self._last_diag_B == B:
+            return self.rotated_hamiltonian
+
+        self._last_diag_B = B
+
         # Now, are any of the diagonal submatrices not diagonal?
         if not np.all(self.diagonal) or B<0:
             # If so, go through all of the diagonal elements:
