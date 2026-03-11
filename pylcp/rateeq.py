@@ -262,16 +262,23 @@ class rateeq(governingeq):
         else:
             Bhat = default_axis
 
-        # diag_static_field requires a Python float
-        self.hamiltonian.diag_static_field(float(Bmag))
+        # diag_static_field requires a Python float.
+        # It caches internally when B hasn't changed, so this is cheap on
+        # repeated calls with the same field magnitude.
+        _Bmag_float = float(Bmag)
+        self.hamiltonian.diag_static_field(_Bmag_float)
 
         self.Rev = jnp.zeros((self.hamiltonian.n, self.hamiltonian.n),
                              dtype=jnp.float64)
 
+        # _calc_decay_comp_of_Rev only depends on the rotated Hamiltonian
+        # (i.e. on B), so skip it when B hasn't changed.
         if not np.all(self.hamiltonian.diagonal):
-            self.Rev_decay = self._calc_decay_comp_of_Rev(
-                self.hamiltonian.rotated_hamiltonian
-            )
+            if not hasattr(self, '_last_Rev_decay_B') or self._last_Rev_decay_B != _Bmag_float:
+                self._calc_decay_comp_of_Rev(
+                    self.hamiltonian.rotated_hamiltonian
+                )
+                self._last_Rev_decay_B = _Bmag_float
 
         self.Rev = self.Rev + self.Rev_decay
 
@@ -550,7 +557,7 @@ class rateeq(governingeq):
         mass     = float(self.hamiltonian.mass)
         accel    = self.constant_accel
 
-        def rhs(t, y):
+        def rhs(t, y, _args):
             N = y[:n_states]
             v = y[n_states:n_states+3]
             r = y[n_states+3:]
