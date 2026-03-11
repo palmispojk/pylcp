@@ -14,7 +14,6 @@ from .common import (cart2spherical, spherical2cart, base_force_profile,
 from .governingeq import governingeq
 
 
-
 class force_profile(base_force_profile):
     """
     Optical Bloch equation force profile
@@ -151,8 +150,8 @@ class obe(governingeq):
     @magField.setter
     def magField(self, value):
         self._magField = value
-        # Changing the field invalidates the cached _dydt closure so JAX
-        # retraces and compiles a new XLA kernel with the updated field.
+        # Changing the field invalidates the cached closures so JAX retraces
+        # and compiles a new XLA kernel with the updated field.
         self.__dict__.pop('_dydt', None)
 
     @property
@@ -655,13 +654,16 @@ class obe(governingeq):
     @functools.cached_property
     def _dydt(self):
         """
-        Return the state-vector RHS for evolve_density as a stable callable.
+        Fallback per-instance ODE RHS with 3-arg signature (t, y, args).
 
-        Stored as a cached_property so every access of self._dydt returns the
-        *same Python object*, giving jax.jit a constant cache key and ensuring
-        the XLA kernel is compiled only once per OBE instance.
+        Used when _obe_args returns None (e.g. callable delta/phase beams or
+        spatially-varying intensity).  The ``args`` parameter is ignored —
+        physics is closed over from ``self``.
+
+        Stored as a cached_property so every access returns the same Python
+        object, keeping the JIT cache key stable within one instance.
         """
-        def dydt(t, y):
+        def dydt(t, y, _args):
             r    = y[-3:]
             v    = y[-6:-3]
             rho  = y[:-6]
@@ -713,13 +715,18 @@ class obe(governingeq):
             y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
             y0_batch = y0[None, :]  # (1, state_dim)
 
-        # self._dydt is a cached_property: same Python object every call on
-        # this instance, so _batched_dense_trajectories JIT-compiles once and
-        # reuses the kernel for every subsequent call (e.g. convergence loop).
+        # Use the per-instance _dydt closure so ev_mat arrays are captured as
+        # XLA constants.  This lets XLA constant-fold sparse matrix entries
+        # (large Hamiltonians have many forbidden-transition zeros), giving
+        # faster compilation and execution than passing ev_mat as dynamic args.
+        # _dydt is a cached_property — same Python object every call on this
+        # instance — so _batched_dense_trajectories JIT-compiles once and
+        # reuses the kernel for every subsequent call within this instance.
         ts_grid, batched_ys = solve_ivp_dense(
             self._dydt, t_span, y0_batch,
             n_points=n_points, max_steps=max_steps,
             rtol=rtol, atol=atol, solver_type=method,
+            args=None,
         )
         # batched_ys shape: (n_atoms, n_points, state_dim)
 
@@ -826,7 +833,7 @@ class obe(governingeq):
         free_axes = jnp.bitwise_not(jnp.asarray(freeze_axis, dtype=bool))
         random_recoil_flag = random_recoil
 
-        def dydt(t, y):
+        def dydt(t, y, _args):
             # since jax handles batching, y is 1D array of one atom
             r = y[-3:]
             v = y[-6 : -3]
@@ -1380,17 +1387,16 @@ class obe(governingeq):
                 if d is not None:
                     per_atom_deltat[i] = d
 
-        # Bin atoms into groups with similar chunk_deltat (within factor of 2)
-        log_dt = np.log2(np.maximum(per_atom_deltat, 1e-30))
-        bin_ids = np.floor(log_dt).astype(int)
-        unique_bins = np.unique(bin_ids)
-
+        # Group atoms by their exact chunk_deltat so each atom uses its natural
+        # timescale (an integer number of oscillation cycles when deltat_v is
+        # set).  Atoms sharing the same deltat (e.g. all slow atoms clamped at
+        # deltat_tmax) are still batched together for GPU efficiency.
+        rounded_deltat = np.round(per_atom_deltat, decimals=6)
+        unique_deltats = np.unique(rounded_deltat)
         groups = []
-        for b in unique_bins:
-            mask = bin_ids == b
-            indices = np.where(mask)[0]
-            group_deltat = float(np.min(per_atom_deltat[indices]))
-            groups.append((indices, group_deltat))
+        for dt in unique_deltats:
+            indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
+            groups.append((indices, float(dt)))
 
         # Allocate per-atom result storage
         n_rho = rho0_batch.shape[1]
@@ -1416,10 +1422,16 @@ class obe(governingeq):
             # average only needs a coarse grid.  Full Npts for the final pass.
             Npts_conv = max(int(Npts) // 10, 101)
 
-            cumul_f_sum         = jnp.zeros((Ng, 3))
-            cumul_rho_sum       = jnp.zeros((Ng, n_rho))
-            total_pts           = 0
-            old_f_avg           = jnp.full((Ng, 3), jnp.inf)
+            # Per-atom convergence using consecutive chunk comparison — matches
+            # the original serial find_equilibrium_force behaviour exactly.
+            # Cumulative averaging converges prematurely at ~1/i rate, causing
+            # different groups to stop at inconsistent total integration times
+            # and producing jagged force profiles.  Consecutive comparison
+            # requires genuine chunk-to-chunk stability before an atom exits.
+            old_f_chunk    = jnp.full((Ng, 3), jnp.inf)
+            atom_converged = jnp.zeros(Ng, dtype=bool)
+            converged_f    = jnp.zeros((Ng, 3))
+            converged_rho  = jnp.zeros((Ng, n_rho))
 
             ii = 0
             while True:
@@ -1436,35 +1448,39 @@ class obe(governingeq):
                 rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)
                 r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
 
-                # Use return_details=False during convergence (much cheaper:
-                # computes total gradient instead of per-beam breakdown).
                 f_all = jax.vmap(
                     lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=False)
                 )(r_all, rho_flat_all)
 
-                cumul_f_sum += jnp.sum(f_all, axis=2)
-                cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)
-                total_pts += n_pts
+                f_chunk   = jnp.sum(f_all,        axis=2) / n_pts  # (Ng, 3)
+                rho_chunk = jnp.sum(rho_flat_all, axis=2) / n_pts  # (Ng, n_rho)
 
-                f_avg = cumul_f_sum / total_pts
+                f_sq    = jnp.sum(f_chunk ** 2, axis=1)
+                diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
+                newly = (
+                    ~atom_converged &
+                    (
+                        (f_sq < abs_tol)
+                        | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
+                        | (diff_sq < abs_tol)
+                    )
+                )
+                converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
+                converged_rho = jnp.where(newly[:, None], rho_chunk, converged_rho)
+                atom_converged = atom_converged | newly
 
-                f_sq    = jnp.sum(f_avg ** 2, axis=1)
-                diff_sq = jnp.sum((old_f_avg - f_avg) ** 2, axis=1)
-                all_converged = bool(jnp.all(
-                    (f_sq < abs_tol)
-                    | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
-                    | (diff_sq < abs_tol)
-                ))
-
-                if all_converged or ii >= itermax - 1:
+                if bool(jnp.all(atom_converged)) or ii >= itermax - 1:
                     break
 
-                old_f_avg = f_avg
-                y0_group = self.sol.y[:, -1, :]
+                old_f_chunk = f_chunk
+                y0_group    = self.sol.y[:, -1, :]
                 ii += 1
 
-            # Final pass at full Npts with return_details=True to get
-            # the per-beam/per-q force breakdown at full resolution.
+            # Atoms that hit itermax without converging fall back to last chunk.
+            f_conv   = jnp.where(atom_converged[:, None], converged_f,   f_chunk)
+            rho_conv = jnp.where(atom_converged[:, None], converged_rho, rho_chunk)
+
+            # Final pass at full Npts with return_details=True.
             self.evolve_density(
                 [ii * group_chunk_deltat, (ii + 1) * group_chunk_deltat],
                 y0_group,
@@ -1481,16 +1497,9 @@ class obe(governingeq):
                 lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
             )(r_all, rho_flat_all)
 
-            # Include the final full-resolution chunk in cumulative averages
-            cumul_f_sum += jnp.sum(f_all, axis=2)
-            cumul_rho_sum += jnp.sum(rho_flat_all, axis=2)
-            total_pts += n_pts
-            f_avg = cumul_f_sum / total_pts
-
-            # Store group results into per-atom arrays
-            f_avg_np = np.array(f_avg)
-            rho_flat_mean = np.array(cumul_rho_sum / total_pts)
-            f_mag_avg_np = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
+            f_avg_np      = np.array(f_conv)
+            rho_flat_mean = np.array(rho_conv)
+            f_mag_avg_np  = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
 
             for local_idx, global_idx in enumerate(group_indices):
                 final_f_avg[global_idx] = f_avg_np[local_idx]
