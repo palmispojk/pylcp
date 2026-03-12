@@ -186,7 +186,7 @@ def solve_ivp_random(
     max_steps=100000,
     max_step=float('inf'),
     rtol=1e-5,
-    atol=1e-5,
+    atol=1e-6,
     **options
     ):
     """
@@ -300,7 +300,7 @@ def solve_ivp_random(
 
 
 @functools.partial(jax.jit, static_argnames=('func', 'n_points', 'max_steps', 'rtol', 'atol', 'solver_type'))
-def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-5, solver_type='Dopri5', args=None):
+def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-6, solver_type='Dopri5', args=None):
     """
     JIT-compiled batched ODE solve returning solution on a fixed time grid.
 
@@ -367,7 +367,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
 
 
 def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
-                    max_steps=4096, rtol=1e-5, atol=1e-5,
+                    max_steps=4096, rtol=1e-5, atol=1e-6,
                     solver_type='Dopri5', args=None):
     """
     Solve a batched ODE and return the solution on a fixed time grid.
