@@ -1395,11 +1395,11 @@ class obe(governingeq):
                 if d is not None:
                     per_atom_deltat[i] = d
 
-        # When deltat_v is used, each atom must keep its own chunk duration
-        # (an integer number of oscillation cycles at that velocity).  When
-        # only deltat_r is used the chunk just needs to be "short enough",
-        # so all atoms can share min(deltat) in a single parallel batch —
-        # this avoids creating N sequential single-atom groups.
+        # Group atoms by their chunk_deltat.  When deltat_v is used, each
+        # atom gets its own chunk duration (integer number of oscillation
+        # cycles).  Atoms sharing the same deltat (e.g. all clamped at
+        # deltat_tmax) are batched together.  When only deltat_r is used
+        # all atoms share min(deltat) in a single parallel batch.
         if deltat_v is not None or deltat_func is not None:
             rounded_deltat = np.round(per_atom_deltat, decimals=6)
             unique_deltats = np.unique(rounded_deltat)
@@ -1439,8 +1439,7 @@ class obe(governingeq):
             # average only needs a coarse grid.  Full Npts for the final pass.
             Npts_conv = max(int(Npts) // max(npts_conv_divisor, 1), 101)
 
-            # Per-atom convergence using consecutive chunk comparison — matches
-            # the original serial find_equilibrium_force behaviour exactly.
+            # Per-atom convergence using consecutive chunk comparison.
             old_f_chunk    = jnp.full((Ng, 3), jnp.inf)
             atom_converged = jnp.zeros(Ng, dtype=bool)
             converged_f    = jnp.zeros((Ng, 3))
@@ -1470,12 +1469,19 @@ class obe(governingeq):
 
                 f_sq    = jnp.sum(f_chunk ** 2, axis=1)
                 diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
+                # Three convergence criteria:
+                # 1. f_sq < abs_tol          — force truly near zero (dark state)
+                # 2. diff_sq/f_sq < rel      — force stabilized (relative)
+                # 3. diff_sq < abs_tol       — force change is tiny, BUT only
+                #    when f_sq > 1e4*abs_tol so it cannot fire during slow
+                #    dark-state decay toward zero (which would lock in a
+                #    spuriously large force).
                 newly = (
                     ~atom_converged &
                     (
                         (f_sq < abs_tol)
                         | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
-                        | (diff_sq < abs_tol)
+                        | ((diff_sq < abs_tol) & (f_sq > 1e4 * abs_tol))
                     )
                 )
                 converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
@@ -1511,8 +1517,7 @@ class obe(governingeq):
             )(r_all, rho_flat_all)
 
             # Use the convergence estimate for f_avg so the convergence test
-            # and the reported force are consistent.  f_laser and f_mag still
-            # come from the full-resolution final pass below.
+            # and the reported force are consistent.
             f_avg_np      = np.array(f_conv)
             rho_flat_mean = np.array(rho_conv)
             f_mag_avg_np  = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
@@ -1574,5 +1579,229 @@ class obe(governingeq):
                 int(final_iters[atom_idx]),
                 {key: f_laser_avg_q[key][atom_idx] for key in f_laser_avg_q},
             )
+
+        return self.profile[name]
+
+
+    def generate_force_profile_gpu(self, R, V, name=None, **kwargs):
+        """
+        GPU-optimised variant of :meth:`generate_force_profile`.
+
+        Instead of grouping atoms by chunk duration and iterating over groups
+        sequentially, this method gives every atom its own ``t_span`` and
+        uses ``jax.vmap`` so that the entire batch is integrated in a single
+        kernel launch.  This maximises GPU utilisation but requires that the
+        ODE solver's ``max_steps`` is set high enough for the longest chunk,
+        which makes it *slower* on CPU (wasted steps for short-chunk atoms).
+
+        The API mirrors :meth:`generate_force_profile` exactly — just swap
+        the method name.
+
+        See Also
+        --------
+        generate_force_profile : CPU-optimised version with per-group batching.
+        """
+        # Pop deltat-shaping kwargs
+        deltat_r    = kwargs.pop('deltat_r',    None)
+        deltat_v    = kwargs.pop('deltat_v',    None)
+        deltat_tmax = kwargs.pop('deltat_tmax', np.inf)
+        deltat_func = kwargs.pop('deltat_func', None)
+        kwargs.pop('return_details', None)
+
+        chunk_deltat      = kwargs.pop('deltat',             500)
+        itermax           = kwargs.pop('itermax',            100)
+        Npts              = kwargs.pop('Npts',               5001)
+        rel               = kwargs.pop('rel',                1e-5)
+        abs_tol           = kwargs.pop('abs',                1e-9)
+        npts_conv_divisor = kwargs.pop('npts_conv_divisor',  10)
+        initial_rho       = kwargs.pop('initial_rho',        'rateeq')
+        progress_bar      = kwargs.pop('progress_bar',       False)
+
+        if not name:
+            name = '{0:d}'.format(len(self.profile))
+
+        self.profile[name] = force_profile(R, V, self.laserBeams, self.hamiltonian)
+
+        R_np = np.array(R).reshape(3, -1)
+        V_np = np.array(V).reshape(3, -1)
+        N    = R_np.shape[1]
+
+        # Build initial rho for every atom
+        rho0_list = []
+        for i in range(N):
+            self.set_initial_position_and_velocity(R_np[:, i], V_np[:, i])
+            if initial_rho == 'rateeq':
+                self.set_initial_rho_from_rateeq()
+            elif initial_rho == 'equally':
+                self.set_initial_rho_equally()
+            else:
+                raise ValueError(
+                    f'initial_rho={initial_rho!r} not supported'
+                )
+            rho0_list.append(self.rho0)
+
+        rho0_batch = jnp.stack(rho0_list)
+        V_jnp      = jnp.asarray(V_np.T)
+        R_jnp      = jnp.asarray(R_np.T)
+        y0_batch   = jnp.concatenate([rho0_batch, V_jnp, R_jnp], axis=1)
+
+        # Compute per-atom chunk_deltat
+        per_atom_deltat = np.full(N, chunk_deltat, dtype=float)
+        if deltat_func is not None:
+            for i in range(N):
+                d = deltat_func(R_np[:, i], V_np[:, i])
+                if d is not None:
+                    per_atom_deltat[i] = float(d)
+        elif deltat_v is not None or deltat_r is not None:
+            for i in range(N):
+                r_i, v_i = R_np[:, i], V_np[:, i]
+                d = None
+                if deltat_v is not None:
+                    vabs = np.sqrt(np.sum(v_i**2))
+                    d = float(deltat_tmax) if vabs == 0 else min(2*np.pi*deltat_v/vabs, float(deltat_tmax))
+                if deltat_r is not None:
+                    rabs = np.sqrt(np.sum(r_i**2))
+                    d_r = float(deltat_tmax) if rabs == 0 else min(2*np.pi*deltat_r/rabs, float(deltat_tmax))
+                    d = d_r if d is None else min(d, d_r)
+                if d is not None:
+                    per_atom_deltat[i] = d
+
+        per_atom_deltat_jnp = jnp.asarray(per_atom_deltat)
+        n_rho = rho0_batch.shape[1]
+        Npts_conv = max(int(Npts) // max(npts_conv_divisor, 1), 101)
+
+        # Fixed max_steps for single JIT compilation
+        max_deltat = float(np.max(per_atom_deltat))
+        fixed_max_steps = max(int(np.ceil(max_deltat * 16)), 4096)
+
+        # Convergence loop — all atoms in a single vmap batch
+        old_f_chunk    = jnp.full((N, 3), jnp.inf)
+        atom_converged = jnp.zeros(N, dtype=bool)
+        converged_f    = jnp.zeros((N, 3))
+        converged_rho  = jnp.zeros((N, n_rho))
+
+        if progress_bar:
+            progress = progressBar()
+
+        ii = 0
+        while True:
+            t0 = per_atom_deltat_jnp * ii
+            t1 = per_atom_deltat_jnp * (ii + 1)
+
+            self.evolve_density(
+                [t0, t1],
+                y0_batch,
+                n_points=Npts_conv,
+                max_steps=fixed_max_steps,
+                **kwargs
+            )
+            t = self.sol.t               # (N, Npts_conv) or (Npts_conv,)
+            rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)
+            r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
+
+            # Per-atom number of valid time points
+            if jnp.ndim(t) == 2:
+                n_pts_per = t.shape[1]
+            else:
+                n_pts_per = t.shape[0]
+
+            f_all = jax.vmap(
+                lambda r_i, rho_i: self.force(r_i, t if jnp.ndim(t) == 1 else t[0], rho_i, return_details=False)
+            )(r_all, rho_flat_all)
+
+            f_chunk   = jnp.sum(f_all, axis=2) / n_pts_per
+            rho_chunk = jnp.sum(rho_flat_all, axis=2) / n_pts_per
+
+            f_sq    = jnp.sum(f_chunk ** 2, axis=1)
+            diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
+
+            newly = (
+                ~atom_converged &
+                (
+                    (f_sq < abs_tol)
+                    | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
+                    | ((diff_sq < abs_tol) & (f_sq > 1e4 * abs_tol))
+                )
+            )
+            converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
+            converged_rho = jnp.where(newly[:, None], rho_chunk, converged_rho)
+            atom_converged = atom_converged | newly
+
+            if progress_bar:
+                progress.update(float(jnp.sum(atom_converged)) / N)
+
+            if bool(jnp.all(atom_converged)) or ii >= itermax - 1:
+                break
+
+            old_f_chunk = f_chunk
+            y0_batch    = self.sol.y[:, -1, :]
+            ii += 1
+
+        f_conv   = jnp.where(atom_converged[:, None], converged_f,   f_chunk)
+        rho_conv = jnp.where(atom_converged[:, None], converged_rho, rho_chunk)
+
+        # Final pass at full Npts resolution
+        t0 = per_atom_deltat_jnp * ii
+        t1 = per_atom_deltat_jnp * (ii + 1)
+        self.evolve_density(
+            [t0, t1],
+            y0_batch,
+            n_points=int(Npts),
+            max_steps=fixed_max_steps,
+            **kwargs
+        )
+        t = self.sol.t
+        rho_flat_all = self.sol.y[:, :, :-6].transpose(0, 2, 1)
+        r_all        = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
+
+        if jnp.ndim(t) == 2:
+            n_pts = t.shape[1]
+        else:
+            n_pts = t.shape[0]
+
+        f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
+            lambda r_i, rho_i: self.force(r_i, t if jnp.ndim(t) == 1 else t[0], rho_i, return_details=True)
+        )(r_all, rho_flat_all)
+
+        f_avg_np      = np.array(f_conv)
+        rho_flat_mean = np.array(rho_conv)
+        f_mag_avg_np  = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
+
+        f_laser_avg   = {k: np.array(jnp.sum(v, axis=-1) / n_pts) for k, v in f_laser_all.items()}
+        f_laser_q_avg = {k: np.array(jnp.sum(v, axis=-1) / n_pts) for k, v in f_laser_q_all.items()}
+
+        if progress_bar:
+            progress.update(1.0)
+
+        # Build output arrays
+        f_avg     = jnp.array(f_avg_np)
+        f_laser   = {k: jnp.array(v) for k, v in f_laser_avg.items()}
+        f_laser_q = {k: jnp.array(v) for k, v in f_laser_q_avg.items()}
+        f_mag     = jnp.array(f_mag_avg_np)
+
+        rho_flat_mean_jnp = jnp.array(rho_flat_mean)
+        def get_Neq(rho_flat_i):
+            return jnp.real(jnp.diagonal(self.__reshape_rho(rho_flat_i)))
+        Neq_all = jax.vmap(get_Neq)(rho_flat_mean_jnp)
+
+        it = np.nditer(
+            [R[0], R[1], R[2], V[0], V[1], V[2]],
+            flags=['refs_ok', 'multi_index'],
+            op_flags=[['readonly']] * 6
+        )
+        for atom_idx, _ in enumerate(it):
+            mi = it.multi_index
+            self.profile[name].store_data(
+                mi,
+                Neq_all[atom_idx],
+                f_avg[atom_idx],
+                {key: f_laser[key][atom_idx]   for key in f_laser},
+                f_mag[atom_idx],
+                int(ii),
+                {key: f_laser_q[key][atom_idx] for key in f_laser_q},
+            )
+
+        del rho_flat_all, r_all, f_all, f_laser_all, f_laser_q_all, f_mag_all
+        gc.collect()
 
         return self.profile[name]
