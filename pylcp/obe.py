@@ -1395,16 +1395,22 @@ class obe(governingeq):
                 if d is not None:
                     per_atom_deltat[i] = d
 
-        # Group atoms by their exact chunk_deltat so each atom uses its natural
-        # timescale (an integer number of oscillation cycles when deltat_v is
-        # set).  Atoms sharing the same deltat (e.g. all slow atoms clamped at
-        # deltat_tmax) are still batched together for GPU efficiency.
-        rounded_deltat = np.round(per_atom_deltat, decimals=6)
-        unique_deltats = np.unique(rounded_deltat)
-        groups = []
-        for dt in unique_deltats:
-            indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
-            groups.append((indices, float(dt)))
+        # When deltat_v is used, each atom must keep its own chunk duration
+        # (an integer number of oscillation cycles at that velocity).  When
+        # only deltat_r is used the chunk just needs to be "short enough",
+        # so all atoms can share min(deltat) in a single parallel batch —
+        # this avoids creating N sequential single-atom groups.
+        if deltat_v is not None or deltat_func is not None:
+            rounded_deltat = np.round(per_atom_deltat, decimals=6)
+            unique_deltats = np.unique(rounded_deltat)
+            groups = []
+            for dt in unique_deltats:
+                indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
+                groups.append((indices, float(dt)))
+        else:
+            # deltat_r only (or bare deltat): single batch, shortest chunk
+            shared_dt = float(np.min(per_atom_deltat))
+            groups = [(np.arange(N), shared_dt)]
 
         # Allocate per-atom result storage
         n_rho = rho0_batch.shape[1]
@@ -1464,19 +1470,12 @@ class obe(governingeq):
 
                 f_sq    = jnp.sum(f_chunk ** 2, axis=1)
                 diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
-                # Two convergence criteria:
-                # 1. f_sq < abs_tol   — force is truly near zero (dark-state/type-II)
-                # 2. diff_sq/f_sq < rel — force has stabilized relative to itself
-                #
-                # The third criterion "diff_sq < abs_tol" is intentionally omitted:
-                # it fires when the ABSOLUTE CHANGE per chunk is small, which
-                # incorrectly declares convergence for slowly decaying dark-state
-                # forces long before they reach the true near-zero equilibrium.
                 newly = (
                     ~atom_converged &
                     (
                         (f_sq < abs_tol)
                         | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
+                        | (diff_sq < abs_tol)
                     )
                 )
                 converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
