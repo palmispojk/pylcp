@@ -1,3 +1,5 @@
+import inspect
+
 import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
@@ -12,6 +14,33 @@ from diffrax import (
     PIDController,
     LinearInterpolation
 )
+
+
+def _ensure_3arg(func):
+    """Wrap ``func`` so it matches the ``func(t, y, args)`` signature that
+    diffrax's ``ODETerm`` requires.
+
+    Functions with fewer than three *required* (positional, no-default)
+    parameters are wrapped so that the ``args`` value from diffrax is
+    ignored and the original function is called as ``func(t, y)``.  This
+    lets callers pass either the simple ``(t, y)`` form or the full
+    ``(t, y, args)`` form — the latter is needed when static physics
+    data is supplied via the ``args`` parameter of :func:`solve_ivp_dense`
+    or :func:`solve_ivp_random`.
+
+    A function like ``func(t, y, _H=default)`` counts as 2-arg (the third
+    parameter has a default) and is wrapped, so diffrax's ``args=None``
+    does not clobber the default.
+    """
+    sig = inspect.signature(func)
+    n_required = sum(
+        1 for p in sig.parameters.values()
+        if p.default is inspect.Parameter.empty
+        and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
+    )
+    if n_required < 3:
+        return lambda t, y, args: func(t, y)
+    return func
 
 
 class RandomOdeResult:
@@ -49,10 +78,11 @@ def _batched_random_trajectories(
     for every atom/trajectory in the batch using XLA vectorization (`jax.vmap`).
 
     Args:
-        func (callable): 
-            Right-hand side of the system ODE (the continuous physics). 
-            The calling signature is ``fun(t, y)``. Here `t` is a scalar, 
-            and `y` is a JAX array representing the state of a single atom. 
+        func (callable):
+            Right-hand side of the system ODE (the continuous physics).
+            Accepts either ``func(t, y)`` or ``func(t, y, args)``.  The
+            3-arg form receives the ``args`` pytree passed to the solver;
+            the 2-arg form is wrapped automatically.
         random_func (callable): 
             A JAX-compatible function that simulates discrete, stochastic events 
             (such as random photon recoils). Must accept ``(t, y, dt, key)`` 
@@ -110,7 +140,7 @@ def _batched_random_trajectories(
     else:
         raise ValueError(f"Solver '{solver_type}' is not one of the specified solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
     
-    term = ODETerm(func)
+    term = ODETerm(_ensure_3arg(func))
     
     def cond_fun(state):
         return (state['t'] < tf) & (state['step_idx'] < max_steps)
@@ -317,7 +347,9 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
     so compilation happens once per (n_points, args-pytree-shape) pair.
 
     Args:
-        func: RHS of the ODE, calling signature func(t, y, args) -> dy/dt.
+        func: RHS of the ODE.  Accepts either ``func(t, y)`` or
+              ``func(t, y, args) -> dy/dt``.  The 3-arg form receives
+              the ``args`` pytree; the 2-arg form is wrapped automatically.
               Must be a stable Python object (e.g. a module-level function)
               so the JIT cache key stays constant across calls.
         t0, t1: Start and end time (JAX float64 scalars).
@@ -345,7 +377,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         raise ValueError(f"Solver '{solver_type}' not recognised. "
                          f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
 
-    term = ODETerm(func)
+    term = ODETerm(_ensure_3arg(func))
     ts_grid = jnp.linspace(t0, t1, n_points)
 
     def solve_one(y0):
@@ -384,7 +416,9 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
     with the same Hamiltonian structure, reducing total compilation time.
 
     Args:
-        func: RHS of the ODE, calling signature func(t, y, args) -> dy/dt.
+        func: RHS of the ODE.  Accepts either ``func(t, y)`` or
+              ``func(t, y, args) -> dy/dt``.  The 3-arg form receives
+              the ``args`` pytree; the 2-arg form is wrapped automatically.
         t_span: (t0, t1) integration interval.
         y0_batch: Initial conditions, shape (N, state_dim).
         n_points: Number of equally-spaced output time points. Default 1001.
