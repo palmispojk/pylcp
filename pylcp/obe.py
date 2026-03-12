@@ -708,7 +708,7 @@ class obe(governingeq):
                 * y: raw batched state array, shape ``(n_atoms, n_points, state_dim)``
         """
         rtol = kwargs.get('rtol', 1e-5)
-        atol = kwargs.get('atol', 1e-5)
+        atol = kwargs.get('atol', 1e-6)
         method = kwargs.get('method', 'Dopri5')
         max_steps = kwargs.get('max_steps', 4096)
 
@@ -1236,8 +1236,7 @@ class obe(governingeq):
             diff_sq = jnp.sum((old_f_avg - f_avg) ** 2)
             converged = bool(
                 (f_sq < abs) or
-                (diff_sq / jnp.maximum(f_sq, 1e-30) < rel) or
-                (diff_sq < abs)
+                (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
             )
             if converged or ii >= itermax - 1:
                 break
@@ -1297,6 +1296,13 @@ class obe(governingeq):
             Relative convergence parameter. Default: 1e-5.
         abs : float, optional
             Absolute convergence parameter. Default: 1e-9.
+        npts_conv_divisor : int, optional
+            ``Npts`` is divided by this value to get the number of output
+            points used during the convergence loop (``Npts_conv``).  A
+            larger value means fewer points per convergence chunk and faster
+            iterations, but noisier force estimates.  Set to 1 to use the
+            full ``Npts`` resolution for convergence (smoothest profiles,
+            slowest).  Default: 10.
         initial_rho : {'rateeq', 'equally'}, optional
             Determines how to set the initial density matrix :math:`\\rho` at the start 
             of the calculation. Default: 'rateeq'.
@@ -1326,13 +1332,14 @@ class obe(governingeq):
         kwargs.pop('return_details', None)  # always True here
 
         # Pop find_equilibrium_force kwargs so they don't leak into evolve_density
-        chunk_deltat = kwargs.pop('deltat',       500)
-        itermax      = kwargs.pop('itermax',      100)
-        Npts         = kwargs.pop('Npts',         5001)
-        rel          = kwargs.pop('rel',          1e-5)
-        abs_tol      = kwargs.pop('abs',          1e-9)
-        initial_rho  = kwargs.pop('initial_rho',  'rateeq')
-        progress_bar = kwargs.pop('progress_bar', False)
+        chunk_deltat      = kwargs.pop('deltat',             500)
+        itermax           = kwargs.pop('itermax',            100)
+        Npts              = kwargs.pop('Npts',               5001)
+        rel               = kwargs.pop('rel',                1e-5)
+        abs_tol           = kwargs.pop('abs',                1e-9)
+        npts_conv_divisor = kwargs.pop('npts_conv_divisor',  10)
+        initial_rho       = kwargs.pop('initial_rho',        'rateeq')
+        progress_bar      = kwargs.pop('progress_bar',       False)
 
         if not name:
             name = '{0:d}'.format(len(self.profile))
@@ -1424,7 +1431,7 @@ class obe(governingeq):
 
             # Use fewer dense output points during convergence; the force
             # average only needs a coarse grid.  Full Npts for the final pass.
-            Npts_conv = max(int(Npts) // 10, 101)
+            Npts_conv = max(int(Npts) // max(npts_conv_divisor, 1), 101)
 
             # Per-atom convergence using consecutive chunk comparison — matches
             # the original serial find_equilibrium_force behaviour exactly.
@@ -1457,12 +1464,19 @@ class obe(governingeq):
 
                 f_sq    = jnp.sum(f_chunk ** 2, axis=1)
                 diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
+                # Two convergence criteria:
+                # 1. f_sq < abs_tol   — force is truly near zero (dark-state/type-II)
+                # 2. diff_sq/f_sq < rel — force has stabilized relative to itself
+                #
+                # The third criterion "diff_sq < abs_tol" is intentionally omitted:
+                # it fires when the ABSOLUTE CHANGE per chunk is small, which
+                # incorrectly declares convergence for slowly decaying dark-state
+                # forces long before they reach the true near-zero equilibrium.
                 newly = (
                     ~atom_converged &
                     (
                         (f_sq < abs_tol)
                         | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
-                        | (diff_sq < abs_tol)
                     )
                 )
                 converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
@@ -1497,10 +1511,10 @@ class obe(governingeq):
                 lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
             )(r_all, rho_flat_all)
 
-            # Use the full-resolution final pass for f_avg, not the coarse
-            # convergence estimates (Npts_conv has 10x fewer points,
-            # so its time-averages are noisier and cause jagged profiles).
-            f_avg_np      = np.array(jnp.sum(f_all, axis=2) / n_pts)
+            # Use the convergence estimate for f_avg so the convergence test
+            # and the reported force are consistent.  f_laser and f_mag still
+            # come from the full-resolution final pass below.
+            f_avg_np      = np.array(f_conv)
             rho_flat_mean = np.array(rho_conv)
             f_mag_avg_np  = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
 
