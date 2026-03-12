@@ -9,7 +9,8 @@ import jax.numpy as jnp
 
 import pylcp.hamiltonians as hamiltonians
 from pylcp.hamiltonian import hamiltonian
-from pylcp.fields import laserBeams, laserBeam, constantMagneticField, magField
+from pylcp.fields import (laserBeams, laserBeam, constantMagneticField,
+                          magField, infinitePlaneWaveBeam)
 from pylcp.obe import obe, force_profile
 
 
@@ -870,7 +871,7 @@ class TestMolassesForceProfileSmooth:
         return obe(beams, B, ham)
 
     def test_no_spikes_with_deltat_v(self, molasses_obe):
-        """Force profile must be smooth — no spikes when deltat_v is used."""
+        """Force profile must be smooth — no spikes or jaggedness when deltat_v is used."""
         o = molasses_obe
         v = np.arange(-10., 10.5, 0.5)
         o.generate_force_profile(
@@ -882,15 +883,7 @@ class TestMolassesForceProfileSmooth:
         )
         F = np.array(o.profile['test'].F[0])
 
-        # The force must be antisymmetric and smooth.  Check that no
-        # point deviates from its neighbours by more than a generous
-        # threshold (spikes typically exceed the smooth curve by >2×).
-        dF = np.diff(F)
-        # Successive differences should not change sign more than once
-        # per zero crossing of the force.  A spike produces a
-        # sign-change pair in quick succession.  Instead of counting
-        # sign changes we simply check that the force has no point
-        # that sticks out beyond 2× the max of its neighbours.
+        # 1) No extreme spikes: no point should deviate wildly from neighbours.
         for i in range(1, len(F) - 1):
             neighbour_max = max(abs(F[i - 1]), abs(F[i + 1]))
             if neighbour_max > 1e-6:
@@ -898,6 +891,118 @@ class TestMolassesForceProfileSmooth:
                     f"Spike at v={v[i]:.1f}: |F|={abs(F[i]):.4f} vs "
                     f"neighbours {abs(F[i-1]):.4f}, {abs(F[i+1]):.4f}"
                 )
+
+        # 2) Overall smoothness: the second derivative (curvature) should be
+        #    small relative to the signal.  Jagged profiles have large d²F
+        #    at many points even without single-point spikes.
+        d2F = np.diff(F, n=2)
+        rms_d2F = np.sqrt(np.mean(d2F**2))
+        F_range = np.max(F) - np.min(F)
+        assert F_range > 1e-8, "Force profile is essentially zero everywhere"
+        roughness = rms_d2F / F_range
+        assert roughness < 0.3, (
+            f"Force profile is too jagged: roughness (rms d²F / range) = {roughness:.3f} > 0.3"
+        )
+
+
+    def test_dark_state_smooth(self):
+        """Type-II (dark-state) system: forces must be near zero at all velocities.
+
+        Fg=1 -> Fe=1 with lin-lin polarization (phi=0) has a dark state
+        (|mF=0>_x) that is velocity-independent, so the time-averaged force
+        should be near zero at all velocities once optical pumping is complete.
+
+        Roughness (rms d²F / F_range) is not used here: when F ≈ 0 everywhere,
+        F_range collapses to numerical noise, making the ratio meaningless.
+        Instead we verify that max|F| and std(F) are below physical thresholds,
+        which directly captures the convergence fix (removing premature-convergence
+        criteria that locked atoms at spuriously large forces).
+        """
+        Fg, Fe = 1, 1
+        det, s = -2.5, 1.0
+        Hg, Bgq = hamiltonians.singleF(F=Fg, gF=0, muB=1)
+        He, Beq = hamiltonians.singleF(F=Fe, gF=1/Fe, muB=1)
+        dijq = hamiltonians.dqij_two_bare_hyperfine(Fg, Fe)
+        ham = hamiltonian(Hg, He - det * np.eye(2 * Fe + 1), Bgq, Beq, dijq)
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        beams = laserBeams([
+            {'kvec': np.array([0., 0., 1.]),
+             'pol': np.array([1., 0., 0.]),
+             'pol_coord': 'cartesian', 'delta': 0, 's': s},
+            {'kvec': np.array([0., 0., -1.]),
+             'pol': np.array([1., 0., 0.]),
+             'pol_coord': 'cartesian', 'delta': 0, 's': s},
+        ], beam_type=infinitePlaneWaveBeam)
+        o = obe(beams, B, ham, transform_into_re_im=True)
+
+        v = np.arange(0.5, 3.1, 0.5)
+        o.generate_force_profile(
+            [np.zeros(v.shape), np.zeros(v.shape), np.zeros(v.shape)],
+            [np.zeros(v.shape), np.zeros(v.shape), v],
+            name='test', deltat_v=4, deltat_tmax=2 * np.pi * 100,
+            itermax=200, rel=1e-6, abs=1e-8,
+        )
+        F = np.array(o.profile['test'].F[2])
+
+        max_F = np.max(np.abs(F))
+        std_F = np.std(F)
+        assert max_F < 5e-4, (
+            f"Dark-state force too large: max|F| = {max_F:.2e} > 5e-4 "
+            f"(premature convergence before reaching dark state?)"
+        )
+        assert std_F < 3e-4, (
+            f"Dark-state force profile too variable: std(F) = {std_F:.2e} > 3e-4"
+        )
+
+    def test_Fg2_Fe1_linlin_near_zero_and_smooth(self):
+        """Fg=2->Fe=1, phi=0 (Lin||Lin): force near zero and no oscillations.
+
+        This is the exact case from the Devlin 2016 (Fig. 1, bottom row, orange
+        line) that regressed to a jagged profile when the "diff_sq < abs_tol"
+        convergence criterion declared convergence prematurely for slowly
+        decaying dark-state forces.
+
+        Two failure modes are tested:
+          1. max|F_z| too large — premature convergence left force non-zero.
+          2. std(F_z) too large — profile oscillates around zero.
+        """
+        Fg, Fe = 2, 1
+        det, s = -2.5, 1.0
+        Hg, Bgq = hamiltonians.singleF(F=Fg, gF=0, muB=1)
+        He, Beq = hamiltonians.singleF(F=Fe, gF=1/Fe, muB=1)
+        dijq = hamiltonians.dqij_two_bare_hyperfine(Fg, Fe)
+        ham = hamiltonian(Hg, He - det * np.eye(2*Fe+1), Bgq, Beq, dijq)
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        beams = laserBeams([
+            {'kvec': np.array([0., 0.,  1.]), 'pol': np.array([1., 0., 0.]),
+             'pol_coord': 'cartesian', 'delta': 0, 's': s},
+            {'kvec': np.array([0., 0., -1.]), 'pol': np.array([1., 0., 0.]),
+             'pol_coord': 'cartesian', 'delta': 0, 's': s},
+        ], beam_type=infinitePlaneWaveBeam)
+        o = obe(beams, B, ham, transform_into_re_im=True)
+
+        # 6 points at dv=0.5 up to v=3.0 — fast to compute; dark-state pumping
+        # is complete within deltat_tmax=2*pi*100 for these velocities.
+        v = np.arange(0.5, 3.1, 0.5)
+        o.generate_force_profile(
+            [np.zeros(v.shape), np.zeros(v.shape), np.zeros(v.shape)],
+            [np.zeros(v.shape), np.zeros(v.shape), v],
+            name='test', deltat_v=4, deltat_tmax=2*np.pi*100,
+            itermax=200, rel=1e-6, abs=1e-8,
+        )
+        F = np.array(o.profile['test'].F[2])
+
+        # 1. Force must be near zero everywhere (dark-state physics).
+        assert np.max(np.abs(F)) < 5e-4, (
+            f"Dark-state force too large: max|F_z| = {np.max(np.abs(F)):.2e}"
+        )
+
+        # 2. Profile must not oscillate.  The regression produced large-amplitude
+        #    sign-alternating swings; std catches this even for a near-zero profile.
+        #    For the smooth fixed profile std ~ 1.3e-4; oscillating would be >> 1e-3.
+        assert np.std(F) < 3e-4, (
+            f"Force profile oscillates: std(F_z) = {np.std(F):.2e} > 3e-4"
+        )
 
 
 class TestEvolveMotion:
