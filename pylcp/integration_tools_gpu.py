@@ -439,24 +439,59 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
                          f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
 
     term = ODETerm(_ensure_3arg(func))
-    ts_grid = jnp.linspace(t0, t1, n_points)
 
-    def solve_one(y0):
-        sol = diffeqsolve(
-            term,
-            solver,
-            t0=t0,
-            t1=t1,
-            dt0=jnp.asarray((t1 - t0) / n_points, dtype=t0.dtype),
-            y0=y0,
-            args=args,
-            stepsize_controller=PIDController(rtol=rtol, atol=atol),
-            saveat=SaveAt(ts=ts_grid),
-            max_steps=max_steps,
-        )
-        return sol.ys  # (n_points, state_dim)
+    # t0/t1 can be scalars (shared) or per-atom arrays (shape (N,)).
+    # When per-atom, each atom gets its own time grid and integration
+    # window — all run in parallel via vmap with a single JIT trace.
+    per_atom = (jnp.ndim(t0) > 0 or jnp.ndim(t1) > 0)
 
-    return jax.vmap(solve_one)(y0_batch), ts_grid
+    if not per_atom:
+        # Shared t_span: single ts_grid, vmap over y0 only
+        ts_grid = jnp.linspace(t0, t1, n_points)
+
+        def solve_one(y0):
+            sol = diffeqsolve(
+                term,
+                solver,
+                t0=t0,
+                t1=t1,
+                dt0=jnp.asarray((t1 - t0) / n_points, dtype=t0.dtype),
+                y0=y0,
+                args=args,
+                stepsize_controller=PIDController(rtol=rtol, atol=atol),
+                saveat=SaveAt(ts=ts_grid),
+                max_steps=max_steps,
+            )
+            return sol.ys, ts_grid
+
+        ys, ts_batch = jax.vmap(solve_one)(y0_batch)
+        return ys, ts_batch[0]  # ts identical for all atoms
+    else:
+        # Per-atom t0/t1: each atom has its own time grid
+        # Broadcast scalars to match batch dimension
+        if jnp.ndim(t0) == 0:
+            t0 = jnp.broadcast_to(t0, t1.shape)
+        if jnp.ndim(t1) == 0:
+            t1 = jnp.broadcast_to(t1, t0.shape)
+
+        def solve_one(y0, t0_i, t1_i):
+            ts_grid_i = jnp.linspace(t0_i, t1_i, n_points)
+            sol = diffeqsolve(
+                term,
+                solver,
+                t0=t0_i,
+                t1=t1_i,
+                dt0=jnp.asarray((t1_i - t0_i) / n_points, dtype=t0_i.dtype),
+                y0=y0,
+                args=args,
+                stepsize_controller=PIDController(rtol=rtol, atol=atol),
+                saveat=SaveAt(ts=ts_grid_i),
+                max_steps=max_steps,
+            )
+            return sol.ys, ts_grid_i
+
+        ys, ts_batch = jax.vmap(solve_one)(y0_batch, t0, t1)
+        return ys, ts_batch  # (N, n_points)
 
 
 def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
@@ -480,7 +515,10 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
         func: RHS of the ODE.  Accepts either ``func(t, y)`` or
               ``func(t, y, args) -> dy/dt``.  The 3-arg form receives
               the ``args`` pytree; the 2-arg form is wrapped automatically.
-        t_span: (t0, t1) integration interval.
+        t_span: (t0, t1) integration interval.  t1 may be a scalar
+                (shared endpoint for all atoms) or an array of shape (N,)
+                giving a per-atom endpoint.  When per-atom, the returned
+                ``ts`` has shape (N, n_points) instead of (n_points,).
         y0_batch: Initial conditions, shape (N, state_dim).
         n_points: Number of equally-spaced output time points. Default 1001.
         max_steps: Maximum number of adaptive solver steps. Default: 4096.
@@ -491,7 +529,7 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
               Default: None.
 
     Returns:
-        ts: jax.Array, shape (n_points,)
+        ts: jax.Array, shape (n_points,) or (N, n_points) for per-atom t1
         ys: jax.Array, shape (N, n_points, state_dim)
     """
     t0 = jnp.asarray(t_span[0], dtype=jnp.float64)
