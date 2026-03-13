@@ -44,32 +44,90 @@ def _ensure_3arg(func):
 
 
 class RandomOdeResult:
-    def __init__(self, t, y, t_random, n_random, inds_random, success, status=0, message="", nfev=0):
-        self.t = t
-        self.y = y
-        self.t_random = t_random
-        self.n_random = n_random
-        self.inds_random = inds_random
-        self.success = success
-        self.status = status
-        self.message = message
-        self.nfev = nfev
+    """Result of a single ODE trajectory.
+
+    Can be constructed eagerly (all arrays passed in) or lazily from a
+    batched state dict returned by ``_batched_random_trajectories``.  In
+    the lazy case, per-atom slicing and device-to-host transfer are
+    deferred until an attribute is first accessed, avoiding N separate
+    GPU→host copies during result construction.
+    """
+
+    def __init__(self, t=None, y=None, t_random=None, n_random=None,
+                 inds_random=None, success=None, status=0, message="",
+                 nfev=0, _batched_state=None, _index=None, _tf=None):
+        if _batched_state is not None:
+            # Lazy mode: defer slicing until attribute access.
+            self._batched_state = _batched_state
+            self._index = _index
+            self._tf = _tf
+            self._cache = {}
+        else:
+            # Eager mode: store pre-sliced arrays directly.
+            self._batched_state = None
+            self.t = t
+            self.y = y
+            self.t_random = t_random
+            self.n_random = n_random
+            self.inds_random = inds_random
+            self.success = success
+            self.status = status
+            self.message = message
+            self.nfev = nfev
+
+    def _materialise(self):
+        """Slice this atom's data from the batched state (once)."""
+        if 't' in self._cache:
+            return
+        i = self._index
+        bs = self._batched_state
+        num_steps = int(bs['step_idx'][i])
+
+        self._cache['t'] = bs['ts'][i, :num_steps]
+        self._cache['y'] = jnp.moveaxis(bs['ys'][i, :num_steps], 0, -1)
+
+        t_rand_raw = bs['t_random'][i, :num_steps]
+        n_rand_raw = bs['n_random'][i, :num_steps]
+        scatter_mask = n_rand_raw > 0
+
+        self._cache['t_random'] = t_rand_raw[scatter_mask]
+        self._cache['n_random'] = n_rand_raw[scatter_mask]
+        self._cache['inds_random'] = scatter_mask
+        self._cache['success'] = bool(bs['t'][i] >= self._tf)
+        self._cache['status'] = 0 if self._cache['success'] else -1
+        self._cache['message'] = ("Success" if self._cache['success']
+                                  else "Terminated early (max_steps limit).")
+        self._cache['nfev'] = int(bs['nfev'][i])
+
+    def __getattr__(self, name):
+        # Only called when normal attribute lookup fails (lazy mode).
+        if name.startswith('_'):
+            raise AttributeError(name)
+        self._materialise()
+        try:
+            val = self._cache[name]
+        except KeyError:
+            raise AttributeError(f"RandomOdeResult has no attribute {name!r}")
+        # Promote to a real attribute so subsequent accesses skip __getattr__.
+        setattr(self, name, val)
+        return val
 
 
-@functools.partial(jax.jit, static_argnames=("func", "random_func", "max_steps", "solver_type"))
+@functools.partial(jax.jit, static_argnames=("func", "random_func", "max_steps", "inner_max_steps", "solver_type"))
 def _batched_random_trajectories(
     func,
     random_func,
     t0,
     tf,
-    y0_batch, 
+    y0_batch,
     keys_batch,
     max_steps,
-    max_step_global, 
+    max_step_global,
     rtol,
     atol,
     dt0,
-    solver_type="Dopri5"
+    solver_type="Dopri5",
+    inner_max_steps=64,
     ):
     """
     JIT-compiled batched execution for simulating stochastic trajectories.
@@ -111,8 +169,13 @@ def _batched_random_trajectories(
             Absolute tolerance for the ODE solver's PID step-size controller.
         dt0 (float): 
             The initial time step size to use at `t0`.
-        solver_type (str, optional): 
+        solver_type (str, optional):
             The Diffrax solver to use ("Dopri5", "Bosh3", or "Kvaerno5"). Defaults to "Dopri5".
+        inner_max_steps (int, optional):
+            Maximum number of adaptive steps the inner diffrax solver is
+            allowed to take per outer time step.  The outer ``while_loop``
+            already controls time progression; the inner solver only needs
+            enough steps to integrate one ``dt`` interval.  Defaults to 64.
 
     Raises:
         ValueError: 
@@ -160,7 +223,7 @@ def _batched_random_trajectories(
             y0=state['y'],
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
             saveat=SaveAt(t1=True),
-            max_steps=max_steps,
+            max_steps=inner_max_steps,
         )
         
         y_next = sol.ys[-1]
@@ -214,9 +277,11 @@ def solve_ivp_random(
     keys_batch,
     solver_type="Dopri5",
     max_steps=100000,
+    inner_max_steps=64,
     max_step=float('inf'),
     rtol=1e-5,
     atol=1e-6,
+    batch_size=None,
     **options
     ):
     """
@@ -253,10 +318,22 @@ def solve_ivp_random(
             Maximum global allowed step size. Defaults to `jnp.inf`.
         rtol (float, optional): 
             Relative tolerance for the step size controller. Defaults to 1e-5.
-        atol (float, optional): 
+        atol (float, optional):
             Absolute tolerance for the step size controller. Defaults to 1e-5.
-        **options: 
-            Additional keyword arguments to maintain API compatibility with SciPy 
+        inner_max_steps (int, optional):
+            Maximum adaptive steps the inner diffrax solver may take per
+            outer time step.  The outer loop already controls time
+            progression; the inner solver only integrates one ``dt``
+            interval, so a small value (default 64) is sufficient and
+            avoids massive over-allocation on GPU.
+        batch_size (int, optional):
+            Maximum number of atoms to integrate simultaneously.  When
+            set, atoms are processed in chunks of this size to limit peak
+            GPU memory.  Each chunk reuses the same compiled kernel so
+            there is no extra JIT cost.  Default: ``None`` (all atoms in
+            one batch).
+        **options:
+            Additional keyword arguments to maintain API compatibility with SciPy
             (e.g., standard `method` overrides).
 
     Returns:
@@ -279,53 +356,34 @@ def solve_ivp_random(
     dt0 = jnp.minimum(jnp.asarray((tf - t0) * 1e-3, dtype=jnp.float64),
                        jnp.asarray(max_step, dtype=jnp.float64))
     N = y0_batch.shape[0]
-    
-    batched_state = _batched_random_trajectories(
-        fun,
-        random_func,
-        t0,
-        tf,
-        y0_batch,
-        keys_batch,
-        max_steps,
-        max_step,
-        rtol,
-        atol,
-        dt0,
-        solver_type
-    )
-    
-    results = []
-    for i in range(N):
-        num_steps = int(batched_state['step_idx'][i])
-        
-        ts_final = batched_state['ts'][i, :num_steps]
-        ys_final = jnp.moveaxis(batched_state['ys'][i, :num_steps], 0, -1)
-        
-        t_rand_raw = batched_state['t_random'][i, :num_steps]
-        n_rand_raw = batched_state['n_random'][i, :num_steps]
-        
-        scatter_mask = n_rand_raw > 0
-        t_random_clean = t_rand_raw[scatter_mask]
-        n_random_clean = n_rand_raw[scatter_mask]
-        inds_random = scatter_mask
-        
-        success = bool(batched_state['t'][i] >= tf)
-        status = 0 if success else -1
-        message = "Success" if success else "Terminated early (max_steps limit)."
-        
-        results.append(RandomOdeResult(
-            t=ts_final,
-            y=ys_final,
-            t_random=t_random_clean,
-            n_random=n_random_clean,
-            inds_random=inds_random,
-            success=success,
-            status=status,
-            message=message,
-            nfev=int(batched_state['nfev'][i])
-        ))
 
+    if batch_size is None or batch_size >= N:
+        # Single batch — all atoms at once.
+        batched_state = _batched_random_trajectories(
+            fun, random_func, t0, tf,
+            y0_batch, keys_batch,
+            max_steps, max_step, rtol, atol, dt0,
+            solver_type, inner_max_steps,
+        )
+        return [
+            RandomOdeResult(_batched_state=batched_state, _index=i, _tf=tf)
+            for i in range(N)
+        ]
+
+    # Chunked execution to limit peak memory.
+    results = []
+    for start in range(0, N, batch_size):
+        end = min(start + batch_size, N)
+        chunk_state = _batched_random_trajectories(
+            fun, random_func, t0, tf,
+            y0_batch[start:end], keys_batch[start:end],
+            max_steps, max_step, rtol, atol, dt0,
+            solver_type, inner_max_steps,
+        )
+        for i in range(end - start):
+            results.append(
+                RandomOdeResult(_batched_state=chunk_state, _index=i, _tf=tf)
+            )
     return results
 
 

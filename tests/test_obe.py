@@ -1082,6 +1082,102 @@ class TestEvolveMotion:
 
 
 # ---------------------------------------------------------------------------
+# TestBatchSize
+# ---------------------------------------------------------------------------
+
+class TestBatchSize:
+    """Tests that batch_size chunking in solve_ivp_random produces results
+    consistent with a single unchunked batch."""
+
+    @pytest.fixture
+    def multi_atom_obe(self):
+        """OBE with 6 atoms at different velocities for batch testing."""
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        o = obe(beams, B, ham, transform_into_re_im=True)
+
+        velocities = [0.0, 0.1, 0.5, 1.0, 2.0, 3.0]
+        rho0_list = []
+        for vz in velocities:
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.array([0., 0., vz]))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        key = jax.random.PRNGKey(42)
+        keys_batch = jax.random.split(key, len(velocities))
+        return o, y0_batch, keys_batch
+
+    def test_batch_size_matches_unbatched(self, multi_atom_obe):
+        """Chunked results must match single-batch results exactly."""
+        o, y0_batch, keys_batch = multi_atom_obe
+        N = y0_batch.shape[0]
+
+        # Run without chunking
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False)
+        sols_full = o.sols
+
+        # Run with batch_size=2 (3 chunks of 2 for 6 atoms)
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        batch_size=2)
+        sols_chunked = o.sols
+
+        assert len(sols_chunked) == len(sols_full)
+        for i in range(N):
+            np.testing.assert_allclose(
+                np.array(sols_chunked[i].r),
+                np.array(sols_full[i].r),
+                atol=1e-10,
+                err_msg=f"Atom {i} position mismatch with batch_size=2"
+            )
+            np.testing.assert_allclose(
+                np.array(sols_chunked[i].v),
+                np.array(sols_full[i].v),
+                atol=1e-10,
+                err_msg=f"Atom {i} velocity mismatch with batch_size=2"
+            )
+
+    def test_batch_size_one(self, multi_atom_obe):
+        """batch_size=1 (fully sequential) should still produce valid results."""
+        o, y0_batch, keys_batch = multi_atom_obe
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        batch_size=1)
+        for sol in o.sols:
+            assert not jnp.any(jnp.isnan(sol.r))
+            assert not jnp.any(jnp.isnan(sol.v))
+
+    def test_batch_size_larger_than_N(self, multi_atom_obe):
+        """batch_size >= N should behave identically to no chunking."""
+        o, y0_batch, keys_batch = multi_atom_obe
+        N = y0_batch.shape[0]
+
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False)
+        sols_full = o.sols
+
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        batch_size=1000)
+        sols_large = o.sols
+
+        assert len(sols_large) == len(sols_full)
+        for i in range(N):
+            np.testing.assert_allclose(
+                np.array(sols_large[i].r),
+                np.array(sols_full[i].r),
+                atol=1e-10,
+            )
+
+
+# ---------------------------------------------------------------------------
 # TestRandomRecoilKickDistribution
 # ---------------------------------------------------------------------------
 
