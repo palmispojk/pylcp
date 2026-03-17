@@ -30,7 +30,7 @@ pip install pylcp
 
 To install the development version (v2.0, JAX backend), clone the repository:
 ```
-git clone https://github.com/JQIamo/pylcp.git
+git clone https://github.com/palmispojk/pylcp/
 cd pylcp
 pip install -e .
 ```
