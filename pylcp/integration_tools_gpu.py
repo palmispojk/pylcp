@@ -277,7 +277,7 @@ def solve_ivp_random(
     keys_batch,
     solver_type="Dopri5",
     max_steps=100000,
-    inner_max_steps=64,
+    inner_max_steps=None,
     max_step=float('inf'),
     rtol=1e-5,
     atol=1e-6,
@@ -356,6 +356,9 @@ def solve_ivp_random(
     dt0 = jnp.minimum(jnp.asarray((tf - t0) * 1e-3, dtype=jnp.float64),
                        jnp.asarray(max_step, dtype=jnp.float64))
     N = y0_batch.shape[0]
+
+    if inner_max_steps is None:
+        inner_max_steps = max_steps
 
     if batch_size is None or batch_size >= N:
         # Single batch — all atoms at once.
