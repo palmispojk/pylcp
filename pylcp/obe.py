@@ -1407,14 +1407,9 @@ class obe(governingeq):
                 indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
                 groups.append((indices, float(dt)))
         else:
-            # Per-atom grouping: each atom gets its own deltat, matching
-            # the original serial find_equilibrium_force behaviour.
-            rounded_deltat = np.round(per_atom_deltat, decimals=6)
-            unique_deltats = np.unique(rounded_deltat)
-            groups = []
-            for dt in unique_deltats:
-                indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
-                groups.append((indices, float(dt)))
+            # deltat_r only (or bare deltat): single batch, shortest chunk
+            shared_dt = float(np.min(per_atom_deltat))
+            groups = [(np.arange(N), shared_dt)]
 
         # Allocate per-atom result storage
         n_rho = rho0_batch.shape[1]
@@ -1448,7 +1443,7 @@ class obe(governingeq):
             # force decay so atoms don't falsely converge while the force is
             # still monotonically shrinking toward zero.
             old_f_chunk    = jnp.full((Ng, 3), jnp.inf)
-            old_f_sq       = jnp.full(Ng, jnp.inf)
+            old_f_sq       = jnp.zeros(Ng)
             was_decreasing = jnp.zeros(Ng, dtype=bool)
             atom_converged = jnp.zeros(Ng, dtype=bool)
             converged_f    = jnp.zeros((Ng, 3))
