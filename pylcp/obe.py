@@ -695,8 +695,14 @@ class obe(governingeq):
         n_points : int, optional
             Number of output time points. Default: 1000.
         **kwargs :
-            Additional keyword arguments passed to ``solve_ivp_dense``
-            (e.g., ``rtol``, ``atol``, ``method``, ``max_steps``).
+            Additional keyword arguments:
+
+            rtol : float, optional
+                Relative tolerance. Default: 1e-5.
+            atol : float, optional
+                Absolute tolerance. Default: 1e-6.
+            max_steps : int, optional
+                Maximum solver steps. Default: 4096.
 
         Returns
         -------
@@ -709,20 +715,13 @@ class obe(governingeq):
         """
         rtol = kwargs.get('rtol', 1e-5)
         atol = kwargs.get('atol', 1e-6)
-        method = kwargs.get('method', 'Dopri5')
         max_steps = kwargs.get('max_steps', 4096)
+        method = kwargs.get('method', 'Dopri5')
 
         if y0_batch is None:
             y0 = jnp.concatenate([self.rho0, self.v0, self.r0])
             y0_batch = y0[None, :]  # (1, state_dim)
 
-        # Use the per-instance _dydt closure so ev_mat arrays are captured as
-        # XLA constants.  This lets XLA constant-fold sparse matrix entries
-        # (large Hamiltonians have many forbidden-transition zeros), giving
-        # faster compilation and execution than passing ev_mat as dynamic args.
-        # _dydt is a cached_property — same Python object every call on this
-        # instance — so _batched_dense_trajectories JIT-compiles once and
-        # reuses the kernel for every subsequent call within this instance.
         ts_grid, batched_ys = solve_ivp_dense(
             self._dydt, t_span, y0_batch,
             n_points=n_points, max_steps=max_steps,
@@ -1314,8 +1313,8 @@ class obe(governingeq):
             Maximum allowed deltat if dynamically calculated via `deltat_r` or `deltat_v`.
             Default: np.inf.
         deltat_func : callable, optional
-            A custom function `f(r, v)` to dynamically determine the chunk time `deltat` 
-            for each grid point. The method will use the minimum valid deltat returned 
+            A custom function `f(r, v)` to dynamically determine the chunk time `deltat`
+            for each grid point. The method will use the minimum valid deltat returned
             across the grid to ensure alignment.
 
         Returns
@@ -1408,9 +1407,14 @@ class obe(governingeq):
                 indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
                 groups.append((indices, float(dt)))
         else:
-            # deltat_r only (or bare deltat): single batch, shortest chunk
-            shared_dt = float(np.min(per_atom_deltat))
-            groups = [(np.arange(N), shared_dt)]
+            # Per-atom grouping: each atom gets its own deltat, matching
+            # the original serial find_equilibrium_force behaviour.
+            rounded_deltat = np.round(per_atom_deltat, decimals=6)
+            unique_deltats = np.unique(rounded_deltat)
+            groups = []
+            for dt in unique_deltats:
+                indices = np.where(np.abs(rounded_deltat - dt) < 1e-9)[0]
+                groups.append((indices, float(dt)))
 
         # Allocate per-atom result storage
         n_rho = rho0_batch.shape[1]
@@ -1439,9 +1443,13 @@ class obe(governingeq):
             # average only needs a coarse grid.  Full Npts for the final pass.
             Npts_conv = max(int(Npts) // max(npts_conv_divisor, 1), 101)
 
-            # Per-atom convergence using consecutive chunk comparison — matches
-            # the original serial find_equilibrium_force behaviour exactly.
+            # Per-atom convergence using consecutive chunk comparison.
+            # old_f_sq / was_decreasing guard criterion 3 during dark-state
+            # force decay so atoms don't falsely converge while the force is
+            # still monotonically shrinking toward zero.
             old_f_chunk    = jnp.full((Ng, 3), jnp.inf)
+            old_f_sq       = jnp.full(Ng, jnp.inf)
+            was_decreasing = jnp.zeros(Ng, dtype=bool)
             atom_converged = jnp.zeros(Ng, dtype=bool)
             converged_f    = jnp.zeros((Ng, 3))
             converged_rho  = jnp.zeros((Ng, n_rho))
@@ -1470,12 +1478,23 @@ class obe(governingeq):
 
                 f_sq    = jnp.sum(f_chunk ** 2, axis=1)
                 diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
+
+                # Track monotonic force decay: if force magnitude is
+                # decreasing, the atom may be in a dark state slowly
+                # relaxing toward zero.
+                is_decreasing = f_sq < old_f_sq
+                was_decreasing = was_decreasing | is_decreasing
+
+                # Criterion 3 (diff_sq < abs_tol) is blocked when the
+                # force has been monotonically decreasing — this prevents
+                # premature convergence during dark-state force decay
+                # where absolute changes get small before equilibrium.
                 newly = (
                     ~atom_converged &
                     (
                         (f_sq < abs_tol)
                         | (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
-                        | (diff_sq < abs_tol)
+                        | (~was_decreasing & (diff_sq < abs_tol))
                     )
                 )
                 converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
@@ -1486,6 +1505,7 @@ class obe(governingeq):
                     break
 
                 old_f_chunk = f_chunk
+                old_f_sq    = f_sq
                 y0_group    = self.sol.y[:, -1, :]
                 ii += 1
 
