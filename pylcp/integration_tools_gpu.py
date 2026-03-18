@@ -300,60 +300,6 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
     return max(1, int(free_bytes * safety / bytes_per_atom))
 
 
-def optimal_force_chunk_size(state_dim, npts_final, fixed_max_steps,
-                             n_beams=1, n_q=3, safety=0.5):
-    """Return the largest atom-count chunk that fits in GPU memory for
-    :meth:`~pylcp.obe.obe.generate_force_profile_gpu`.
-
-    Models peak per-atom GPU allocation for the final-pass force vmap:
-
-    * ``sol.y`` rho part:         ``(npts_final, n_rho)`` complex128  (16 B/elem)
-    * ``sol.y`` v/r part:         ``(npts_final, 6)`` float64
-    * Diffrax step buffer rho:    ``(fixed_max_steps, n_rho)`` complex128
-    * Diffrax step buffer v/r:    ``(fixed_max_steps, 6)`` float64
-    * ``r_all``:                  ``(3, npts_final)`` float64
-    * ``f_laser_q_all`` per key:  ``(3, n_q, n_beams, npts_final)`` float64
-    * ``f_laser_all`` per key:    ``(3, n_beams, npts_final)`` float64
-    * ``f_all``:                  ``(3, npts_final)`` float64
-
-    Call this *after* JIT warm-up so the JAX memory pool is already reflected
-    in ``bytes_in_use``.
-
-    Args:
-        state_dim (int): OBE state dimension (``len(rho0) + 6``).
-        npts_final (int): Dense output points for the final convergence pass.
-        fixed_max_steps (int): Diffrax internal step budget.
-        n_beams (int, optional): Total number of laser beams across all keys.
-            Defaults to 1.
-        n_q (int, optional): Number of spherical-tensor polarisation components
-            (usually 3 for dipole transitions).  Defaults to 3.
-        safety (float, optional): Fraction of free GPU memory to budget.
-            Defaults to 0.5 to leave headroom for XLA workspace buffers.
-
-    Returns:
-        int: Recommended chunk size, or ``None`` if no GPU is present.
-    """
-    gpu_devices = [d for d in jax.devices() if d.platform == 'gpu']
-    if not gpu_devices:
-        return None
-    stats = gpu_devices[0].memory_stats()
-    free_bytes = stats['bytes_limit'] - stats['bytes_in_use']
-    n_rho = state_dim - 6
-    # Per-atom peak allocation (dominant terms):
-    bytes_per_atom = (
-        npts_final * n_rho * 16                # rho part of sol.y  (complex128)
-        + npts_final * 6 * 8                   # v/r part of sol.y  (float64)
-        + fixed_max_steps * n_rho * 16         # rho part of diffrax buffer
-        + fixed_max_steps * 6 * 8             # v/r part of diffrax buffer
-        + npts_final * 3 * 8                   # r_all float64
-        + npts_final * 9 * n_beams * 16        # delE_q complex128 (XLA intermediate)
-        + npts_final * 3 * n_q * n_beams * 8   # f_laser_q_all float64
-        + npts_final * 3 * n_beams * 8         # f_laser_all float64
-        + npts_final * 3 * 8                   # f_all float64
-    )
-    return max(1, int(free_bytes * safety / bytes_per_atom))
-
-
 def solve_ivp_random(
     fun,
     random_func,

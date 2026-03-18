@@ -1,0 +1,116 @@
+Run started: 2026-03-18T20:25:58.176486
+
+Hardware:
+  CPU cores (logical): 160
+  GPU: cuda:0  memory=23.5 GiB
+
+Parameters: det=-2.5, s=1.25, alpha=0.0001
+Seed: 42
+
+==================================================
+  Evolve Motion Benchmark
+==================================================
+
+Warming up JIT (evolve motion)...
+
+  state_dim=22, optimal GPU batch size: 8184
+
+  Serial CPU (32 atoms, backend='cpu'):
+    Total time:      94.8s
+    Time per atom:   2.963s
+    Final z:         mean=-763.20, std=10755.15
+
+  Pathos CPU (32 atoms, 2 cores, 16 atoms/worker):
+    Total time:      66.3s
+    Time per atom:   2.073s
+    Final z:         mean=-763.20, std=10755.15
+
+  Pathos CPU (32 atoms, 4 cores, 8 atoms/worker):
+    Total time:      39.0s
+    Time per atom:   1.217s
+    Final z:         mean=-763.20, std=10755.15
+
+  Pathos CPU (32 atoms, 8 cores, 4 atoms/worker):
+    Total time:      25.7s
+    Time per atom:   0.802s
+    Final z:         mean=-763.20, std=10755.15
+
+  Batched GPU (8184 atoms):
+    Total time:      99.5s
+    Time per atom:   0.012s
+    Final z:         mean=-23.62, std=10473.31
+
+  Numerical check (first 4 atoms vs serial):
+    Pathos  2 cores  max|z diff|:  1.0186e-10
+    Pathos  4 cores  max|z diff|:  1.0186e-10
+    Pathos  8 cores  max|z diff|:  1.0186e-10
+    GPU             max|z diff|:  0.0000e+00
+
+  Amdahl's Law (CPU parallel projection)
+  Formula: S(n) = 1 / ((1 - p) + p/n)
+  Fit: linearised least-squares  p = Σ(xᵢyᵢ)/Σ(xᵢ²)  where x=1-1/n, y=1-1/S
+  Measurements used for fit:
+     2 cores: S=1.43x
+     4 cores: S=2.43x
+     8 cores: S=3.69x
+  Fitted p = 0.7795  (77.9% of work is parallel)
+
+     Cores   Predicted S    Time/atom (s)
+  --------  ------------  ---------------
+         1          1.00            2.963
+         2          1.64            1.808  ← measured S=1.43x
+         4          2.41            1.231  ← measured S=2.43x
+         8          3.14            0.942  ← measured S=3.69x
+        16          3.71            0.798
+        32          4.08            0.726
+        64          4.30            0.689
+       128          4.41            0.671
+       160          4.44            0.668
+
+  GPU batched speedup for reference: 243.7x  (0.0122s / atom)
+
+==================================================
+  Evolve Motion Sweep (CPU vs GPU across atom counts)
+==================================================
+
+  --- 4 atoms ---
+    CPU: 4.6212s/atom
+    GPU: 3.3957s/atom
+
+  --- 8 atoms ---
+    CPU: 3.3991s/atom
+    GPU: 1.8598s/atom
+
+  --- 16 atoms ---
+    CPU: 3.3663s/atom
+    GPU: 0.8711s/atom
+
+  --- 32 atoms ---
+    CPU: 3.2510s/atom
+    GPU: 0.4786s/atom
+
+  --- 64 atoms ---
+    CPU: 3.1668s/atom
+    GPU: 0.2489s/atom
+
+  --- 128 atoms ---
+    CPU: 3.0815s/atom
+    GPU: 0.1295s/atom
+
+  --- 256 atoms ---
+    GPU: 0.0631s/atom
+
+  --- 512 atoms ---
+    GPU: 0.0350s/atom
+
+  --- 1024 atoms ---
+    GPU: 0.0221s/atom
+
+==================================================
+  Generating plots
+==================================================
+
+  Plot saved to /workspace/pylcp/benchmarks/cpu_vs_gpu/benchmark_cpu_vs_gpu_20260318_202558.png
+
+Run finished: 2026-03-18T20:50:55.687801
+Output saved to /workspace/pylcp/benchmarks/cpu_vs_gpu/benchmark_output_20260318_202558.txt

@@ -1,7 +1,6 @@
 """
-Benchmark: CPU vs GPU methods for force profile and evolve motion.
+Benchmark: CPU vs GPU for evolve motion.
 
-Force profile: generate_force_profile (CPU) vs generate_force_profile_gpu (GPU vmap).
 Evolve motion: serial (N_SERIAL atoms) vs pathos CPU parallel vs GPU batched.
 
 Speedup is reported as time-per-atom so the runs don't need equal atom counts.
@@ -60,7 +59,6 @@ import jax.numpy as jnp
 DET = -2.5
 S = 1.25
 ALPHA = 1e-4
-NPTS = 4           # force profile realizations
 N_SERIAL = 4              # atoms for serial (shared y0s used for numeric check)
 PATHOS_CORE_COUNTS = [2, 4, 8]
 # Each worker handles this many atoms so JIT overhead is amortised over real work.
@@ -76,12 +74,9 @@ MAX_STEPS = 10000
 AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, os.cpu_count()]
 
 # Sweep parameters
-# Force profile: grid spacings to sweep (number of z-points increases as step shrinks)
-FORCE_Z_STEPS = [0.5, 0.25, 0.1, 0.05, 0.025, 0.01]
-SWEEP_NPTS = 1        # realizations per sweep point (1 keeps the sweep fast)
 # Evolve motion: atom counts for CPU and GPU sweeps.
 # CPU serial is expensive (~3s/atom) so capped lower than GPU.
-EVOLVE_SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64]
+EVOLVE_SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64, 128]
 EVOLVE_SWEEP_GPU_ATOMS = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
 
 
@@ -99,105 +94,6 @@ def setup():
     obe = pylcp.obe(laserBeams, magField, hamiltonian,
                     transform_into_re_im=True)
     return obe
-
-
-def warmup(obe):
-    """JIT warmup for both force profile backends."""
-    R0 = [np.array([0.]), np.array([0.]), np.array([0.])]
-    V0 = [np.array([0.]), np.array([0.]), np.array([0.])]
-    obe.generate_force_profile(R0, V0, backend='cpu', deltat=1., itermax=1)
-    obe.profile.clear()
-    obe.generate_force_profile(R0, V0, backend='gpu', deltat=1., itermax=1)
-    obe.profile.clear()
-
-
-def run_method(obe, method_name, backend, z_step=0.25, npts=None):
-    if npts is None:
-        npts = NPTS
-    z = np.arange(-5.01, 5.01, z_step)
-    R_base = [np.zeros(z.shape), np.zeros(z.shape), z / ALPHA]
-    V_base = [np.zeros(z.shape), np.zeros(z.shape), np.zeros(z.shape)]
-
-    kw = dict(
-        deltat_tmax=2 * np.pi * 100,
-        deltat_r=4 / ALPHA,
-        itermax=1000,
-        progress_bar=False,
-        npts_conv_divisor=1,
-    )
-
-    np.random.seed(SEED)
-    t0 = time.perf_counter()
-    for ii in range(npts):
-        offset = 2 * np.pi * (np.random.rand(3) - 0.5).reshape(3, 1)
-        R_shifted = [R_base[j] + offset[j] for j in range(3)]
-        obe.generate_force_profile(R_shifted, V_base, name='z_%d' % ii,
-                                   backend=backend, **kw)
-    elapsed = time.perf_counter() - t0
-
-    F_all = np.array([
-        np.asarray(obe.profile[k].F)
-        for k in sorted(obe.profile) if k.startswith('z_')
-    ])
-    iters_all = np.array([
-        np.asarray(obe.profile[k].iterations)
-        for k in sorted(obe.profile) if k.startswith('z_')
-    ])
-
-    avgF = np.mean(F_all[:, 2, :], axis=0)
-    d2F = np.diff(avgF, n=2)
-
-    print(f"\n  {method_name}:")
-    print(f"    Time:       {elapsed:.1f}s")
-    print(f"    Iters:      min={iters_all.min()}, max={iters_all.max()}, mean={iters_all.mean():.1f}")
-    print(f"    max|d2F|:   {np.max(np.abs(d2F)):.4e}")
-    print(f"    mean|d2F|:  {np.mean(np.abs(d2F)):.4e}")
-
-    obe.profile.clear()
-    return avgF, elapsed
-
-
-def _warmup_force_size(obe, z_step):
-    """Warm up JIT for both force profile backends at this grid size.
-
-    Must use the same deltat_r, deltat_tmax and npts_conv_divisor as
-    run_method so that the JIT is compiled for the correct shapes
-    (fixed_max_steps and Npts_conv).  itermax=1 keeps the warmup fast.
-    """
-    z = np.arange(-5.01, 5.01, z_step)
-    R0 = [np.zeros(z.shape), np.zeros(z.shape), z / ALPHA]
-    V0 = [np.zeros(z.shape), np.zeros(z.shape), np.zeros(z.shape)]
-    kw = dict(
-        deltat_tmax=2 * np.pi * 100,
-        deltat_r=4 / ALPHA,
-        itermax=1,
-        progress_bar=False,
-        npts_conv_divisor=1,
-    )
-    obe.generate_force_profile(R0, V0, backend='cpu', **kw)
-    obe.profile.clear()
-    obe.generate_force_profile(R0, V0, backend='gpu', **kw)
-    obe.profile.clear()
-
-
-def run_force_sweep(obe):
-    """Sweep over grid densities; return {n_pts: (t_cpu, t_gpu)}.
-
-    Each size is warmed up first so JIT cost is excluded from timing.
-    generate_force_profile_gpu auto-chunks internally via optimal_force_chunk_size
-    so large grids are handled without OOM.
-    """
-    results = {}
-    for z_step in FORCE_Z_STEPS:
-        n_pts = len(np.arange(-5.01, 5.01, z_step))
-        print(f"\n  --- {n_pts} grid points (step={z_step}) ---")
-        print(f"    Warming up...")
-        _warmup_force_size(obe, z_step)
-        _, t_cpu = run_method(obe, "CPU", 'cpu', z_step=z_step, npts=SWEEP_NPTS)
-        _, t_gpu = run_method(obe, "GPU", 'gpu', z_step=z_step, npts=SWEEP_NPTS)
-        results[n_pts] = (t_cpu, t_gpu)
-        print(f"    Speedup: {t_cpu / t_gpu:.2f}x")
-    return results
 
 
 def run_evolve_sweep(obe):
@@ -244,40 +140,25 @@ def run_evolve_sweep(obe):
     return results
 
 
-def make_plots(force_data, evolve_data):
+def make_plots(evolve_data):
     import matplotlib.pyplot as plt
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+    fig, ax = plt.subplots(figsize=(7, 5))
 
-    # --- Force profile ---
-    ns_f = sorted(force_data.keys())
-    t_cpu_f = [force_data[n][0] / SWEEP_NPTS for n in ns_f]
-    t_gpu_f = [force_data[n][1] / SWEEP_NPTS for n in ns_f]
-    ax1.plot(ns_f, t_cpu_f, 'o-', label='CPU')
-    ax1.plot(ns_f, t_gpu_f, 's-', label='GPU (vmap)')
-    ax1.set_xlabel('Grid points (N)')
-    ax1.set_ylabel('Time per realization (s)')
-    ax1.set_title('Force Profile: CPU vs GPU')
-    ax1.set_xscale('log')
-    ax1.set_yscale('log')
-    ax1.legend()
-    ax1.grid(True, which='both', ls='--', alpha=0.4)
-
-    # --- Evolve motion ---
     ns_e = sorted(evolve_data.keys())
     cpu_pts = [(n, evolve_data[n][0]) for n in ns_e if evolve_data[n][0] is not None]
     gpu_pts = [(n, evolve_data[n][1]) for n in ns_e if evolve_data[n][1] is not None]
     if cpu_pts:
-        ax2.plot(*zip(*cpu_pts), 'o-', label='Serial CPU')
+        ax.plot(*zip(*cpu_pts), 'o-', label='Serial CPU')
     if gpu_pts:
-        ax2.plot(*zip(*gpu_pts), 's-', label='GPU batched')
-    ax2.set_xlabel('Number of atoms (N)')
-    ax2.set_ylabel('Time per atom (s)')
-    ax2.set_title('Evolve Motion: CPU vs GPU')
-    ax2.set_xscale('log')
-    ax2.set_yscale('log')
-    ax2.legend()
-    ax2.grid(True, which='both', ls='--', alpha=0.4)
+        ax.plot(*zip(*gpu_pts), 's-', label='GPU batched')
+    ax.set_xlabel('Number of atoms (N)')
+    ax.set_ylabel('Time per atom (s)')
+    ax.set_title('Evolve Motion: CPU vs GPU')
+    ax.set_xscale('log')
+    ax.set_yscale('log')
+    ax.legend()
+    ax.grid(True, which='both', ls='--', alpha=0.4)
 
     plt.tight_layout()
     out = os.path.join(OUT_DIR, f'benchmark_cpu_vs_gpu_{_ts}.png')
@@ -288,6 +169,7 @@ def make_plots(force_data, evolve_data):
 
 def warmup_evolve(obe):
     """JIT warmup for evolve_motion (single and batched)."""
+    obe.set_initial_rho_equally()
     rho0 = jnp.array(obe.rho0)
     y0 = jnp.concatenate([rho0, jnp.zeros(3), jnp.zeros(3)])
 
@@ -513,26 +395,9 @@ if __name__ == '__main__':
         print(f"  CPU device: {d}")
 
     print(f"\nParameters: det={DET}, s={S}, alpha={ALPHA}")
-    print(f"Force profile realizations: {NPTS}, seed: {SEED}")
+    print(f"Seed: {SEED}")
 
     obe = setup()
-
-    # --- Force profile benchmark ---
-    print("\n" + "=" * 50)
-    print("  Force Profile Benchmark")
-    print("=" * 50)
-
-    print("\nWarming up JIT (force profile)...")
-    warmup(obe)
-
-    avgF_cpu, t_cpu = run_method(obe, "CPU (backend='cpu')", 'cpu')
-    avgF_gpu, t_gpu = run_method(obe, "GPU (backend='gpu')", 'gpu')
-
-    diff = avgF_cpu - avgF_gpu
-    print(f"\n  Force Profile Comparison:")
-    print(f"    Speedup:         {t_cpu/t_gpu:.2f}x")
-    print(f"    Max |F diff|:    {np.max(np.abs(diff)):.4e}")
-    print(f"    Mean |F diff|:   {np.mean(np.abs(diff)):.4e}")
 
     # --- Evolve motion benchmark ---
     print("\n" + "=" * 50)
@@ -635,12 +500,6 @@ if __name__ == '__main__':
     print(f"\n  GPU batched speedup for reference: {s_gpu:.1f}x  "
           f"({t_per_atom_batch:.4f}s / atom)")
 
-    # --- Force profile sweep ---
-    print("\n" + "=" * 50)
-    print("  Force Profile Sweep (CPU vs GPU across grid sizes)")
-    print("=" * 50)
-    force_sweep = run_force_sweep(obe)
-
     # --- Evolve motion sweep ---
     print("\n" + "=" * 50)
     print("  Evolve Motion Sweep (CPU vs GPU across atom counts)")
@@ -651,7 +510,7 @@ if __name__ == '__main__':
     print("\n" + "=" * 50)
     print("  Generating plots")
     print("=" * 50)
-    make_plots(force_sweep, evolve_sweep)
+    make_plots(evolve_sweep)
 
     print(f"\nRun finished: {datetime.datetime.now().isoformat()}")
     print(f"Output saved to {_log_path}")

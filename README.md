@@ -103,5 +103,5 @@ The v2.0 branch is under active development. Key changes from v1.x:
 - **JAX/Diffrax backend** replacing scipy for all ODE integration
 - **JIT-compiled** force, density matrix, and equation-of-motion evaluations
 - **Batched `evolve_motion`** for simulating multiple atoms in a single call
-- **GPU-accelerated `generate_force_profile_gpu`** using `jax.vmap` (experimental)
+- **GPU-accelerated `evolve_motion`** using `jax.vmap` for batched atom trajectories
 - **Improved convergence** with a monotonic decay guard for dark-state detection in `generate_force_profile`
