@@ -7,7 +7,7 @@ import gc
 import numpy as np
 import jax
 import jax.numpy as jnp
-from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense
+from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense, optimal_batch_size
 
 from .rateeq import rateeq
 from .common import (cart2spherical, spherical2cart, base_force_profile,
@@ -748,6 +748,7 @@ class obe(governingeq):
                       freeze_axis=[False, False, False],
                       random_recoil=False,
                       max_scatter_probability=0.1,
+                      backend='auto',
                       **kwargs):
         """
         Evolve :math:`\\rho_{ij}` and the motion of the atom in time.
@@ -768,6 +769,16 @@ class obe(governingeq):
         random_recoil : boolean
             Allow the atom to randomly recoil from scattering events.
             Default: False
+        backend : str, optional
+            Execution backend for the ODE solver.
+
+            * ``'auto'`` *(default)* — use GPU (batched vmap) when a CUDA
+              device is available, otherwise fall back to CPU serial.
+            * ``'gpu'`` — always run the full batch through ``solve_ivp_random``
+              in one vmapped call.  Best for large batches on GPU.
+            * ``'cpu'`` — iterate over atoms and call ``solve_ivp_random``
+              one at a time.  No vmap overhead; suitable for CPU workers or
+              when the batch is small enough that serial is faster.
         max_scatter_probability : float
             When undergoing random recoils, this sets the maximum time step such
             that the maximum scattering probability is less than or equal to
@@ -891,28 +902,39 @@ class obe(governingeq):
         if 'max_step' not in kwargs:
             kwargs['max_step'] = (t_span[1] - t_span[0]) / 500
 
-        if not random_recoil_flag:
-            def dummy_recoil(t, y, dt, key):
-                return y, 0, jnp.inf, key
+        recoil_func = (
+            (lambda t, y, dt, key: (y, 0, jnp.inf, key))
+            if not random_recoil_flag
+            else random_recoil_fn
+        )
 
+        # Resolve backend: 'auto' uses GPU when a CUDA device is present.
+        resolved = backend
+        if resolved == 'auto':
+            resolved = 'gpu' if jax.default_backend() == 'gpu' else 'cpu'
+
+        if resolved == 'gpu':
             self.sols = solve_ivp_random(
                 fun=dydt,
-                random_func=dummy_recoil,
+                random_func=recoil_func,
                 t_span=t_span,
                 y0_batch=y0_batch,
                 keys_batch=keys_batch,
                 **kwargs
             )
-
         else:
-            self.sols = solve_ivp_random(
-                fun=dydt,
-                random_func=random_recoil_fn,
-                t_span=t_span,
-                y0_batch=y0_batch,
-                keys_batch=keys_batch,
-                **kwargs
-            )
+            # CPU serial: one atom at a time — no vmap across the batch.
+            self.sols = []
+            for i in range(y0_batch.shape[0]):
+                sol_list = solve_ivp_random(
+                    fun=dydt,
+                    random_func=recoil_func,
+                    t_span=t_span,
+                    y0_batch=y0_batch[i:i+1],
+                    keys_batch=keys_batch[i:i+1],
+                    **kwargs
+                )
+                self.sols.extend(sol_list)
 
 
         # Remake the solution:
