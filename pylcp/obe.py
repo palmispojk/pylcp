@@ -7,7 +7,7 @@ import gc
 import numpy as np
 import jax
 import jax.numpy as jnp
-from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense, optimal_batch_size
+from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense, optimal_batch_size, optimal_force_chunk_size
 
 from .rateeq import rateeq
 from .common import (cart2spherical, spherical2cart, base_force_profile,
@@ -1280,7 +1280,7 @@ class obe(governingeq):
             return f_avg
 
 
-    def generate_force_profile(self, R, V, name=None, **kwargs):
+    def generate_force_profile(self, R, V, name=None, backend='auto', **kwargs):
         """
         Map out the equilibrium force vs. position and velocity using batched JAX integration.
 
@@ -1338,13 +1338,39 @@ class obe(governingeq):
             A custom function `f(r, v)` to dynamically determine the chunk time `deltat`
             for each grid point. The method will use the minimum valid deltat returned
             across the grid to ensure alignment.
+        backend : {'auto', 'cpu', 'gpu'}, optional
+            Execution backend.
+
+            * ``'auto'`` *(default)* — use GPU when a CUDA device is present,
+              otherwise CPU.
+            * ``'cpu'`` — force all JAX operations onto the CPU device.  The
+              group-based convergence loop runs entirely in CPU memory, so large
+              grids never exhaust GPU RAM.
+            * ``'gpu'`` — use a single batched vmap over all grid points
+              (auto-chunked via :func:`optimal_force_chunk_size` when the grid
+              exceeds available GPU memory).
 
         Returns
         -------
         profile : pylcp.obe.force_profile
-            Resulting force profile containing the equilibrium forces, detailed laser/mag 
+            Resulting force profile containing the equilibrium forces, detailed laser/mag
             forces, and equilibrium populations for the specified grid.
         """
+        # Resolve backend
+        resolved = backend
+        if resolved == 'auto':
+            resolved = 'gpu' if jax.default_backend() == 'gpu' else 'cpu'
+
+        if resolved == 'gpu':
+            return self.generate_force_profile_gpu(R, V, name=name, **kwargs)
+
+        # CPU path: pin all JAX operations to the CPU device so that large
+        # grids do not exhaust GPU memory.
+        cpu_device = jax.devices('cpu')[0]
+
+        _cpu_ctx = jax.default_device(cpu_device)
+        _cpu_ctx.__enter__()
+
         # Pop deltat-shaping kwargs
         deltat_r    = kwargs.pop('deltat_r',    None)
         deltat_v    = kwargs.pop('deltat_v',    None)
@@ -1611,6 +1637,7 @@ class obe(governingeq):
                 {key: f_laser_avg_q[key][atom_idx] for key in f_laser_avg_q},
             )
 
+        _cpu_ctx.__exit__(None, None, None)
         return self.profile[name]
 
 
@@ -1704,6 +1731,55 @@ class obe(governingeq):
         # Fixed max_steps for single JIT compilation
         max_deltat = float(np.max(per_atom_deltat))
         fixed_max_steps = max(int(np.ceil(max_deltat * 16)), 4096)
+
+        # Auto-chunk if N exceeds safe GPU memory capacity.
+        # optimal_force_chunk_size returns None on CPU-only machines, in which
+        # case we proceed without chunking (no GPU memory limit to respect).
+        state_dim = n_rho + 6
+        n_beams_total = sum(lb.num_of_beams for lb in self.laserBeams.values())
+        # Release any previous ODE solution from GPU memory so that bytes_in_use
+        # reflects only external allocations (not our own stale result).
+        if hasattr(self, 'sol'):
+            del self.sol
+            gc.collect()
+        # The final pass uses the full Npts (not Npts_conv), so model that for
+        # the memory estimate.  Use safety=0.1: the improved formula accounts for
+        # complex128 rho and f_laser_q_all terms (dominant XLA intermediate).
+        chunk_size = optimal_force_chunk_size(
+            state_dim, int(Npts), fixed_max_steps,
+            n_beams=n_beams_total, n_q=3, safety=0.1)
+        if chunk_size is not None and N > chunk_size:
+            # Process grid in memory-safe chunks and merge into the profile.
+            # Work with flattened 1-D R/V so slicing is always unambiguous,
+            # then copy results using reshape-based array slices.
+            R_flat = [np.asarray(r).reshape(-1) for r in R]
+            V_flat = [np.asarray(v).reshape(-1) for v in V]
+            prof = self.profile[name]
+            for start in range(0, N, chunk_size):
+                sl = slice(start, start + chunk_size)
+                R_chunk = [r[sl] for r in R_flat]
+                V_chunk = [v[sl] for v in V_flat]
+                chunk_name = f'__chunk_{name}_{start}'
+                self.generate_force_profile_gpu(
+                    R_chunk, V_chunk, name=chunk_name,
+                    deltat=chunk_deltat, itermax=itermax, Npts=Npts,
+                    rel=rel, abs=abs_tol, npts_conv_divisor=npts_conv_divisor,
+                    initial_rho=initial_rho, progress_bar=False, **kwargs
+                )
+                cp = self.profile.pop(chunk_name)
+                cs = len(R_chunk[0])
+                # F, Neq, f, f_mag are JAX arrays (immutable) — use .at[].set().
+                # iterations and fq are numpy arrays — use direct indexing.
+                prof.F     = prof.F.at[:, start:start+cs].set(cp.F)
+                prof.Neq   = prof.Neq.at[start:start+cs, :].set(cp.Neq)
+                prof.f_mag = prof.f_mag.at[:, start:start+cs].set(cp.f_mag)
+                for k in cp.f:
+                    prof.f[k] = prof.f[k].at[:, start:start+cs, :].set(cp.f[k])
+                # numpy arrays: direct slice assignment
+                prof.iterations[start:start+cs] = cp.iterations
+                for k in cp.fq:
+                    prof.fq[k][:, start:start+cs, :, :] = cp.fq[k]
+            return prof
 
         # Convergence loop — all atoms in a single vmap batch
         old_f_chunk    = jnp.full((N, 3), jnp.inf)
