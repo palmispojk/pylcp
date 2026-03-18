@@ -1764,7 +1764,10 @@ class obe(governingeq):
                     R_chunk, V_chunk, name=chunk_name,
                     deltat=chunk_deltat, itermax=itermax, Npts=Npts,
                     rel=rel, abs=abs_tol, npts_conv_divisor=npts_conv_divisor,
-                    initial_rho=initial_rho, progress_bar=False, **kwargs
+                    initial_rho=initial_rho, progress_bar=False,
+                    deltat_r=deltat_r, deltat_v=deltat_v,
+                    deltat_tmax=deltat_tmax, deltat_func=deltat_func,
+                    **kwargs
                 )
                 cp = self.profile.pop(chunk_name)
                 cs = len(R_chunk[0])

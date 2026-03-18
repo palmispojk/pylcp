@@ -31,6 +31,24 @@ import os
 # before pool creation) tells us to pin JAX to CPU so workers never touch GPU.
 if os.environ.get('_PYLCP_BENCH_WORKER') == '1':
     os.environ['JAX_PLATFORMS'] = 'cpu'
+    # Minimise per-worker thread count: parallelism comes from multiple
+    # processes, so each worker needs only minimal intra-op threads.  This
+    # keeps total PID usage within cgroup limits even at high core counts.
+    # No performance impact: workers process atoms sequentially and the
+    # matrices are tiny, so intra-op parallelism is not beneficial.
+    os.environ['XLA_FLAGS'] = (
+        os.environ.get('XLA_FLAGS', '')
+        + ' --xla_cpu_multi_thread_eigen=false'
+        + ' --xla_force_host_platform_device_count=1'
+    )
+    os.environ.setdefault('TF_NUM_INTEROP_THREADS', '1')
+    os.environ.setdefault('TF_NUM_INTRAOP_THREADS', '1')
+
+# Limit per-process thread counts to avoid exhausting the OS thread limit
+# when pathos spawns many workers (each would otherwise create 64+ threads
+# for OpenBLAS/OMP/XLA).  Workers get parallelism from multiple processes.
+for _tvar in ('OPENBLAS_NUM_THREADS', 'OMP_NUM_THREADS', 'MKL_NUM_THREADS'):
+    os.environ.setdefault(_tvar, '1')
 
 import time
 import numpy as np
@@ -44,11 +62,11 @@ S = 1.25
 ALPHA = 1e-4
 NPTS = 4           # force profile realizations
 N_SERIAL = 4              # atoms for serial (shared y0s used for numeric check)
-PATHOS_CORE_COUNTS = [2, 4, 8, 16]  # all core counts measured; p fitted from all three
+PATHOS_CORE_COUNTS = [2, 4, 8]
 # Each worker handles this many atoms so JIT overhead is amortised over real work.
 # N_PATHOS_ATOMS is fixed independently of PATHOS_CORE_COUNTS so that adding or
 # removing core counts does not change the atom pool and skew per-atom timings.
-# Must be divisible by all entries in PATHOS_CORE_COUNTS.
+# Must be divisible by all entries in _ALL_PATHOS_CORE_COUNTS.
 N_ATOMS_PER_WORKER = 4
 N_PATHOS_ATOMS = 32  # fixed; divisible by 2, 4, 8, 16
 SEED = 42
@@ -543,10 +561,22 @@ if __name__ == '__main__':
     t_per_atom_serial, z_serial = run_serial(obe, pathos_y0)
 
     # Run pathos at each core count; collect (n_cores, t_per_atom, z).
+    # Wrap in try/except so stale worker processes are killed on error
+    # and the benchmark can continue with whatever results were collected.
     pathos_results = {}
-    for n_cores in PATHOS_CORE_COUNTS:
-        t_pa, z_pa = run_pathos(pathos_y0, n_cores)
-        pathos_results[n_cores] = (t_pa, z_pa)
+    try:
+        for n_cores in PATHOS_CORE_COUNTS:
+            t_pa, z_pa = run_pathos(pathos_y0, n_cores)
+            pathos_results[n_cores] = (t_pa, z_pa)
+    except Exception as e:
+        print(f"\n  Pathos failed at {n_cores} cores: {e}")
+        print(f"  Continuing with {len(pathos_results)} successful core counts.")
+        # Kill any orphaned worker processes spawned by pathos.
+        import subprocess
+        subprocess.run(
+            ['pkill', '-P', str(os.getpid())],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+        )
 
     t_per_atom_batch, z_batch = run_batched(obe, gpu_y0)
 
@@ -567,36 +597,39 @@ if __name__ == '__main__':
     # This fits all measurements simultaneously and naturally down-weights
     # low core counts (small x) which carry less information about p.
     #
-    measured_speedups = {}
-    xs, ys = [], []
-    for n_cores, (t_pa, _) in pathos_results.items():
-        s_i = t_per_atom_serial / t_pa
-        measured_speedups[n_cores] = s_i
-        xs.append(1.0 - 1.0 / n_cores)
-        ys.append(1.0 - 1.0 / s_i)
+    if len(pathos_results) >= 2:
+        measured_speedups = {}
+        xs, ys = [], []
+        for n_cores, (t_pa, _) in pathos_results.items():
+            s_i = t_per_atom_serial / t_pa
+            measured_speedups[n_cores] = s_i
+            xs.append(1.0 - 1.0 / n_cores)
+            ys.append(1.0 - 1.0 / s_i)
 
-    xs, ys = np.array(xs), np.array(ys)
-    p_parallel = float(np.clip(np.dot(xs, ys) / np.dot(xs, xs), 0.0, 1.0))
+        xs, ys = np.array(xs), np.array(ys)
+        p_parallel = float(np.clip(np.dot(xs, ys) / np.dot(xs, xs), 0.0, 1.0))
 
-    print(f"\n  Amdahl's Law (CPU parallel projection)")
-    print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
-    print(f"  Fit: linearised least-squares  p = Σ(xᵢyᵢ)/Σ(xᵢ²)  where x=1-1/n, y=1-1/S")
-    print(f"  Measurements used for fit:")
-    for n_cores in PATHOS_CORE_COUNTS:
-        print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x")
-    print(f"  Fitted p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
-    print(f"\n  {'Cores':>8}  {'Predicted S':>12}  {'Time/atom (s)':>15}")
-    print(f"  {'-'*8}  {'-'*12}  {'-'*15}")
-    measured_set = set(PATHOS_CORE_COUNTS)
-    seen: set = set()
-    for n in AMDAHL_CORE_COUNTS:
-        if n in seen:
-            continue
-        seen.add(n)
-        s_pred = amdahl_speedup(p_parallel, n)
-        t_pred = t_per_atom_serial / s_pred
-        marker = f"  ← measured S={measured_speedups[n]:.2f}x" if n in measured_set else ""
-        print(f"  {n:>8}  {s_pred:>12.2f}  {t_pred:>15.3f}{marker}")
+        print(f"\n  Amdahl's Law (CPU parallel projection)")
+        print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
+        print(f"  Fit: linearised least-squares  p = Σ(xᵢyᵢ)/Σ(xᵢ²)  where x=1-1/n, y=1-1/S")
+        print(f"  Measurements used for fit:")
+        for n_cores in sorted(pathos_results.keys()):
+            print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x")
+        print(f"  Fitted p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
+        print(f"\n  {'Cores':>8}  {'Predicted S':>12}  {'Time/atom (s)':>15}")
+        print(f"  {'-'*8}  {'-'*12}  {'-'*15}")
+        measured_set = set(pathos_results.keys())
+        seen: set = set()
+        for n in AMDAHL_CORE_COUNTS:
+            if n in seen:
+                continue
+            seen.add(n)
+            s_pred = amdahl_speedup(p_parallel, n)
+            t_pred = t_per_atom_serial / s_pred
+            marker = f"  ← measured S={measured_speedups[n]:.2f}x" if n in measured_set else ""
+            print(f"  {n:>8}  {s_pred:>12.2f}  {t_pred:>15.3f}{marker}")
+    else:
+        print(f"\n  Amdahl's Law: skipped (need ≥2 pathos measurements, got {len(pathos_results)})")
 
     s_gpu = t_per_atom_serial / t_per_atom_batch
     print(f"\n  GPU batched speedup for reference: {s_gpu:.1f}x  "
