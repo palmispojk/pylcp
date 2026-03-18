@@ -44,16 +44,27 @@ S = 1.25
 ALPHA = 1e-4
 NPTS = 4           # force profile realizations
 N_SERIAL = 4              # atoms for serial (shared y0s used for numeric check)
-PATHOS_CORE_COUNTS = [2, 4, 8]  # all core counts measured; p fitted from all three
+PATHOS_CORE_COUNTS = [2, 4, 8, 16]  # all core counts measured; p fitted from all three
 # Each worker handles this many atoms so JIT overhead is amortised over real work.
-# Total pathos atoms = max(PATHOS_CORE_COUNTS) * N_ATOMS_PER_WORKER; same atoms
-# are reused across all core-count runs so timings are directly comparable.
+# N_PATHOS_ATOMS is fixed independently of PATHOS_CORE_COUNTS so that adding or
+# removing core counts does not change the atom pool and skew per-atom timings.
+# Must be divisible by all entries in PATHOS_CORE_COUNTS.
 N_ATOMS_PER_WORKER = 4
+N_PATHOS_ATOMS = 32  # fixed; divisible by 2, 4, 8, 16
 SEED = 42
 MAX_STEPS = 10000
 
 # Core counts to project via Amdahl's Law
 AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, os.cpu_count()]
+
+# Sweep parameters
+# Force profile: grid spacings to sweep (number of z-points increases as step shrinks)
+FORCE_Z_STEPS = [0.5, 0.25, 0.1, 0.05, 0.025, 0.01]
+SWEEP_NPTS = 1        # realizations per sweep point (1 keeps the sweep fast)
+# Evolve motion: atom counts for CPU and GPU sweeps.
+# CPU serial is expensive (~3s/atom) so capped lower than GPU.
+EVOLVE_SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64]
+EVOLVE_SWEEP_GPU_ATOMS = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
 
 
 def setup():
@@ -73,17 +84,19 @@ def setup():
 
 
 def warmup(obe):
-    """JIT warmup for both force profile methods."""
+    """JIT warmup for both force profile backends."""
     R0 = [np.array([0.]), np.array([0.]), np.array([0.])]
     V0 = [np.array([0.]), np.array([0.]), np.array([0.])]
-    obe.generate_force_profile(R0, V0, deltat=1., itermax=1)
+    obe.generate_force_profile(R0, V0, backend='cpu', deltat=1., itermax=1)
     obe.profile.clear()
-    obe.generate_force_profile_gpu(R0, V0, deltat=1., itermax=1)
+    obe.generate_force_profile(R0, V0, backend='gpu', deltat=1., itermax=1)
     obe.profile.clear()
 
 
-def run_method(obe, method_name, method_func):
-    z = np.arange(-5.01, 5.01, 0.25)
+def run_method(obe, method_name, backend, z_step=0.25, npts=None):
+    if npts is None:
+        npts = NPTS
+    z = np.arange(-5.01, 5.01, z_step)
     R_base = [np.zeros(z.shape), np.zeros(z.shape), z / ALPHA]
     V_base = [np.zeros(z.shape), np.zeros(z.shape), np.zeros(z.shape)]
 
@@ -97,10 +110,11 @@ def run_method(obe, method_name, method_func):
 
     np.random.seed(SEED)
     t0 = time.perf_counter()
-    for ii in range(NPTS):
+    for ii in range(npts):
         offset = 2 * np.pi * (np.random.rand(3) - 0.5).reshape(3, 1)
         R_shifted = [R_base[j] + offset[j] for j in range(3)]
-        method_func(R_shifted, V_base, name='z_%d' % ii, **kw)
+        obe.generate_force_profile(R_shifted, V_base, name='z_%d' % ii,
+                                   backend=backend, **kw)
     elapsed = time.perf_counter() - t0
 
     F_all = np.array([
@@ -123,6 +137,135 @@ def run_method(obe, method_name, method_func):
 
     obe.profile.clear()
     return avgF, elapsed
+
+
+def _warmup_force_size(obe, z_step):
+    """Warm up JIT for both force profile backends at this grid size.
+
+    Must use the same deltat_r, deltat_tmax and npts_conv_divisor as
+    run_method so that the JIT is compiled for the correct shapes
+    (fixed_max_steps and Npts_conv).  itermax=1 keeps the warmup fast.
+    """
+    z = np.arange(-5.01, 5.01, z_step)
+    R0 = [np.zeros(z.shape), np.zeros(z.shape), z / ALPHA]
+    V0 = [np.zeros(z.shape), np.zeros(z.shape), np.zeros(z.shape)]
+    kw = dict(
+        deltat_tmax=2 * np.pi * 100,
+        deltat_r=4 / ALPHA,
+        itermax=1,
+        progress_bar=False,
+        npts_conv_divisor=1,
+    )
+    obe.generate_force_profile(R0, V0, backend='cpu', **kw)
+    obe.profile.clear()
+    obe.generate_force_profile(R0, V0, backend='gpu', **kw)
+    obe.profile.clear()
+
+
+def run_force_sweep(obe):
+    """Sweep over grid densities; return {n_pts: (t_cpu, t_gpu)}.
+
+    Each size is warmed up first so JIT cost is excluded from timing.
+    generate_force_profile_gpu auto-chunks internally via optimal_force_chunk_size
+    so large grids are handled without OOM.
+    """
+    results = {}
+    for z_step in FORCE_Z_STEPS:
+        n_pts = len(np.arange(-5.01, 5.01, z_step))
+        print(f"\n  --- {n_pts} grid points (step={z_step}) ---")
+        print(f"    Warming up...")
+        _warmup_force_size(obe, z_step)
+        _, t_cpu = run_method(obe, "CPU", 'cpu', z_step=z_step, npts=SWEEP_NPTS)
+        _, t_gpu = run_method(obe, "GPU", 'gpu', z_step=z_step, npts=SWEEP_NPTS)
+        results[n_pts] = (t_cpu, t_gpu)
+        print(f"    Speedup: {t_cpu / t_gpu:.2f}x")
+    return results
+
+
+def run_evolve_sweep(obe):
+    """Sweep over atom counts; return {n: (t_cpu_per_atom, t_gpu_per_atom)}.
+
+    CPU is measured only for EVOLVE_SWEEP_CPU_ATOMS (expensive at large N).
+    GPU is measured for EVOLVE_SWEEP_GPU_ATOMS.  Missing values are None.
+    A single warmup call is made before each new atom count so JIT cost is
+    not included in the measured time.
+    """
+    t_span = [0, 2 * np.pi * 500]
+    kw_cpu = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='cpu')
+    kw_gpu = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
+
+    all_counts = sorted(set(EVOLVE_SWEEP_CPU_ATOMS) | set(EVOLVE_SWEEP_GPU_ATOMS))
+    results = {n: [None, None] for n in all_counts}
+
+    for n in all_counts:
+        y0_list = make_y0_list(obe, n)
+        y0_batch = jnp.stack(y0_list)
+        keys = jax.random.split(jax.random.PRNGKey(SEED), n)
+        print(f"\n  --- {n} atoms ---")
+
+        if n in EVOLVE_SWEEP_CPU_ATOMS:
+            # Warmup
+            obe.evolve_motion(t_span, y0_batch=y0_batch[:min(n, 2)],
+                              keys_batch=keys[:min(n, 2)], **kw_cpu)
+            t0 = time.perf_counter()
+            obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw_cpu)
+            t_cpu = (time.perf_counter() - t0) / n
+            results[n][0] = t_cpu
+            print(f"    CPU: {t_cpu:.4f}s/atom")
+
+        if n in EVOLVE_SWEEP_GPU_ATOMS:
+            # Warmup
+            obe.evolve_motion(t_span, y0_batch=y0_batch[:min(n, 2)],
+                              keys_batch=keys[:min(n, 2)], **kw_gpu)
+            t0 = time.perf_counter()
+            obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw_gpu)
+            t_gpu = (time.perf_counter() - t0) / n
+            results[n][1] = t_gpu
+            print(f"    GPU: {t_gpu:.4f}s/atom")
+
+    return results
+
+
+def make_plots(force_data, evolve_data):
+    import matplotlib.pyplot as plt
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+
+    # --- Force profile ---
+    ns_f = sorted(force_data.keys())
+    t_cpu_f = [force_data[n][0] / SWEEP_NPTS for n in ns_f]
+    t_gpu_f = [force_data[n][1] / SWEEP_NPTS for n in ns_f]
+    ax1.plot(ns_f, t_cpu_f, 'o-', label='CPU')
+    ax1.plot(ns_f, t_gpu_f, 's-', label='GPU (vmap)')
+    ax1.set_xlabel('Grid points (N)')
+    ax1.set_ylabel('Time per realization (s)')
+    ax1.set_title('Force Profile: CPU vs GPU')
+    ax1.set_xscale('log')
+    ax1.set_yscale('log')
+    ax1.legend()
+    ax1.grid(True, which='both', ls='--', alpha=0.4)
+
+    # --- Evolve motion ---
+    ns_e = sorted(evolve_data.keys())
+    cpu_pts = [(n, evolve_data[n][0]) for n in ns_e if evolve_data[n][0] is not None]
+    gpu_pts = [(n, evolve_data[n][1]) for n in ns_e if evolve_data[n][1] is not None]
+    if cpu_pts:
+        ax2.plot(*zip(*cpu_pts), 'o-', label='Serial CPU')
+    if gpu_pts:
+        ax2.plot(*zip(*gpu_pts), 's-', label='GPU batched')
+    ax2.set_xlabel('Number of atoms (N)')
+    ax2.set_ylabel('Time per atom (s)')
+    ax2.set_title('Evolve Motion: CPU vs GPU')
+    ax2.set_xscale('log')
+    ax2.set_yscale('log')
+    ax2.legend()
+    ax2.grid(True, which='both', ls='--', alpha=0.4)
+
+    plt.tight_layout()
+    out = os.path.join(OUT_DIR, f'benchmark_cpu_vs_gpu_{_ts}.png')
+    plt.savefig(out, dpi=150, bbox_inches='tight')
+    print(f"\n  Plot saved to {out}")
+    plt.close()
 
 
 def warmup_evolve(obe):
@@ -310,7 +453,48 @@ def amdahl_speedup(p, n):
 
 
 if __name__ == '__main__':
-    print(f"Parameters: det={DET}, s={S}, alpha={ALPHA}")
+    import sys
+    import datetime
+
+    # Output directory: same folder as this script.
+    # Each run gets a timestamp suffix so multiple runs don't overwrite each other.
+    OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+    _ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
+    _log_path = os.path.join(OUT_DIR, f'benchmark_output_{_ts}.txt')
+    _log_file = open(_log_path, 'w')
+
+    class _Tee:
+        """Write to both stdout and the log file."""
+        def __init__(self, stream, log):
+            self._stream, self._log = stream, log
+        def write(self, data):
+            self._stream.write(data)
+            self._log.write(data)
+            self._log.flush()
+        def flush(self):
+            self._stream.flush()
+            self._log.flush()
+        def __getattr__(self, attr):
+            return getattr(self._stream, attr)
+
+    sys.stdout = _Tee(sys.stdout, _log_file)
+
+    print(f"Run started: {datetime.datetime.now().isoformat()}")
+
+    # Hardware info
+    print(f"\nHardware:")
+    print(f"  CPU cores (logical): {os.cpu_count()}")
+    _gpu_devs = [d for d in jax.devices() if d.platform == 'gpu']
+    _cpu_devs = [d for d in jax.devices() if d.platform == 'cpu']
+    for d in _gpu_devs:
+        mem = d.memory_stats()
+        print(f"  GPU: {d}  memory={mem['bytes_limit']/2**30:.1f} GiB")
+    if not _gpu_devs:
+        print(f"  GPU: none detected")
+    for d in _cpu_devs:
+        print(f"  CPU device: {d}")
+
+    print(f"\nParameters: det={DET}, s={S}, alpha={ALPHA}")
     print(f"Force profile realizations: {NPTS}, seed: {SEED}")
 
     obe = setup()
@@ -323,8 +507,8 @@ if __name__ == '__main__':
     print("\nWarming up JIT (force profile)...")
     warmup(obe)
 
-    avgF_cpu, t_cpu = run_method(obe, "CPU (generate_force_profile)", obe.generate_force_profile)
-    avgF_gpu, t_gpu = run_method(obe, "GPU (generate_force_profile_gpu)", obe.generate_force_profile_gpu)
+    avgF_cpu, t_cpu = run_method(obe, "CPU (backend='cpu')", 'cpu')
+    avgF_gpu, t_gpu = run_method(obe, "GPU (backend='gpu')", 'gpu')
 
     diff = avgF_cpu - avgF_gpu
     print(f"\n  Force Profile Comparison:")
@@ -349,12 +533,11 @@ if __name__ == '__main__':
     print(f"\n  state_dim={state_dim}, optimal GPU batch size: {n_batched}")
 
     # Build all y0s once with a fixed seed.
-    # pathos_y0: max(PATHOS_CORE_COUNTS) * N_ATOMS_PER_WORKER atoms — same list
-    # reused for every core-count run so wall-times are directly comparable.
+    # pathos_y0: N_PATHOS_ATOMS atoms (fixed, independent of PATHOS_CORE_COUNTS)
+    # reused across all core-count runs so wall-times are directly comparable.
     # GPU batch uses n_batched atoms; first N_SERIAL shared for numeric check.
-    n_pathos_atoms = max(PATHOS_CORE_COUNTS) * N_ATOMS_PER_WORKER
-    all_y0    = make_y0_list(obe, max(n_batched, n_pathos_atoms))
-    pathos_y0 = all_y0[:n_pathos_atoms]
+    all_y0    = make_y0_list(obe, max(n_batched, N_PATHOS_ATOMS))
+    pathos_y0 = all_y0[:N_PATHOS_ATOMS]
     gpu_y0    = all_y0[:n_batched]
 
     t_per_atom_serial, z_serial = run_serial(obe, pathos_y0)
@@ -379,32 +562,37 @@ if __name__ == '__main__':
     #
     # S(n) = 1 / ((1 - p) + p/n)
     #
-    # For each measurement at n_i cores with speedup S_i:
-    #   p_i = (1 - 1/S_i) / (1 - 1/n_i)
+    # Linearised form: let x = 1 - 1/n, y = 1 - 1/S  →  y = p·x
+    # Closed-form least-squares through the origin: p = Σ(xᵢ·yᵢ) / Σ(xᵢ²)
+    # This fits all measurements simultaneously and naturally down-weights
+    # low core counts (small x) which carry less information about p.
     #
-    # p is estimated as the mean of all p_i values (equal weight).
-    # More measurements give a more robust estimate of the serial fraction.
-    #
-    p_estimates = []
     measured_speedups = {}
+    xs, ys = [], []
     for n_cores, (t_pa, _) in pathos_results.items():
         s_i = t_per_atom_serial / t_pa
-        p_i = (1.0 - 1.0 / s_i) / (1.0 - 1.0 / n_cores)
-        p_estimates.append(float(np.clip(p_i, 0.0, 1.0)))
         measured_speedups[n_cores] = s_i
+        xs.append(1.0 - 1.0 / n_cores)
+        ys.append(1.0 - 1.0 / s_i)
 
-    p_parallel = float(np.mean(p_estimates))
+    xs, ys = np.array(xs), np.array(ys)
+    p_parallel = float(np.clip(np.dot(xs, ys) / np.dot(xs, xs), 0.0, 1.0))
 
     print(f"\n  Amdahl's Law (CPU parallel projection)")
     print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
-    print(f"  Per-measurement p estimates:")
-    for n_cores, p_i in zip(PATHOS_CORE_COUNTS, p_estimates):
-        print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x  p={p_i:.4f}")
-    print(f"  Mean p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
+    print(f"  Fit: linearised least-squares  p = Σ(xᵢyᵢ)/Σ(xᵢ²)  where x=1-1/n, y=1-1/S")
+    print(f"  Measurements used for fit:")
+    for n_cores in PATHOS_CORE_COUNTS:
+        print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x")
+    print(f"  Fitted p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
     print(f"\n  {'Cores':>8}  {'Predicted S':>12}  {'Time/atom (s)':>15}")
     print(f"  {'-'*8}  {'-'*12}  {'-'*15}")
     measured_set = set(PATHOS_CORE_COUNTS)
+    seen: set = set()
     for n in AMDAHL_CORE_COUNTS:
+        if n in seen:
+            continue
+        seen.add(n)
         s_pred = amdahl_speedup(p_parallel, n)
         t_pred = t_per_atom_serial / s_pred
         marker = f"  ← measured S={measured_speedups[n]:.2f}x" if n in measured_set else ""
@@ -413,3 +601,26 @@ if __name__ == '__main__':
     s_gpu = t_per_atom_serial / t_per_atom_batch
     print(f"\n  GPU batched speedup for reference: {s_gpu:.1f}x  "
           f"({t_per_atom_batch:.4f}s / atom)")
+
+    # --- Force profile sweep ---
+    print("\n" + "=" * 50)
+    print("  Force Profile Sweep (CPU vs GPU across grid sizes)")
+    print("=" * 50)
+    force_sweep = run_force_sweep(obe)
+
+    # --- Evolve motion sweep ---
+    print("\n" + "=" * 50)
+    print("  Evolve Motion Sweep (CPU vs GPU across atom counts)")
+    print("=" * 50)
+    evolve_sweep = run_evolve_sweep(obe)
+
+    # --- Plots ---
+    print("\n" + "=" * 50)
+    print("  Generating plots")
+    print("=" * 50)
+    make_plots(force_sweep, evolve_sweep)
+
+    print(f"\nRun finished: {datetime.datetime.now().isoformat()}")
+    print(f"Output saved to {_log_path}")
+    sys.stdout = sys.stdout._stream
+    _log_file.close()
