@@ -2,22 +2,58 @@
 Benchmark: CPU vs GPU methods for force profile and evolve motion.
 
 Force profile: generate_force_profile (CPU) vs generate_force_profile_gpu (GPU vmap).
-Evolve motion: single-atom vs batched evolve_motion.
+Evolve motion: serial (N_SERIAL atoms) vs pathos CPU parallel vs GPU batched.
+
+Speedup is reported as time-per-atom so the runs don't need equal atom counts.
+
+Amdahl's Law estimate
+---------------------
+From the measured serial and pathos wall times we estimate the parallelizable
+fraction p of the workload and project to arbitrary core counts:
+
+    S(n) = 1 / ((1 - p) + p/n)
+
+where n is the number of cores and p is solved from the two measurements:
+
+    S_measured = T_serial / T_pathos(n_test)
+    p = (1 - 1/S_measured) / (1 - 1/n_test)
+
+Each pathos worker is a fresh process that JIT-compiles on its first atom call.
+Workers are given N_ATOMS_PER_WORKER atoms each so that JIT overhead is
+amortised over real work.  Wall time reflects realistic CPU parallel throughput.
 
 Uses the notebook 03 parameters (alpha=1e-4, det=-2.5, s=1.25).
 """
+import os
+
+# Must happen before pylcp/jax are imported.  When multiprocess spawns a worker
+# it re-executes this file; the _PYLCP_BENCH_WORKER flag (set by run_pathos
+# before pool creation) tells us to pin JAX to CPU so workers never touch GPU.
+if os.environ.get('_PYLCP_BENCH_WORKER') == '1':
+    os.environ['JAX_PLATFORMS'] = 'cpu'
+
 import time
 import numpy as np
 import pylcp
+from pylcp.integration_tools_gpu import optimal_batch_size
 import jax
 import jax.numpy as jnp
 
 DET = -2.5
 S = 1.25
 ALPHA = 1e-4
-NPTS = 4  # force profile realizations
-N_ATOMS = 16  # evolve motion atoms
+NPTS = 4           # force profile realizations
+N_SERIAL = 4              # atoms for serial (shared y0s used for numeric check)
+PATHOS_CORE_COUNTS = [2, 4, 8]  # all core counts measured; p fitted from all three
+# Each worker handles this many atoms so JIT overhead is amortised over real work.
+# Total pathos atoms = max(PATHOS_CORE_COUNTS) * N_ATOMS_PER_WORKER; same atoms
+# are reused across all core-count runs so timings are directly comparable.
+N_ATOMS_PER_WORKER = 4
 SEED = 42
+MAX_STEPS = 10000
+
+# Core counts to project via Amdahl's Law
+AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, os.cpu_count()]
 
 
 def setup():
@@ -37,7 +73,7 @@ def setup():
 
 
 def warmup(obe):
-    """JIT warmup for both methods."""
+    """JIT warmup for both force profile methods."""
     R0 = [np.array([0.]), np.array([0.]), np.array([0.])]
     V0 = [np.array([0.]), np.array([0.]), np.array([0.])]
     obe.generate_force_profile(R0, V0, deltat=1., itermax=1)
@@ -92,62 +128,190 @@ def run_method(obe, method_name, method_func):
 def warmup_evolve(obe):
     """JIT warmup for evolve_motion (single and batched)."""
     rho0 = jnp.array(obe.rho0)
-    v0 = jnp.zeros(3)
-    r0 = jnp.zeros(3)
-    y0 = jnp.concatenate([rho0, v0, r0])
+    y0 = jnp.concatenate([rho0, jnp.zeros(3), jnp.zeros(3)])
 
-    # Single atom
     obe.evolve_motion([0, 100], y0_batch=y0[jnp.newaxis, :],
-                      freeze_axis=[True, True, False], max_steps=200)
+                      freeze_axis=[True, True, False], max_steps=200, backend='cpu')
 
-    # Batch of 2
     y0_batch = jnp.stack([y0, y0])
     keys = jax.random.split(jax.random.PRNGKey(0), 2)
     obe.evolve_motion([0, 100], y0_batch=y0_batch, keys_batch=keys,
-                      freeze_axis=[True, True, False], max_steps=200)
+                      freeze_axis=[True, True, False], max_steps=200, backend='gpu')
 
 
-def run_evolve_motion(obe, label, n_atoms, batched=False):
-    """Benchmark evolve_motion: serial (one at a time) vs batched."""
+def make_y0_list(obe, n_atoms):
     np.random.seed(SEED)
+    rho0 = jnp.array(obe.rho0)
+    r_init = np.random.uniform(-2 / ALPHA, 2 / ALPHA, size=(n_atoms, 3))
+    r_init[:, :2] = 0.
+    y0_list = [
+        jnp.concatenate([rho0, jnp.zeros(3), jnp.array(r_init[i])])
+        for i in range(n_atoms)
+    ]
+    return y0_list
+
+
+def run_serial(obe, y0_list):
+    """Run atoms one at a time via backend='cpu'; return (time_per_atom, final_z)."""
+    n_atoms = len(y0_list)
+    kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='cpu')
     t_span = [0, 2 * np.pi * 500]
 
-    rho0 = jnp.array(obe.rho0)
-    # Random initial positions within MOT capture range
-    r_init = np.random.uniform(-2 / ALPHA, 2 / ALPHA, size=(n_atoms, 3))
-    r_init[:, :2] = 0.  # only z displacement
-    v_init = np.zeros((n_atoms, 3))
-
-    y0_list = []
-    for i in range(n_atoms):
-        y0 = jnp.concatenate([rho0, jnp.array(v_init[i]), jnp.array(r_init[i])])
-        y0_list.append(y0)
-
-    kw = dict(freeze_axis=[True, True, False], max_steps=10000)
+    y0_batch = jnp.stack(y0_list)
+    keys = jax.random.split(jax.random.PRNGKey(SEED), n_atoms)
 
     t0 = time.perf_counter()
-    if batched:
-        y0_batch = jnp.stack(y0_list)
-        keys = jax.random.split(jax.random.PRNGKey(SEED), n_atoms)
-        obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw)
-        final_z = np.array([sol.r[2, -1] for sol in obe.sols])
-    else:
-        final_z = np.zeros(n_atoms)
-        for i in range(n_atoms):
-            obe.evolve_motion(t_span, y0_batch=y0_list[i][jnp.newaxis, :], **kw)
-            final_z[i] = float(obe.sol.r[2, -1])
+    obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw)
     elapsed = time.perf_counter() - t0
 
-    print(f"\n  {label} ({n_atoms} atoms):")
-    print(f"    Time:       {elapsed:.1f}s")
-    print(f"    Final z:    mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
+    final_z = np.array([sol.r[2, -1] for sol in obe.sols])
+    time_per_atom = elapsed / n_atoms
+    print(f"\n  Serial CPU ({n_atoms} atoms, backend='cpu'):")
+    print(f"    Total time:      {elapsed:.1f}s")
+    print(f"    Time per atom:   {time_per_atom:.3f}s")
+    print(f"    Final z:         mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
+    return time_per_atom, final_z
 
-    return final_z, elapsed
+
+def run_batched(obe, y0_list):
+    """Run atoms in one GPU-batched call via backend='gpu'; return (time_per_atom, final_z)."""
+    n_atoms = len(y0_list)
+    kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
+    t_span = [0, 2 * np.pi * 500]
+
+    y0_batch = jnp.stack(y0_list)
+    keys = jax.random.split(jax.random.PRNGKey(SEED), n_atoms)
+
+    t0 = time.perf_counter()
+    obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw)
+    elapsed = time.perf_counter() - t0
+
+    final_z = np.array([sol.r[2, -1] for sol in obe.sols])
+    time_per_atom = elapsed / n_atoms
+    print(f"\n  Batched GPU ({n_atoms} atoms):")
+    print(f"    Total time:      {elapsed:.1f}s")
+    print(f"    Time per atom:   {time_per_atom:.3f}s")
+    print(f"    Final z:         mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
+    return time_per_atom, final_z
+
+
+# ---------------------------------------------------------------------------
+# Pathos worker — must be a module-level function so dill can pickle it.
+# Each worker process is fresh: it builds its own obe and JIT-compiles on the
+# first evolve_motion call.  That overhead is included deliberately.
+# ---------------------------------------------------------------------------
+def _pathos_worker(y0_batch_np):
+    """Run a batch of atom trajectories in a worker process; return list of final z.
+
+    Accepts a list of numpy arrays (one per atom) and runs them sequentially.
+    Building obe and the first evolve_motion call trigger JIT compilation; that
+    cost is amortised over all atoms in the batch.  JAX_PLATFORMS=cpu is already
+    set at module-import time via the _PYLCP_BENCH_WORKER env flag.
+    """
+    import numpy as _np
+    import pylcp as _pylcp
+    import jax.numpy as _jnp
+
+    Hg, Bgq = _pylcp.hamiltonians.singleF(F=0, gF=0, muB=1)
+    He, Beq = _pylcp.hamiltonians.singleF(F=1, gF=1, muB=1)
+    dijq = _pylcp.hamiltonians.dqij_two_bare_hyperfine(0, 1)
+    hamiltonian = _pylcp.hamiltonian(
+        Hg, -DET * _np.eye(3) + He, Bgq, Beq, dijq, mass=100
+    )
+    laserBeams = _pylcp.conventional3DMOTBeams(
+        s=S, delta=0., beam_type=_pylcp.infinitePlaneWaveBeam
+    )
+    obe = _pylcp.obe(laserBeams, _pylcp.quadrupoleMagneticField(ALPHA),
+                     hamiltonian, transform_into_re_im=True)
+    obe.set_initial_rho_equally()
+
+    results = []
+    for y0_np in y0_batch_np:
+        y0 = _jnp.array(y0_np)
+        obe.evolve_motion(
+            [0, 2 * _np.pi * 500],
+            y0_batch=y0[_jnp.newaxis, :],
+            freeze_axis=[True, True, False],
+            max_steps=MAX_STEPS,
+            backend='cpu',
+        )
+        results.append(float(obe.sol.r[2, -1]))
+    return results
+
+
+def run_pathos(y0_list, n_cores):
+    """Run atoms in parallel using pathos; return (time_per_atom, final_z).
+
+    Atoms are split evenly across n_cores workers.  Each worker runs its chunk
+    sequentially so JIT-compile overhead (~10s) is paid once per worker and
+    amortised over N_ATOMS_PER_WORKER atoms.
+
+    _PYLCP_BENCH_WORKER=1 is set before pool creation; spawned children inherit
+    it and the module-level guard sets JAX_PLATFORMS=cpu before pylcp imports,
+    preventing GPU init in workers while the parent holds all GPU memory.
+    """
+    import multiprocess
+    multiprocess.set_start_method('spawn', force=True)
+    from pathos.multiprocessing import ProcessPool
+
+    n_atoms = len(y0_list)
+    # Convert to plain numpy so dill can serialise without JAX device refs.
+    y0_np_list = [np.array(y0) for y0 in y0_list]
+
+    # Split atoms into n_cores chunks (one per worker).
+    chunks = [y0_np_list[i::n_cores] for i in range(n_cores)]
+
+    # Set worker flag before spawning so children inherit it.
+    os.environ['_PYLCP_BENCH_WORKER'] = '1'
+    pool = ProcessPool(nodes=n_cores)
+    try:
+        t0 = time.perf_counter()
+        results_nested = pool.map(_pathos_worker, chunks)
+        elapsed = time.perf_counter() - t0
+    finally:
+        # Always terminate and join workers so no stale processes are left
+        # holding XLA thread pools after a crash or exception.
+        pool.terminate()
+        pool.join()
+        pool.clear()
+        os.environ.pop('_PYLCP_BENCH_WORKER', None)
+
+    # Reassemble: chunks[i][j] → atom index i + j*n_cores
+    final_z = np.empty(n_atoms)
+    for i, chunk_results in enumerate(results_nested):
+        for j, z in enumerate(chunk_results):
+            final_z[i + j * n_cores] = z
+
+    time_per_atom = elapsed / n_atoms
+    print(f"\n  Pathos CPU ({n_atoms} atoms, {n_cores} cores, {n_atoms//n_cores} atoms/worker):")
+    print(f"    Total time:      {elapsed:.1f}s")
+    print(f"    Time per atom:   {time_per_atom:.3f}s")
+    print(f"    Final z:         mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
+    return time_per_atom, final_z
+
+
+def amdahl_speedup(p, n):
+    """Amdahl's Law: predicted speedup for n cores given parallelisable fraction p.
+
+    Formula
+    -------
+        S(n) = 1 / ((1 - p) + p / n)
+
+    where:
+        p  — fraction of work that can run in parallel  (0 ≤ p ≤ 1)
+        n  — number of cores
+        S  — wall-time speedup relative to 1 core
+
+    Solving for p from two measurements (serial T_1 and parallel T_n):
+        S_measured = T_1 / T_n
+        p = (1 - 1 / S_measured) / (1 - 1 / n)
+    """
+    return 1.0 / ((1.0 - p) + p / n)
 
 
 if __name__ == '__main__':
     print(f"Parameters: det={DET}, s={S}, alpha={ALPHA}")
-    print(f"Realizations: {NPTS}, seed: {SEED}, atoms: {N_ATOMS}")
+    print(f"Force profile realizations: {NPTS}, seed: {SEED}")
 
     obe = setup()
 
@@ -176,11 +340,76 @@ if __name__ == '__main__':
     print("\nWarming up JIT (evolve motion)...")
     warmup_evolve(obe)
 
-    z_serial, t_serial = run_evolve_motion(obe, "Serial", N_ATOMS, batched=False)
-    z_batch, t_batch = run_evolve_motion(obe, "Batched", N_ATOMS, batched=True)
+    # Determine optimal GPU batch size from live memory after warmup.
+    # state_dim is exact: rho0 length (set by obe internals) + v(3) + r(3).
+    state_dim = len(obe.rho0) + 6
+    n_batched = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
+    if n_batched is None:
+        n_batched = 64  # CPU fallback
+    print(f"\n  state_dim={state_dim}, optimal GPU batch size: {n_batched}")
 
-    zdiff = z_serial - z_batch
-    print(f"\n  Evolve Motion Comparison:")
-    print(f"    Speedup:         {t_serial/t_batch:.2f}x")
-    print(f"    Max |z diff|:    {np.max(np.abs(zdiff)):.4e}")
-    print(f"    Mean |z diff|:   {np.mean(np.abs(zdiff)):.4e}")
+    # Build all y0s once with a fixed seed.
+    # pathos_y0: max(PATHOS_CORE_COUNTS) * N_ATOMS_PER_WORKER atoms — same list
+    # reused for every core-count run so wall-times are directly comparable.
+    # GPU batch uses n_batched atoms; first N_SERIAL shared for numeric check.
+    n_pathos_atoms = max(PATHOS_CORE_COUNTS) * N_ATOMS_PER_WORKER
+    all_y0    = make_y0_list(obe, max(n_batched, n_pathos_atoms))
+    pathos_y0 = all_y0[:n_pathos_atoms]
+    gpu_y0    = all_y0[:n_batched]
+
+    t_per_atom_serial, z_serial = run_serial(obe, pathos_y0)
+
+    # Run pathos at each core count; collect (n_cores, t_per_atom, z).
+    pathos_results = {}
+    for n_cores in PATHOS_CORE_COUNTS:
+        t_pa, z_pa = run_pathos(pathos_y0, n_cores)
+        pathos_results[n_cores] = (t_pa, z_pa)
+
+    t_per_atom_batch, z_batch = run_batched(obe, gpu_y0)
+
+    # --- Numerical check (first N_SERIAL atoms identical across all runs) ---
+    print(f"\n  Numerical check (first {N_SERIAL} atoms vs serial):")
+    for n_cores, (_, z_pa) in pathos_results.items():
+        diff = np.max(np.abs(z_serial[:N_SERIAL] - z_pa[:N_SERIAL]))
+        print(f"    Pathos {n_cores:>2} cores  max|z diff|:  {diff:.4e}")
+    zdiff_gpu = z_serial[:N_SERIAL] - z_batch[:N_SERIAL]
+    print(f"    GPU             max|z diff|:  {np.max(np.abs(zdiff_gpu)):.4e}")
+
+    # --- Amdahl's Law projection ---
+    #
+    # S(n) = 1 / ((1 - p) + p/n)
+    #
+    # For each measurement at n_i cores with speedup S_i:
+    #   p_i = (1 - 1/S_i) / (1 - 1/n_i)
+    #
+    # p is estimated as the mean of all p_i values (equal weight).
+    # More measurements give a more robust estimate of the serial fraction.
+    #
+    p_estimates = []
+    measured_speedups = {}
+    for n_cores, (t_pa, _) in pathos_results.items():
+        s_i = t_per_atom_serial / t_pa
+        p_i = (1.0 - 1.0 / s_i) / (1.0 - 1.0 / n_cores)
+        p_estimates.append(float(np.clip(p_i, 0.0, 1.0)))
+        measured_speedups[n_cores] = s_i
+
+    p_parallel = float(np.mean(p_estimates))
+
+    print(f"\n  Amdahl's Law (CPU parallel projection)")
+    print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
+    print(f"  Per-measurement p estimates:")
+    for n_cores, p_i in zip(PATHOS_CORE_COUNTS, p_estimates):
+        print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x  p={p_i:.4f}")
+    print(f"  Mean p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
+    print(f"\n  {'Cores':>8}  {'Predicted S':>12}  {'Time/atom (s)':>15}")
+    print(f"  {'-'*8}  {'-'*12}  {'-'*15}")
+    measured_set = set(PATHOS_CORE_COUNTS)
+    for n in AMDAHL_CORE_COUNTS:
+        s_pred = amdahl_speedup(p_parallel, n)
+        t_pred = t_per_atom_serial / s_pred
+        marker = f"  ← measured S={measured_speedups[n]:.2f}x" if n in measured_set else ""
+        print(f"  {n:>8}  {s_pred:>12.2f}  {t_pred:>15.3f}{marker}")
+
+    s_gpu = t_per_atom_serial / t_per_atom_batch
+    print(f"\n  GPU batched speedup for reference: {s_gpu:.1f}x  "
+          f"({t_per_atom_batch:.4f}s / atom)")
