@@ -269,6 +269,37 @@ def _batched_random_trajectories(
     
     return jax.vmap(single_trajectory)(y0_batch, keys_batch)
 
+def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
+    """Return the largest batch size that fits in available GPU memory.
+
+    Estimates peak per-atom allocation inside ``_batched_random_trajectories``
+    and divides the currently free device memory (with a safety margin) by that
+    figure.  Call this *after* JIT warm-up so that JAX's internal pool is
+    already reflected in ``bytes_in_use``.
+
+    Args:
+        state_dim (int): Length of the per-atom state vector (``y0.shape[-1]``).
+        max_steps (int): Outer buffer size passed to the solver.
+        inner_max_steps (int, optional): Inner diffrax buffer size. Defaults to 64.
+        safety (float, optional): Fraction of free memory to use. Defaults to 0.6
+            to leave headroom for XLA workspace and compilation buffers.
+
+    Returns:
+        int: Recommended batch size, or ``None`` if no GPU is present.
+    """
+    gpu_devices = [d for d in jax.devices() if d.platform == 'gpu']
+    if not gpu_devices:
+        return None
+    stats = gpu_devices[0].memory_stats()
+    free_bytes = stats['bytes_limit'] - stats['bytes_in_use']
+    # Each atom pre-allocates:
+    #   outer ts:  (max_steps,)           float64 → 8 bytes each
+    #   outer ys:  (max_steps, state_dim) float64
+    #   inner ys:  (inner_max_steps, state_dim) float64 (per diffrax call)
+    bytes_per_atom = 8 * (max_steps * (1 + state_dim) + inner_max_steps * state_dim)
+    return max(1, int(free_bytes * safety / bytes_per_atom))
+
+
 def solve_ivp_random(
     fun,
     random_func,
@@ -360,7 +391,11 @@ def solve_ivp_random(
     if inner_max_steps is None:
         inner_max_steps = max_steps
 
-    if batch_size is None or batch_size >= N:
+    if batch_size is None:
+        state_dim = y0_batch.shape[-1]
+        batch_size = optimal_batch_size(state_dim, max_steps, inner_max_steps) or N
+
+    if batch_size >= N:
         # Single batch — all atoms at once.
         batched_state = _batched_random_trajectories(
             fun, random_func, t0, tf,
