@@ -4,16 +4,44 @@ import jax
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 import functools
+from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
 from diffrax import (
     diffeqsolve,
-    ODETerm, 
-    Dopri5, 
-    Bosh3, 
-    Kvaerno5, 
-    SaveAt, 
+    ODETerm,
+    Dopri5,
+    Bosh3,
+    Kvaerno5,
+    SaveAt,
     PIDController,
     LinearInterpolation
 )
+
+
+def _gpu_devices():
+    """Return all available GPU devices on this node."""
+    return [d for d in jax.devices() if d.platform == 'gpu']
+
+
+def _shard_batch(arr, gpu_devs):
+    """Shard ``arr`` along axis 0 across ``gpu_devs``.
+
+    Pads the batch dimension to be evenly divisible by ``len(gpu_devs)``
+    if necessary.  Returns ``(sharded_arr, original_N)``.
+    """
+    n_gpus = len(gpu_devs)
+    if n_gpus <= 1:
+        return arr, arr.shape[0]
+
+    N = arr.shape[0]
+    remainder = N % n_gpus
+    if remainder != 0:
+        pad_size = n_gpus - remainder
+        pad_shape = (pad_size,) + arr.shape[1:]
+        arr = jnp.concatenate([arr, jnp.zeros(pad_shape, dtype=arr.dtype)])
+
+    mesh = Mesh(gpu_devs, axis_names=('batch',))
+    sharding = NamedSharding(mesh, P('batch'))
+    return jax.device_put(arr, sharding), N
 
 
 def _ensure_3arg(func):
@@ -270,12 +298,16 @@ def _batched_random_trajectories(
     return jax.vmap(single_trajectory)(y0_batch, keys_batch)
 
 def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
-    """Return the largest batch size that fits in available GPU memory.
+    """Return the largest batch size that fits across all available GPUs.
 
     Estimates peak per-atom allocation inside ``_batched_random_trajectories``
-    and divides the currently free device memory (with a safety margin) by that
-    figure.  Call this *after* JIT warm-up so that JAX's internal pool is
-    already reflected in ``bytes_in_use``.
+    and computes how many atoms each GPU can hold.  When multiple GPUs are
+    present the total batch size is the per-GPU capacity multiplied by the
+    number of devices (using the minimum free memory across GPUs in case
+    they are not identical).
+
+    Call this *after* JIT warm-up so that JAX's internal pool is already
+    reflected in ``bytes_in_use``.
 
     Args:
         state_dim (int): Length of the per-atom state vector (``y0.shape[-1]``).
@@ -285,19 +317,27 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
             to leave headroom for XLA workspace and compilation buffers.
 
     Returns:
-        int: Recommended batch size, or ``None`` if no GPU is present.
+        int: Recommended total batch size, or ``None`` if no GPU is present.
     """
-    gpu_devices = [d for d in jax.devices() if d.platform == 'gpu']
-    if not gpu_devices:
+    gpu_devs = _gpu_devices()
+    if not gpu_devs:
         return None
-    stats = gpu_devices[0].memory_stats()
-    free_bytes = stats['bytes_limit'] - stats['bytes_in_use']
+    # Use the minimum free memory across all GPUs (handles heterogeneous setups).
+    free_per_gpu = []
+    for dev in gpu_devs:
+        stats = dev.memory_stats()
+        if stats is None:
+            # Device does not support memory_stats (e.g. CPU).
+            return None
+        free_per_gpu.append(stats['bytes_limit'] - stats['bytes_in_use'])
+    min_free = min(free_per_gpu)
     # Each atom pre-allocates:
     #   outer ts:  (max_steps,)           float64 → 8 bytes each
     #   outer ys:  (max_steps, state_dim) float64
     #   inner ys:  (inner_max_steps, state_dim) float64 (per diffrax call)
     bytes_per_atom = 8 * (max_steps * (1 + state_dim) + inner_max_steps * state_dim)
-    return max(1, int(free_bytes * safety / bytes_per_atom))
+    per_gpu = max(1, int(min_free * safety / bytes_per_atom))
+    return per_gpu * len(gpu_devs)
 
 
 def solve_ivp_random(
@@ -395,33 +435,40 @@ def solve_ivp_random(
         state_dim = y0_batch.shape[-1]
         batch_size = optimal_batch_size(state_dim, max_steps, inner_max_steps) or N
 
-    if batch_size >= N:
-        # Single batch — all atoms at once.
+    gpu_devs = _gpu_devices()
+    n_gpus = len(gpu_devs)
+
+    def _run_chunk(y0_chunk, keys_chunk, chunk_N):
+        """Run a single chunk, sharding across GPUs if multiple are available."""
+        if n_gpus > 1:
+            y0_chunk, _ = _shard_batch(y0_chunk, gpu_devs)
+            keys_chunk, _ = _shard_batch(keys_chunk, gpu_devs)
         batched_state = _batched_random_trajectories(
             fun, random_func, t0, tf,
-            y0_batch, keys_batch,
+            y0_chunk, keys_chunk,
             max_steps, max_step, rtol, atol, dt0,
             solver_type, inner_max_steps,
         )
         return [
             RandomOdeResult(_batched_state=batched_state, _index=i, _tf=tf)
-            for i in range(N)
+            for i in range(chunk_N)
         ]
+
+    # When sharding across multiple GPUs, round chunk sizes up to be
+    # divisible by n_gpus so that _shard_batch padding is minimal.
+    if n_gpus > 1 and batch_size >= n_gpus:
+        batch_size = (batch_size // n_gpus) * n_gpus
+
+    if batch_size >= N:
+        return _run_chunk(y0_batch, keys_batch, N)
 
     # Chunked execution to limit peak memory.
     results = []
     for start in range(0, N, batch_size):
         end = min(start + batch_size, N)
-        chunk_state = _batched_random_trajectories(
-            fun, random_func, t0, tf,
-            y0_batch[start:end], keys_batch[start:end],
-            max_steps, max_step, rtol, atol, dt0,
-            solver_type, inner_max_steps,
-        )
-        for i in range(end - start):
-            results.append(
-                RandomOdeResult(_batched_state=chunk_state, _index=i, _tf=tf)
-            )
+        results.extend(_run_chunk(
+            y0_batch[start:end], keys_batch[start:end], end - start
+        ))
     return results
 
 
@@ -570,9 +617,26 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
     t0 = jnp.asarray(t_span[0], dtype=jnp.float64)
     t1 = jnp.asarray(t_span[1], dtype=jnp.float64)
     y0_batch = jnp.asarray(y0_batch)
+
+    # Shard across multiple GPUs when available.
+    gpu_devs = _gpu_devices()
+    if len(gpu_devs) > 1:
+        y0_batch, orig_N = _shard_batch(y0_batch, gpu_devs)
+        if jnp.ndim(t1) > 0:
+            t1, _ = _shard_batch(t1, gpu_devs)
+        if jnp.ndim(t0) > 0:
+            t0, _ = _shard_batch(t0, gpu_devs)
+    else:
+        orig_N = y0_batch.shape[0]
+
     ys, ts = _batched_dense_trajectories(
         func, t0, t1, y0_batch, n_points, max_steps, rtol, atol, solver_type, args
     )
+    # Strip padding atoms added by _shard_batch.
+    if ys.shape[0] > orig_N:
+        ys = ys[:orig_N]
+        if ts.ndim > 1:
+            ts = ts[:orig_N]
     return ts, ys
 
 

@@ -33,7 +33,9 @@ HAS_GPU = jax.default_backend() == 'gpu'
 if not HAS_GPU:
     warnings.warn(
         "No CUDA GPU detected by JAX — all GPU and CPU-vs-GPU tests will be "
-        "skipped.  Set XLA_FLAGS or install jax[cuda12] to enable them.",
+        "skipped.  Multi-device sharding tests (test_multi_device_sharding.py) "
+        "will still run using simulated CPU devices via XLA_FLAGS.  "
+        "Install jax[cuda12] to enable real GPU tests.",
         stacklevel=1,
     )
 
