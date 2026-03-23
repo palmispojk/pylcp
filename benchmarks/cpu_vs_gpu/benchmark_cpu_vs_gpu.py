@@ -67,6 +67,11 @@ PATHOS_CORE_COUNTS = [2, 4, 8]
 # Must be divisible by all entries in _ALL_PATHOS_CORE_COUNTS.
 N_ATOMS_PER_WORKER = 4
 N_PATHOS_ATOMS = 32  # fixed; divisible by 2, 4, 8, 16
+
+# Amdahl overhead sweep: run pathos at different atoms-per-worker counts to see
+# how JIT/spawn overhead is amortised.  Each level uses (atoms_per_worker * max_cores)
+# total atoms.  More atoms per worker → higher fitted p (less overhead).
+AMDAHL_ATOMS_PER_WORKER = [2, 4, 8, 16]
 SEED = 42
 MAX_STEPS = 10000
 
@@ -352,6 +357,117 @@ def amdahl_speedup(p, n):
     return 1.0 / ((1.0 - p) + p / n)
 
 
+def fit_amdahl_p(t_per_atom_serial, pathos_results):
+    """Fit parallelisable fraction p from pathos measurements.
+
+    Args:
+        t_per_atom_serial: Serial time per atom.
+        pathos_results: dict {n_cores: (t_per_atom, final_z)}.
+
+    Returns:
+        (p, measured_speedups) or (None, {}) if fewer than 2 measurements.
+    """
+    if len(pathos_results) < 2:
+        return None, {}
+    measured_speedups = {}
+    xs, ys = [], []
+    for n_cores, (t_pa, _) in pathos_results.items():
+        s_i = t_per_atom_serial / t_pa
+        measured_speedups[n_cores] = s_i
+        xs.append(1.0 - 1.0 / n_cores)
+        ys.append(1.0 - 1.0 / s_i)
+    xs, ys = np.array(xs), np.array(ys)
+    p = float(np.clip(np.dot(xs, ys) / np.dot(xs, xs), 0.0, 1.0))
+    return p, measured_speedups
+
+
+def run_amdahl_overhead_sweep(obe):
+    """Run pathos at multiple atoms-per-worker levels to show overhead amortisation.
+
+    For each level in AMDAHL_ATOMS_PER_WORKER, runs all PATHOS_CORE_COUNTS and
+    fits a separate p.  Each level gets its own serial baseline so the
+    comparison is fair at that atom count.
+
+    Returns:
+        list of (atoms_per_worker, p, measured_speedups) tuples.
+    """
+    max_cores = max(PATHOS_CORE_COUNTS)
+    results = []
+
+    for apw in AMDAHL_ATOMS_PER_WORKER:
+        n_total = apw * max_cores
+        print(f"\n  --- Amdahl sweep: {apw} atoms/worker, {n_total} total atoms ---")
+        y0_list = make_y0_list(obe, n_total)
+
+        # Serial baseline at this atom count.
+        t_serial, _ = run_serial(obe, y0_list)
+
+        pathos_res = {}
+        try:
+            for n_cores in PATHOS_CORE_COUNTS:
+                t_pa, z_pa = run_pathos(y0_list, n_cores)
+                pathos_res[n_cores] = (t_pa, z_pa)
+        except Exception as e:
+            print(f"    Pathos failed at {n_cores} cores: {e}")
+
+        p, speedups = fit_amdahl_p(t_serial, pathos_res)
+        if p is not None:
+            print(f"    Fitted p = {p:.4f}  ({p*100:.1f}% parallel)")
+            results.append((apw, p, speedups))
+        else:
+            print(f"    Not enough data to fit p (got {len(pathos_res)} measurements)")
+
+    return results
+
+
+def make_amdahl_plot(amdahl_sweep_results, out_dir, ts):
+    """Plot Amdahl's Law curves for different atoms-per-worker levels."""
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
+
+    if not amdahl_sweep_results:
+        print("  No Amdahl sweep data to plot.")
+        return
+
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    core_range = np.array([1, 2, 4, 8, 16, 32, 64, 128, 256])
+    colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(amdahl_sweep_results)))
+
+    # --- Left panel: Amdahl curves ---
+    for (apw, p, speedups), color in zip(amdahl_sweep_results, colors):
+        predicted = [amdahl_speedup(p, n) for n in core_range]
+        ax1.plot(core_range, predicted, '-', color=color, lw=2,
+                 label=f'{apw} atoms/worker (p={p:.3f})')
+        # Overlay measured points.
+        for nc, s in speedups.items():
+            ax1.plot(nc, s, 'o', color=color, markersize=7, zorder=5)
+
+    ax1.set_xlabel('Number of cores')
+    ax1.set_ylabel('Speedup S(n)')
+    ax1.set_title("Amdahl's Law: Overhead Amortisation")
+    ax1.set_xscale('log', base=2)
+    ax1.legend(fontsize=9)
+    ax1.grid(True, which='both', ls='--', alpha=0.4)
+
+    # --- Right panel: p vs atoms/worker ---
+    apws = [r[0] for r in amdahl_sweep_results]
+    ps = [r[1] for r in amdahl_sweep_results]
+    ax2.plot(apws, [p * 100 for p in ps], 'o-', color='tab:blue', markersize=8, lw=2)
+    ax2.set_xlabel('Atoms per worker')
+    ax2.set_ylabel('Parallelisable fraction p (%)')
+    ax2.set_title('Overhead vs Work per Worker')
+    ax2.set_xscale('log', base=2)
+    ax2.set_ylim(0, 105)
+    ax2.grid(True, which='both', ls='--', alpha=0.4)
+
+    plt.tight_layout()
+    out = os.path.join(out_dir, f'benchmark_amdahl_overhead_{ts}.png')
+    plt.savefig(out, dpi=150, bbox_inches='tight')
+    print(f"\n  Amdahl overhead plot saved to {out}")
+    plt.close()
+
+
 if __name__ == '__main__':
     import sys
     import datetime
@@ -453,31 +569,14 @@ if __name__ == '__main__':
     zdiff_gpu = z_serial[:N_SERIAL] - z_batch[:N_SERIAL]
     print(f"    GPU             max|z diff|:  {np.max(np.abs(zdiff_gpu)):.4e}")
 
-    # --- Amdahl's Law projection ---
-    #
-    # S(n) = 1 / ((1 - p) + p/n)
-    #
-    # Linearised form: let x = 1 - 1/n, y = 1 - 1/S  →  y = p·x
-    # Closed-form least-squares through the origin: p = Σ(xᵢ·yᵢ) / Σ(xᵢ²)
-    # This fits all measurements simultaneously and naturally down-weights
-    # low core counts (small x) which carry less information about p.
-    #
-    if len(pathos_results) >= 2:
-        measured_speedups = {}
-        xs, ys = [], []
-        for n_cores, (t_pa, _) in pathos_results.items():
-            s_i = t_per_atom_serial / t_pa
-            measured_speedups[n_cores] = s_i
-            xs.append(1.0 - 1.0 / n_cores)
-            ys.append(1.0 - 1.0 / s_i)
+    # --- Amdahl's Law projection (baseline: N_ATOMS_PER_WORKER atoms/worker) ---
+    p_parallel, measured_speedups = fit_amdahl_p(t_per_atom_serial, pathos_results)
 
-        xs, ys = np.array(xs), np.array(ys)
-        p_parallel = float(np.clip(np.dot(xs, ys) / np.dot(xs, xs), 0.0, 1.0))
-
+    if p_parallel is not None:
         print(f"\n  Amdahl's Law (CPU parallel projection)")
         print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
         print(f"  Fit: linearised least-squares  p = Σ(xᵢyᵢ)/Σ(xᵢ²)  where x=1-1/n, y=1-1/S")
-        print(f"  Measurements used for fit:")
+        print(f"  Measurements used for fit ({N_ATOMS_PER_WORKER} atoms/worker):")
         for n_cores in sorted(pathos_results.keys()):
             print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x")
         print(f"  Fitted p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
@@ -500,6 +599,25 @@ if __name__ == '__main__':
     print(f"\n  GPU batched speedup for reference: {s_gpu:.1f}x  "
           f"({t_per_atom_batch:.4f}s / atom)")
 
+    # --- Amdahl overhead sweep ---
+    # Run pathos at multiple atoms-per-worker levels to see how JIT/spawn
+    # overhead is amortised.  Each level gets its own serial baseline and
+    # Amdahl fit, producing separate curves on the plot.
+    print("\n" + "=" * 50)
+    print("  Amdahl Overhead Sweep (varying atoms per worker)")
+    print("=" * 50)
+    print(f"  Atoms per worker levels: {AMDAHL_ATOMS_PER_WORKER}")
+    print(f"  Core counts per level:   {PATHOS_CORE_COUNTS}")
+    amdahl_sweep = run_amdahl_overhead_sweep(obe)
+
+    # Print summary table.
+    if amdahl_sweep:
+        print(f"\n  {'Atoms/worker':>13}  {'p':>7}  {'p (%)':>7}  {'Max speedup':>12}")
+        print(f"  {'-'*13}  {'-'*7}  {'-'*7}  {'-'*12}")
+        for apw, p, _ in amdahl_sweep:
+            s_max = 1.0 / (1.0 - p) if p < 1.0 else float('inf')
+            print(f"  {apw:>13}  {p:>7.4f}  {p*100:>6.1f}%  {s_max:>12.1f}x")
+
     # --- Evolve motion sweep ---
     print("\n" + "=" * 50)
     print("  Evolve Motion Sweep (CPU vs GPU across atom counts)")
@@ -511,6 +629,7 @@ if __name__ == '__main__':
     print("  Generating plots")
     print("=" * 50)
     make_plots(evolve_sweep)
+    make_amdahl_plot(amdahl_sweep, OUT_DIR, _ts)
 
     print(f"\nRun finished: {datetime.datetime.now().isoformat()}")
     print(f"Output saved to {_log_path}")

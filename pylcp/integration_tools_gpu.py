@@ -1,4 +1,6 @@
 import inspect
+import os
+import logging
 
 import jax
 jax.config.update("jax_enable_x64", True)
@@ -16,10 +18,66 @@ from diffrax import (
     LinearInterpolation
 )
 
+_log = logging.getLogger(__name__)
+
+# Enable verbose GPU diagnostics with PYLCP_GPU_DEBUG=1
+_GPU_DEBUG = os.environ.get('PYLCP_GPU_DEBUG', '0') == '1'
+
 
 def _gpu_devices():
     """Return all available GPU devices on this node."""
     return [d for d in jax.devices() if d.platform == 'gpu']
+
+
+def _gpu_device_info(gpu_devs=None):
+    """Return a list of per-GPU info dicts.
+
+    Each dict contains:
+        device, device_kind, process_index,
+        bytes_limit, bytes_in_use, peak_bytes_in_use, bytes_free
+    """
+    if gpu_devs is None:
+        gpu_devs = _gpu_devices()
+    info = []
+    for d in gpu_devs:
+        entry = {
+            'device': d,
+            'device_kind': getattr(d, 'device_kind', 'unknown'),
+            'process_index': getattr(d, 'process_index', 0),
+        }
+        stats = d.memory_stats()
+        if stats is not None:
+            entry['bytes_limit'] = stats['bytes_limit']
+            entry['bytes_in_use'] = stats['bytes_in_use']
+            entry['peak_bytes_in_use'] = stats['peak_bytes_in_use']
+            entry['bytes_free'] = stats['bytes_limit'] - stats['bytes_in_use']
+        else:
+            entry['bytes_limit'] = 0
+            entry['bytes_in_use'] = 0
+            entry['peak_bytes_in_use'] = 0
+            entry['bytes_free'] = 0
+        info.append(entry)
+    return info
+
+
+def _log_gpu_debug(gpu_devs=None, label=""):
+    """Print detailed GPU device info when PYLCP_GPU_DEBUG=1."""
+    if not _GPU_DEBUG:
+        return
+    infos = _gpu_device_info(gpu_devs)
+    prefix = f"[GPU DEBUG{': ' + label if label else ''}]"
+    _log.info(f"{prefix} {len(infos)} GPU(s) detected")
+    for i, info in enumerate(infos):
+        d = info['device']
+        _log.info(
+            f"{prefix}   GPU {i}: {d}"
+            f"  kind={info['device_kind']}"
+            f"  process={info['process_index']}"
+            f"  pool={info['bytes_limit']/2**30:.2f} GiB"
+            f"  in_use={info['bytes_in_use']/2**20:.1f} MiB"
+            f"  peak={info['peak_bytes_in_use']/2**20:.1f} MiB"
+            f"  free={info['bytes_free']/2**20:.1f} MiB"
+        )
 
 
 def _shard_batch(arr, gpu_devs):
@@ -34,10 +92,19 @@ def _shard_batch(arr, gpu_devs):
 
     N = arr.shape[0]
     remainder = N % n_gpus
+    pad_size = 0
     if remainder != 0:
         pad_size = n_gpus - remainder
         pad_shape = (pad_size,) + arr.shape[1:]
         arr = jnp.concatenate([arr, jnp.zeros(pad_shape, dtype=arr.dtype)])
+
+    if _GPU_DEBUG:
+        per_gpu = arr.shape[0] // n_gpus
+        _log.info(
+            f"[GPU DEBUG: _shard_batch] N={N}, n_gpus={n_gpus}, "
+            f"padded={pad_size}, per_gpu={per_gpu}, "
+            f"arr_shape={arr.shape}"
+        )
 
     mesh = Mesh(gpu_devs, axis_names=('batch',))
     sharding = NamedSharding(mesh, P('batch'))
@@ -297,6 +364,17 @@ def _batched_random_trajectories(
     
     return jax.vmap(single_trajectory)(y0_batch, keys_batch)
 
+def _bytes_per_atom(state_dim, max_steps, inner_max_steps=64):
+    """Estimated peak GPU allocation per atom in the batched solver.
+
+    Accounts for:
+        outer ts:  (max_steps,)                   float64
+        outer ys:  (max_steps, state_dim)          float64
+        inner ys:  (inner_max_steps, state_dim)    float64  (per diffrax call)
+    """
+    return 8 * (max_steps * (1 + state_dim) + inner_max_steps * state_dim)
+
+
 def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
     """Return the largest batch size that fits across all available GPUs.
 
@@ -322,22 +400,74 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
     gpu_devs = _gpu_devices()
     if not gpu_devs:
         return None
-    # Use the minimum free memory across all GPUs (handles heterogeneous setups).
-    free_per_gpu = []
-    for dev in gpu_devs:
-        stats = dev.memory_stats()
-        if stats is None:
-            # Device does not support memory_stats (e.g. CPU).
+
+    _log_gpu_debug(gpu_devs, "optimal_batch_size")
+
+    infos = _gpu_device_info(gpu_devs)
+    bpa = _bytes_per_atom(state_dim, max_steps, inner_max_steps)
+
+    # Per-GPU capacity.
+    capacities = []
+    for info in infos:
+        if info['bytes_limit'] == 0:
             return None
-        free_per_gpu.append(stats['bytes_limit'] - stats['bytes_in_use'])
-    min_free = min(free_per_gpu)
-    # Each atom pre-allocates:
-    #   outer ts:  (max_steps,)           float64 → 8 bytes each
-    #   outer ys:  (max_steps, state_dim) float64
-    #   inner ys:  (inner_max_steps, state_dim) float64 (per diffrax call)
-    bytes_per_atom = 8 * (max_steps * (1 + state_dim) + inner_max_steps * state_dim)
-    per_gpu = max(1, int(min_free * safety / bytes_per_atom))
-    return per_gpu * len(gpu_devs)
+        cap = max(1, int(info['bytes_free'] * safety / bpa))
+        capacities.append(cap)
+
+    if _GPU_DEBUG:
+        for i, (info, cap) in enumerate(zip(infos, capacities)):
+            _log.info(
+                f"[GPU DEBUG: optimal_batch_size]   GPU {i}: "
+                f"free={info['bytes_free']/2**20:.1f} MiB, "
+                f"capacity={cap} atoms "
+                f"({cap * bpa / 2**20:.1f} MiB at {bpa/2**20:.3f} MiB/atom)"
+            )
+
+    # Even sharding: limited by the smallest GPU.
+    min_cap = min(capacities)
+    total = min_cap * len(gpu_devs)
+
+    if _GPU_DEBUG and len(gpu_devs) > 1:
+        max_cap = max(capacities)
+        wasted = sum(c - min_cap for c in capacities)
+        _log.info(
+            f"[GPU DEBUG: optimal_batch_size]   Even-shard total: {total} atoms "
+            f"(min_cap={min_cap}, max_cap={max_cap}, "
+            f"wasted capacity={wasted} atoms across {len(gpu_devs)} GPUs)"
+        )
+
+    return total
+
+
+def optimal_batch_size_per_gpu(state_dim, max_steps, inner_max_steps=64, safety=0.6):
+    """Return per-GPU atom capacities for heterogeneous multi-GPU setups.
+
+    Unlike :func:`optimal_batch_size` which returns a single total capped by
+    the smallest GPU, this function returns each GPU's individual capacity so
+    callers can assign proportional work.
+
+    Args:
+        state_dim, max_steps, inner_max_steps, safety: Same as
+            :func:`optimal_batch_size`.
+
+    Returns:
+        list of (jax.Device, int) pairs, or ``None`` if no GPU is present.
+        The int is the number of atoms that GPU can handle.
+    """
+    gpu_devs = _gpu_devices()
+    if not gpu_devs:
+        return None
+
+    infos = _gpu_device_info(gpu_devs)
+    bpa = _bytes_per_atom(state_dim, max_steps, inner_max_steps)
+
+    result = []
+    for info in infos:
+        if info['bytes_limit'] == 0:
+            return None
+        cap = max(1, int(info['bytes_free'] * safety / bpa))
+        result.append((info['device'], cap))
+    return result
 
 
 def solve_ivp_random(
@@ -437,6 +567,14 @@ def solve_ivp_random(
 
     gpu_devs = _gpu_devices()
     n_gpus = len(gpu_devs)
+
+    if _GPU_DEBUG:
+        _log_gpu_debug(gpu_devs, "solve_ivp_random")
+        _log.info(
+            f"[GPU DEBUG: solve_ivp_random] N={N}, batch_size={batch_size}, "
+            f"n_gpus={n_gpus}, state_dim={y0_batch.shape[-1]}, "
+            f"max_steps={max_steps}"
+        )
 
     def _run_chunk(y0_chunk, keys_chunk, chunk_N):
         """Run a single chunk, sharding across GPUs if multiple are available."""
@@ -620,6 +758,13 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
 
     # Shard across multiple GPUs when available.
     gpu_devs = _gpu_devices()
+    if _GPU_DEBUG:
+        _log_gpu_debug(gpu_devs, "solve_ivp_dense")
+        _log.info(
+            f"[GPU DEBUG: solve_ivp_dense] N={y0_batch.shape[0]}, "
+            f"n_gpus={len(gpu_devs)}, state_dim={y0_batch.shape[-1]}, "
+            f"n_points={n_points}"
+        )
     if len(gpu_devs) > 1:
         y0_batch, orig_N = _shard_batch(y0_batch, gpu_devs)
         if jnp.ndim(t1) > 0:
