@@ -1,6 +1,7 @@
 """
 Tests for pylcp/obe.py
 """
+import warnings
 import pytest
 import numpy as np
 import jax
@@ -12,6 +13,21 @@ from pylcp.hamiltonian import hamiltonian
 from pylcp.fields import (laserBeams, laserBeam, constantMagneticField,
                           magField, infinitePlaneWaveBeam)
 from pylcp.obe import obe, force_profile
+
+
+# ---------------------------------------------------------------------------
+# GPU detection — single warning for all skipped GPU tests
+# ---------------------------------------------------------------------------
+
+HAS_GPU = jax.default_backend() == 'gpu'
+if not HAS_GPU:
+    warnings.warn(
+        "No CUDA GPU detected by JAX — all GPU and CPU-vs-GPU OBE tests "
+        "will be skipped.  Install jax[cuda12] to enable them.",
+        stacklevel=1,
+    )
+
+requires_gpu = pytest.mark.skipif(not HAS_GPU, reason="No GPU available")
 
 
 # ---------------------------------------------------------------------------
@@ -1038,7 +1054,7 @@ class TestEvolveMotion:
         o.set_initial_rho_from_rateeq()
         # Should not raise
         o.evolve_motion([0, 10], freeze_axis=[True, True, False],
-                        random_recoil=False)
+                        random_recoil=False, backend='cpu')
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
 
@@ -1076,7 +1092,7 @@ class TestEvolveMotion:
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
         o.evolve_motion([0, 10], freeze_axis=[True, True, False],
-                        random_recoil=False)
+                        random_recoil=False, backend='cpu')
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
 
@@ -1120,13 +1136,14 @@ class TestBatchSize:
 
         # Run without chunking
         o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
-                        freeze_axis=[True, True, False], random_recoil=False)
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        backend='cpu')
         sols_full = o.sols
 
         # Run with batch_size=2 (3 chunks of 2 for 6 atoms)
         o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
-                        batch_size=2)
+                        batch_size=2, backend='cpu')
         sols_chunked = o.sols
 
         assert len(sols_chunked) == len(sols_full)
@@ -1149,7 +1166,7 @@ class TestBatchSize:
         o, y0_batch, keys_batch = multi_atom_obe
         o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
-                        batch_size=1)
+                        batch_size=1, backend='cpu')
         for sol in o.sols:
             assert not jnp.any(jnp.isnan(sol.r))
             assert not jnp.any(jnp.isnan(sol.v))
@@ -1160,12 +1177,13 @@ class TestBatchSize:
         N = y0_batch.shape[0]
 
         o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
-                        freeze_axis=[True, True, False], random_recoil=False)
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        backend='cpu')
         sols_full = o.sols
 
         o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
-                        batch_size=1000)
+                        batch_size=1000, backend='cpu')
         sols_large = o.sols
 
         assert len(sols_large) == len(sols_full)
@@ -1288,7 +1306,8 @@ class TestQuadrupoleTrapOBE:
                         [psi[1] * psi[0], psi[1] * psi[1]]])
         o.set_initial_rho(rho.reshape(4,))
 
-        o.evolve_motion([0., 4.], random_recoil=False, n_points=101)
+        o.evolve_motion([0., 4.], random_recoil=False, n_points=101,
+                        backend='cpu')
         t = np.array(o.sols[0].t)
         z = np.array(o.sols[0].r[2])
 
@@ -1314,7 +1333,8 @@ class TestQuadrupoleTrapOBE:
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_populations(jnp.array([0., 1.]))
 
-        o.evolve_motion([0, 10], random_recoil=False, n_points=101)
+        o.evolve_motion([0, 10], random_recoil=False, n_points=101,
+                        backend='cpu')
         r = np.array(o.sols[0].r)
         r_mag = np.sqrt(np.sum(r**2, axis=0))
 
@@ -1337,7 +1357,8 @@ class TestQuadrupoleTrapOBE:
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_populations(jnp.array([0., 1.]))
 
-        o.evolve_motion([0., 5.], random_recoil=False, n_points=51)
+        o.evolve_motion([0., 5.], random_recoil=False, n_points=51,
+                        backend='cpu')
         rho = np.array(o.sols[0].rho)
 
         # rho has shape (n, n, T) where n is the number of states
@@ -1362,7 +1383,8 @@ class TestQuadrupoleTrapOBE:
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_populations(jnp.array([0., 1.]))
 
-        o.evolve_motion([0., 5.], random_recoil=False, n_points=51)
+        o.evolve_motion([0., 5.], random_recoil=False, n_points=51,
+                        backend='cpu')
         rho = np.array(o.sols[0].rho)
 
         # rho has shape (n, n, T)
@@ -1375,3 +1397,655 @@ class TestQuadrupoleTrapOBE:
                 pop = np.real(rho_mat[i, i])
                 assert pop >= -1e-6, f"Negative population {pop} at t_idx={t_idx}"
                 assert pop <= 1.0 + 1e-6, f"Population > 1: {pop} at t_idx={t_idx}"
+
+
+# ---------------------------------------------------------------------------
+# GPU OBE tests — evolve_motion with backend='gpu'
+# ---------------------------------------------------------------------------
+
+@requires_gpu
+class TestEvolveMotionGPU:
+    """Mirrors key TestEvolveMotion tests on GPU backend."""
+
+    @pytest.fixture
+    def mot_obe_transform(self):
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=True)
+
+    @pytest.fixture
+    def mot_obe_complex(self):
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=False)
+
+    def test_evolve_motion_default_args(self, mot_obe_transform):
+        o = mot_obe_transform
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False, backend='gpu')
+        assert len(o.sols) == 1
+        assert not jnp.any(jnp.isnan(o.sols[0].r))
+
+    def test_evolve_motion_complex_mode(self, mot_obe_complex):
+        o = mot_obe_complex
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False, backend='gpu')
+        assert len(o.sols) == 1
+        assert not jnp.any(jnp.isnan(o.sols[0].r))
+
+    def test_sol_shapes(self, mot_obe_transform):
+        """Solution arrays r, v, rho must have expected shapes."""
+        o = mot_obe_transform
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False, backend='gpu')
+        sol = o.sols[0]
+        n_t = len(sol.t)
+        assert sol.r.shape == (3, n_t)
+        assert sol.v.shape == (3, n_t)
+        n_states = o.hamiltonian.n
+        assert sol.rho.shape == (n_states, n_states, n_t)
+
+
+@requires_gpu
+class TestBatchSizeGPU:
+    """Batch tests on GPU backend."""
+
+    @pytest.fixture
+    def multi_atom_obe(self):
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        o = obe(beams, B, ham, transform_into_re_im=True)
+
+        velocities = [0.0, 0.1, 0.5, 1.0, 2.0, 3.0]
+        rho0_list = []
+        for vz in velocities:
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.array([0., 0., vz]))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        key = jax.random.PRNGKey(42)
+        keys_batch = jax.random.split(key, len(velocities))
+        return o, y0_batch, keys_batch
+
+    def test_batch_size_matches_unbatched(self, multi_atom_obe):
+        o, y0_batch, keys_batch = multi_atom_obe
+        N = y0_batch.shape[0]
+
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        backend='gpu')
+        sols_full = o.sols
+
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        batch_size=2, backend='gpu')
+        sols_chunked = o.sols
+
+        assert len(sols_chunked) == len(sols_full)
+        for i in range(N):
+            np.testing.assert_allclose(
+                np.array(sols_chunked[i].r), np.array(sols_full[i].r),
+                atol=1e-10, err_msg=f"Atom {i} position mismatch"
+            )
+            np.testing.assert_allclose(
+                np.array(sols_chunked[i].v), np.array(sols_full[i].v),
+                atol=1e-10, err_msg=f"Atom {i} velocity mismatch"
+            )
+
+    def test_batch_size_one(self, multi_atom_obe):
+        o, y0_batch, keys_batch = multi_atom_obe
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        batch_size=1, backend='gpu')
+        for sol in o.sols:
+            assert not jnp.any(jnp.isnan(sol.r))
+            assert not jnp.any(jnp.isnan(sol.v))
+
+
+@requires_gpu
+class TestQuadrupoleTrapOBEGPU:
+    """Magnetic trap OBE tests on GPU backend."""
+
+    @pytest.fixture(scope='class')
+    def trap_setup(self):
+        from pylcp.hamiltonian import hamiltonian as ham_cls
+        H0, muq = hamiltonians.singleF(1/2, gF=1, muB=1)
+        h = ham_cls()
+        h.add_H_0_block('g', H0)
+        h.add_mu_q_block('g', muq)
+        return h
+
+    def test_linear_field_parabolic_motion(self, trap_setup):
+        h = trap_setup
+        B = magField(lambda R: jnp.array([0., 0., R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+
+        theta = 0.
+        psi = np.array([np.cos(theta / 2), np.sin(theta / 2)])
+        rho = np.array([[psi[0] * psi[0], psi[0] * psi[1]],
+                        [psi[1] * psi[0], psi[1] * psi[1]]])
+        o.set_initial_rho(rho.reshape(4,))
+
+        o.evolve_motion([0., 4.], random_recoil=False, n_points=101,
+                        backend='gpu')
+        t = np.array(o.sols[0].t)
+        z = np.array(o.sols[0].r[2])
+
+        early = t < 2.0
+        z_expected = t[early]**2 / 4 + 1
+        np.testing.assert_allclose(z[early], z_expected, rtol=0.15)
+
+    def test_quadrupole_trap_confinement(self, trap_setup):
+        h = trap_setup
+        B = magField(lambda R: jnp.array([-0.5 * R[0], -0.5 * R[1], 1 * R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_populations(jnp.array([0., 1.]))
+
+        o.evolve_motion([0, 10], random_recoil=False, n_points=101,
+                        backend='gpu')
+        r = np.array(o.sols[0].r)
+        r_mag = np.sqrt(np.sum(r**2, axis=0))
+
+        assert not np.any(np.isnan(r_mag)), "NaN in position"
+        z = np.array(o.sols[0].r[2])
+        assert np.any(z < z[0]), "Atom should oscillate back toward origin"
+
+    def test_density_matrix_stays_physical(self, trap_setup):
+        h = trap_setup
+        B = magField(lambda R: jnp.array([0., 0., R[2]]))
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_populations(jnp.array([0., 1.]))
+
+        o.evolve_motion([0., 5.], random_recoil=False, n_points=51,
+                        backend='gpu')
+        rho = np.array(o.sols[0].rho)
+
+        n = rho.shape[0]
+        n_times = rho.shape[2]
+        for t_idx in range(n_times):
+            rho_mat = rho[:, :, t_idx]
+            trace = np.real(np.trace(rho_mat))
+            assert trace == pytest.approx(1.0, abs=1e-6), \
+                f"Trace = {trace} at time index {t_idx}"
+
+
+# ---------------------------------------------------------------------------
+# Random recoil tests — stochastic scattering path on each backend
+# ---------------------------------------------------------------------------
+
+class TestRandomRecoilCPU:
+    """Verify random_recoil=True works on CPU and produces physical results.
+
+    Uses a strong on-resonance beam (s=10) to guarantee many scatter events.
+    All tests are fully deterministic via fixed PRNG seeds."""
+
+    @pytest.fixture
+    def scattering_obe(self):
+        """OBE with strong on-resonance beam to guarantee scattering events."""
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 10.0, 'delta': 0.},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=True)
+
+    def test_random_recoil_no_nan(self, scattering_obe):
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        assert len(o.sols) == 1
+        assert not jnp.any(jnp.isnan(o.sols[0].r))
+        assert not jnp.any(jnp.isnan(o.sols[0].v))
+
+    def test_random_recoil_produces_velocity_change(self, scattering_obe):
+        """With scattering, the atom should acquire velocity from recoil kicks."""
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        v_final = np.array(o.sols[0].v[:, -1])
+        assert np.linalg.norm(v_final) > 0, \
+            "Atom should have nonzero velocity after scattering with recoil"
+
+    def test_random_recoil_scatter_events_recorded(self, scattering_obe):
+        """Solution must record scatter events."""
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        sol = o.sols[0]
+        assert len(sol.t_random) > 0, "Should have scatter events"
+        assert jnp.any(sol.n_random > 0), "Should have nonzero scatter counts"
+
+    def test_random_recoil_batch(self, scattering_obe):
+        """Multiple atoms with random_recoil=True should all produce valid results."""
+        o = scattering_obe
+        N = 4
+        rho0_list = []
+        for _ in range(N):
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.zeros(3))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        keys_batch = jax.random.split(jax.random.PRNGKey(0), N)
+        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        assert len(o.sols) == N
+        for sol in o.sols:
+            assert not jnp.any(jnp.isnan(sol.r))
+            assert not jnp.any(jnp.isnan(sol.v))
+
+    def test_random_recoil_different_keys_give_different_trajectories(
+            self, scattering_obe):
+        """Different PRNG keys must produce different stochastic trajectories."""
+        o = scattering_obe
+        N = 2
+        rho0_list = []
+        for _ in range(N):
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.zeros(3))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        keys_batch = jax.random.split(jax.random.PRNGKey(0), N)
+        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        v0_final = np.array(o.sols[0].v[:, -1])
+        v1_final = np.array(o.sols[1].v[:, -1])
+        assert not np.allclose(v0_final, v1_final, atol=1e-10), \
+            "Different PRNG keys should produce different trajectories"
+
+    def test_random_recoil_same_key_is_reproducible(self, scattering_obe):
+        """Same seed must give identical results across two runs."""
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[None, :]
+        key = jax.random.split(jax.random.PRNGKey(7), 1)
+
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        r1 = np.array(o.sols[0].r)
+        v1 = np.array(o.sols[0].v)
+
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        r2 = np.array(o.sols[0].r)
+        v2 = np.array(o.sols[0].v)
+
+        np.testing.assert_array_equal(r1, r2)
+        np.testing.assert_array_equal(v1, v2)
+
+
+@requires_gpu
+class TestRandomRecoilGPU:
+    """Verify random_recoil=True works on GPU and produces physical results.
+
+    Mirrors TestRandomRecoilCPU with backend='gpu'.  Same fixed seeds."""
+
+    @pytest.fixture
+    def scattering_obe(self):
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 10.0, 'delta': 0.},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=True)
+
+    def test_random_recoil_no_nan(self, scattering_obe):
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        assert len(o.sols) == 1
+        assert not jnp.any(jnp.isnan(o.sols[0].r))
+        assert not jnp.any(jnp.isnan(o.sols[0].v))
+
+    def test_random_recoil_produces_velocity_change(self, scattering_obe):
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        v_final = np.array(o.sols[0].v[:, -1])
+        assert np.linalg.norm(v_final) > 0, \
+            "Atom should have nonzero velocity after scattering with recoil"
+
+    def test_random_recoil_scatter_events_recorded(self, scattering_obe):
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        sol = o.sols[0]
+        assert len(sol.t_random) > 0, "Should have scatter events"
+        assert jnp.any(sol.n_random > 0), "Should have nonzero scatter counts"
+
+    def test_random_recoil_batch(self, scattering_obe):
+        o = scattering_obe
+        N = 4
+        rho0_list = []
+        for _ in range(N):
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.zeros(3))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        keys_batch = jax.random.split(jax.random.PRNGKey(0), N)
+        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        assert len(o.sols) == N
+        for sol in o.sols:
+            assert not jnp.any(jnp.isnan(sol.r))
+            assert not jnp.any(jnp.isnan(sol.v))
+
+    def test_random_recoil_different_keys_give_different_trajectories(
+            self, scattering_obe):
+        o = scattering_obe
+        N = 2
+        rho0_list = []
+        for _ in range(N):
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.zeros(3))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        keys_batch = jax.random.split(jax.random.PRNGKey(0), N)
+        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        v0_final = np.array(o.sols[0].v[:, -1])
+        v1_final = np.array(o.sols[1].v[:, -1])
+        assert not np.allclose(v0_final, v1_final, atol=1e-10), \
+            "Different PRNG keys should produce different trajectories"
+
+    def test_random_recoil_same_key_is_reproducible(self, scattering_obe):
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[None, :]
+        key = jax.random.split(jax.random.PRNGKey(7), 1)
+
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        r1 = np.array(o.sols[0].r)
+        v1 = np.array(o.sols[0].v)
+
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        r2 = np.array(o.sols[0].r)
+        v2 = np.array(o.sols[0].v)
+
+        np.testing.assert_array_equal(r1, r2)
+        np.testing.assert_array_equal(v1, v2)
+
+
+@requires_gpu
+class TestCPUvsGPURandomRecoil:
+    """CPU and GPU must produce identical stochastic trajectories given same keys.
+
+    JAX PRNG is device-independent: same seed + same key -> identical random
+    draws on CPU and GPU, so all scatter decisions and recoil kicks match."""
+
+    @pytest.fixture
+    def scattering_obe(self):
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 10.0, 'delta': 0.},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=True)
+
+    def test_single_atom_random_recoil_matches(self, scattering_obe):
+        """Same key, same initial state -> identical stochastic trajectory."""
+        o = scattering_obe
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[None, :]
+        key = jax.random.split(jax.random.PRNGKey(42), 1)
+
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        r_cpu = np.array(o.sols[0].r)
+        v_cpu = np.array(o.sols[0].v)
+        t_random_cpu = np.array(o.sols[0].t_random)
+        n_random_cpu = np.array(o.sols[0].n_random)
+
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        r_gpu = np.array(o.sols[0].r)
+        v_gpu = np.array(o.sols[0].v)
+        t_random_gpu = np.array(o.sols[0].t_random)
+        n_random_gpu = np.array(o.sols[0].n_random)
+
+        np.testing.assert_allclose(r_cpu, r_gpu, atol=1e-10,
+                                   err_msg="Position mismatch CPU vs GPU")
+        np.testing.assert_allclose(v_cpu, v_gpu, atol=1e-10,
+                                   err_msg="Velocity mismatch CPU vs GPU")
+        np.testing.assert_array_equal(n_random_cpu, n_random_gpu)
+        np.testing.assert_allclose(t_random_cpu, t_random_gpu, atol=1e-12)
+
+    def test_batch_random_recoil_matches(self, scattering_obe):
+        """Multi-atom stochastic trajectories must agree across backends."""
+        o = scattering_obe
+        N = 4
+        rho0_list = []
+        for _ in range(N):
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.zeros(3))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        keys_batch = jax.random.split(jax.random.PRNGKey(99), N)
+
+        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu')
+        sols_cpu = o.sols
+
+        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
+                        random_recoil=True, backend='gpu')
+        sols_gpu = o.sols
+
+        for i in range(N):
+            np.testing.assert_allclose(
+                np.array(sols_cpu[i].r), np.array(sols_gpu[i].r),
+                atol=1e-10, err_msg=f"Atom {i} position mismatch CPU vs GPU"
+            )
+            np.testing.assert_allclose(
+                np.array(sols_cpu[i].v), np.array(sols_gpu[i].v),
+                atol=1e-10, err_msg=f"Atom {i} velocity mismatch CPU vs GPU"
+            )
+            np.testing.assert_array_equal(
+                np.array(sols_cpu[i].n_random),
+                np.array(sols_gpu[i].n_random),
+            )
+
+
+# ---------------------------------------------------------------------------
+# CPU vs GPU consistency — verify both backends produce identical results
+# ---------------------------------------------------------------------------
+
+@requires_gpu
+class TestCPUvsGPUEvolveMotion:
+    """CPU and GPU backends must produce the same trajectories."""
+
+    @pytest.fixture
+    def mot_obe(self):
+        ham = make_ham(mass=100.0)
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+            {'kvec': [0., 0., -1.], 'pol': +1, 's': 0.01, 'delta': -1.0},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        return obe(beams, B, ham, transform_into_re_im=True)
+
+    def _setup_single(self, o):
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+
+    def test_single_atom_trajectories_match(self, mot_obe):
+        o = mot_obe
+        self._setup_single(o)
+
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False, backend='cpu')
+        sol_cpu = o.sols[0]
+        r_cpu = np.array(sol_cpu.r)
+        v_cpu = np.array(sol_cpu.v)
+        rho_cpu = np.array(sol_cpu.rho)
+
+        self._setup_single(o)
+        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+                        random_recoil=False, backend='gpu')
+        sol_gpu = o.sols[0]
+        r_gpu = np.array(sol_gpu.r)
+        v_gpu = np.array(sol_gpu.v)
+        rho_gpu = np.array(sol_gpu.rho)
+
+        np.testing.assert_allclose(r_cpu, r_gpu, atol=1e-10,
+                                   err_msg="Position mismatch CPU vs GPU")
+        np.testing.assert_allclose(v_cpu, v_gpu, atol=1e-10,
+                                   err_msg="Velocity mismatch CPU vs GPU")
+        np.testing.assert_allclose(rho_cpu, rho_gpu, atol=1e-10,
+                                   err_msg="Density matrix mismatch CPU vs GPU")
+
+    def test_multi_atom_trajectories_match(self, mot_obe):
+        o = mot_obe
+        velocities = [0.0, 0.5, 1.0, 2.0]
+        rho0_list = []
+        for vz in velocities:
+            o.set_initial_position(jnp.zeros(3))
+            o.set_initial_velocity(jnp.array([0., 0., vz]))
+            o.set_initial_rho_from_rateeq()
+            rho0_list.append(jnp.concatenate([o.rho0, o.v0, o.r0]))
+
+        y0_batch = jnp.stack(rho0_list)
+        key = jax.random.PRNGKey(42)
+        keys_batch = jax.random.split(key, len(velocities))
+
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        backend='cpu')
+        sols_cpu = o.sols
+
+        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+                        freeze_axis=[True, True, False], random_recoil=False,
+                        backend='gpu')
+        sols_gpu = o.sols
+
+        for i in range(len(velocities)):
+            np.testing.assert_allclose(
+                np.array(sols_cpu[i].r), np.array(sols_gpu[i].r),
+                atol=1e-10, err_msg=f"Atom {i} position mismatch CPU vs GPU"
+            )
+            np.testing.assert_allclose(
+                np.array(sols_cpu[i].v), np.array(sols_gpu[i].v),
+                atol=1e-10, err_msg=f"Atom {i} velocity mismatch CPU vs GPU"
+            )
+
+
+@requires_gpu
+class TestCPUvsGPUQuadrupoleTrap:
+    """CPU and GPU backends must agree for magnetic trap evolution."""
+
+    @pytest.fixture(scope='class')
+    def trap_setup(self):
+        from pylcp.hamiltonian import hamiltonian as ham_cls
+        H0, muq = hamiltonians.singleF(1/2, gF=1, muB=1)
+        h = ham_cls()
+        h.add_H_0_block('g', H0)
+        h.add_mu_q_block('g', muq)
+        return h
+
+    def test_linear_field_trajectories_match(self, trap_setup):
+        h = trap_setup
+        B = magField(lambda R: jnp.array([0., 0., R[2]]))
+
+        theta = 0.
+        psi = np.array([np.cos(theta / 2), np.sin(theta / 2)])
+        rho0 = np.array([[psi[0] * psi[0], psi[0] * psi[1]],
+                         [psi[1] * psi[0], psi[1] * psi[1]]]).reshape(4,)
+
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho(rho0)
+        o.evolve_motion([0., 4.], random_recoil=False, n_points=101,
+                        backend='cpu')
+        r_cpu = np.array(o.sols[0].r)
+        rho_cpu = np.array(o.sols[0].rho)
+
+        o = obe({}, B, h, include_mag_forces=True, transform_into_re_im=False)
+        o.set_initial_position(jnp.array([0., 0., 1.]))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho(rho0)
+        o.evolve_motion([0., 4.], random_recoil=False, n_points=101,
+                        backend='gpu')
+        r_gpu = np.array(o.sols[0].r)
+        rho_gpu = np.array(o.sols[0].rho)
+
+        np.testing.assert_allclose(r_cpu, r_gpu, atol=1e-10,
+                                   err_msg="Position mismatch CPU vs GPU")
+        np.testing.assert_allclose(rho_cpu, rho_gpu, atol=1e-10,
+                                   err_msg="Density matrix mismatch CPU vs GPU")

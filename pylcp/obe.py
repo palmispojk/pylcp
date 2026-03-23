@@ -7,7 +7,7 @@ import gc
 import numpy as np
 import jax
 import jax.numpy as jnp
-from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense
+from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense, optimal_batch_size
 
 from .rateeq import rateeq
 from .common import (cart2spherical, spherical2cart, base_force_profile,
@@ -748,6 +748,7 @@ class obe(governingeq):
                       freeze_axis=[False, False, False],
                       random_recoil=False,
                       max_scatter_probability=0.1,
+                      backend='auto',
                       **kwargs):
         """
         Evolve :math:`\\rho_{ij}` and the motion of the atom in time.
@@ -768,6 +769,16 @@ class obe(governingeq):
         random_recoil : boolean
             Allow the atom to randomly recoil from scattering events.
             Default: False
+        backend : str, optional
+            Execution backend for the ODE solver.
+
+            * ``'auto'`` *(default)* — use GPU (batched vmap) when a CUDA
+              device is available, otherwise fall back to CPU serial.
+            * ``'gpu'`` — always run the full batch through ``solve_ivp_random``
+              in one vmapped call.  Best for large batches on GPU.
+            * ``'cpu'`` — iterate over atoms and call ``solve_ivp_random``
+              one at a time.  No vmap overhead; suitable for CPU workers or
+              when the batch is small enough that serial is faster.
         max_scatter_probability : float
             When undergoing random recoils, this sets the maximum time step such
             that the maximum scattering probability is less than or equal to
@@ -891,28 +902,39 @@ class obe(governingeq):
         if 'max_step' not in kwargs:
             kwargs['max_step'] = (t_span[1] - t_span[0]) / 500
 
-        if not random_recoil_flag:
-            def dummy_recoil(t, y, dt, key):
-                return y, 0, jnp.inf, key
+        recoil_func = (
+            (lambda t, y, dt, key: (y, 0, jnp.inf, key))
+            if not random_recoil_flag
+            else random_recoil_fn
+        )
 
+        # Resolve backend: 'auto' uses GPU when a CUDA device is present.
+        resolved = backend
+        if resolved == 'auto':
+            resolved = 'gpu' if jax.default_backend() == 'gpu' else 'cpu'
+
+        if resolved == 'gpu':
             self.sols = solve_ivp_random(
                 fun=dydt,
-                random_func=dummy_recoil,
+                random_func=recoil_func,
                 t_span=t_span,
                 y0_batch=y0_batch,
                 keys_batch=keys_batch,
                 **kwargs
             )
-
         else:
-            self.sols = solve_ivp_random(
-                fun=dydt,
-                random_func=random_recoil_fn,
-                t_span=t_span,
-                y0_batch=y0_batch,
-                keys_batch=keys_batch,
-                **kwargs
-            )
+            # CPU serial: one atom at a time — no vmap across the batch.
+            self.sols = []
+            for i in range(y0_batch.shape[0]):
+                sol_list = solve_ivp_random(
+                    fun=dydt,
+                    random_func=recoil_func,
+                    t_span=t_span,
+                    y0_batch=y0_batch[i:i+1],
+                    keys_batch=keys_batch[i:i+1],
+                    **kwargs
+                )
+                self.sols.extend(sol_list)
 
 
         # Remake the solution:
@@ -1262,9 +1284,9 @@ class obe(governingeq):
         """
         Map out the equilibrium force vs. position and velocity using batched JAX integration.
 
-        This method solves the Optical Bloch Equations (OBEs) simultaneously across a 
-        grid of initial positions and velocities. It integrates the evolution in chunks 
-        of time, comparing the time-averaged force of successive chunks until the force 
+        This method solves the Optical Bloch Equations (OBEs) simultaneously across a
+        grid of initial positions and velocities. It integrates the evolution in chunks
+        of time, comparing the time-averaged force of successive chunks until the force
         has converged for all grid points.
 
         Parameters
@@ -1281,11 +1303,11 @@ class obe(governingeq):
             Name for the profile. Stored in the profile dictionary in this object.
             If None, uses the next integer, cast as a string, (i.e., '0') as
             the name.
-            
+
         Other Parameters
         ----------------
         deltat : float, optional
-            Chunk time :math:`\\Delta T` to integrate over before checking for convergence. 
+            Chunk time :math:`\\Delta T` to integrate over before checking for convergence.
             Default: 500.
         itermax : int, optional
             Maximum number of chunk iterations to perform. Default: 100.
@@ -1303,10 +1325,10 @@ class obe(governingeq):
             full ``Npts`` resolution for convergence (smoothest profiles,
             slowest).  Default: 10.
         initial_rho : {'rateeq', 'equally'}, optional
-            Determines how to set the initial density matrix :math:`\\rho` at the start 
+            Determines how to set the initial density matrix :math:`\\rho` at the start
             of the calculation. Default: 'rateeq'.
         deltat_r : float, optional
-            Dynamic deltat scaling factor based on spatial position. 
+            Dynamic deltat scaling factor based on spatial position.
         deltat_v : float, optional
             Dynamic deltat scaling factor based on velocity.
         deltat_tmax : float, optional
@@ -1320,9 +1342,16 @@ class obe(governingeq):
         Returns
         -------
         profile : pylcp.obe.force_profile
-            Resulting force profile containing the equilibrium forces, detailed laser/mag 
+            Resulting force profile containing the equilibrium forces, detailed laser/mag
             forces, and equilibrium populations for the specified grid.
         """
+        # Pin all JAX operations to the CPU device so that large
+        # grids do not exhaust GPU memory.
+        cpu_device = jax.devices('cpu')[0]
+
+        _cpu_ctx = jax.default_device(cpu_device)
+        _cpu_ctx.__enter__()
+
         # Pop deltat-shaping kwargs
         deltat_r    = kwargs.pop('deltat_r',    None)
         deltat_v    = kwargs.pop('deltat_v',    None)
@@ -1394,11 +1423,11 @@ class obe(governingeq):
                 if d is not None:
                     per_atom_deltat[i] = d
 
-        # When deltat_v is used, each atom must keep its own chunk duration
-        # (an integer number of oscillation cycles at that velocity).  When
-        # only deltat_r is used the chunk just needs to be "short enough",
-        # so all atoms can share min(deltat) in a single parallel batch —
-        # this avoids creating N sequential single-atom groups.
+        # Group atoms by their chunk_deltat.  When deltat_v is used, each
+        # atom gets its own chunk duration (integer number of oscillation
+        # cycles).  Atoms sharing the same deltat (e.g. all clamped at
+        # deltat_tmax) are batched together.  When only deltat_r is used
+        # all atoms share min(deltat) in a single parallel batch.
         if deltat_v is not None or deltat_func is not None:
             rounded_deltat = np.round(per_atom_deltat, decimals=6)
             unique_deltats = np.unique(rounded_deltat)
@@ -1526,8 +1555,7 @@ class obe(governingeq):
             )(r_all, rho_flat_all)
 
             # Use the convergence estimate for f_avg so the convergence test
-            # and the reported force are consistent.  f_laser and f_mag still
-            # come from the full-resolution final pass below.
+            # and the reported force are consistent.
             f_avg_np      = np.array(f_conv)
             rho_flat_mean = np.array(rho_conv)
             f_mag_avg_np  = np.array(jnp.sum(f_mag_all, axis=2) / n_pts)
@@ -1590,4 +1618,5 @@ class obe(governingeq):
                 {key: f_laser_avg_q[key][atom_idx] for key in f_laser_avg_q},
             )
 
+        _cpu_ctx.__exit__(None, None, None)
         return self.profile[name]
