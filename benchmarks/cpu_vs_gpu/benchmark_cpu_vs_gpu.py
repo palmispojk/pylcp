@@ -83,6 +83,11 @@ AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, os.cpu_count()]
 # CPU serial is expensive (~3s/atom) so capped lower than GPU.
 EVOLVE_SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64, 128]
 EVOLVE_SWEEP_GPU_ATOMS = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+# Pathos sweep: core count used in the evolve sweep comparison.
+# Atom counts must be divisible by this; filtered automatically.
+EVOLVE_SWEEP_PATHOS_CORES = 8
+EVOLVE_SWEEP_PATHOS_ATOMS = [n for n in EVOLVE_SWEEP_CPU_ATOMS
+                              if n >= EVOLVE_SWEEP_PATHOS_CORES]
 
 
 def setup():
@@ -102,10 +107,12 @@ def setup():
 
 
 def run_evolve_sweep(obe):
-    """Sweep over atom counts; return {n: (t_cpu_per_atom, t_gpu_per_atom)}.
+    """Sweep over atom counts; return {n: [t_cpu, t_gpu, t_pathos]}.
 
-    CPU is measured only for EVOLVE_SWEEP_CPU_ATOMS (expensive at large N).
-    GPU is measured for EVOLVE_SWEEP_GPU_ATOMS.  Missing values are None.
+    CPU serial is measured for EVOLVE_SWEEP_CPU_ATOMS (expensive at large N).
+    GPU is measured for EVOLVE_SWEEP_GPU_ATOMS.
+    Pathos (multi-core CPU) is measured for EVOLVE_SWEEP_PATHOS_ATOMS.
+    Missing values are None.
     A single warmup call is made before each new atom count so JIT cost is
     not included in the measured time.
     """
@@ -113,8 +120,10 @@ def run_evolve_sweep(obe):
     kw_cpu = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='cpu')
     kw_gpu = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
 
-    all_counts = sorted(set(EVOLVE_SWEEP_CPU_ATOMS) | set(EVOLVE_SWEEP_GPU_ATOMS))
-    results = {n: [None, None] for n in all_counts}
+    all_counts = sorted(set(EVOLVE_SWEEP_CPU_ATOMS)
+                        | set(EVOLVE_SWEEP_GPU_ATOMS)
+                        | set(EVOLVE_SWEEP_PATHOS_ATOMS))
+    results = {n: [None, None, None] for n in all_counts}
 
     for n in all_counts:
         y0_list = make_y0_list(obe, n)
@@ -130,7 +139,14 @@ def run_evolve_sweep(obe):
             obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw_cpu)
             t_cpu = (time.perf_counter() - t0) / n
             results[n][0] = t_cpu
-            print(f"    CPU: {t_cpu:.4f}s/atom")
+            print(f"    CPU serial: {t_cpu:.4f}s/atom")
+
+        if n in EVOLVE_SWEEP_PATHOS_ATOMS:
+            try:
+                t_pa, _ = run_pathos(y0_list, EVOLVE_SWEEP_PATHOS_CORES)
+                results[n][2] = t_pa
+            except Exception as e:
+                print(f"    Pathos failed: {e}")
 
         if n in EVOLVE_SWEEP_GPU_ATOMS:
             # Warmup
@@ -153,8 +169,12 @@ def make_plots(evolve_data):
     ns_e = sorted(evolve_data.keys())
     cpu_pts = [(n, evolve_data[n][0]) for n in ns_e if evolve_data[n][0] is not None]
     gpu_pts = [(n, evolve_data[n][1]) for n in ns_e if evolve_data[n][1] is not None]
+    pathos_pts = [(n, evolve_data[n][2]) for n in ns_e if evolve_data[n][2] is not None]
     if cpu_pts:
         ax.plot(*zip(*cpu_pts), 'o-', label='Serial CPU')
+    if pathos_pts:
+        ax.plot(*zip(*pathos_pts), '^-',
+                label=f'Pathos CPU ({EVOLVE_SWEEP_PATHOS_CORES} cores)')
     if gpu_pts:
         ax.plot(*zip(*gpu_pts), 's-', label='GPU batched')
     ax.set_xlabel('Number of atoms (N)')
