@@ -203,7 +203,7 @@ def make_plots(sweep_data, t_factor):
     ax.grid(True, which='both', ls='--', alpha=0.4)
 
     plt.tight_layout()
-    out = os.path.join(OUT_DIR, f'benchmark_cpu_vs_gpu_t{t_factor}_{_ts}.png')
+    out = os.path.join(OUT_DIR, f'benchmark_cpu_vs_gpu_t{t_factor}.png')
     plt.savefig(out, dpi=150, bbox_inches='tight')
     print(f"\n  Plot saved to {out}")
     plt.close()
@@ -438,7 +438,7 @@ def run_amdahl_overhead_sweep(obe, t_factor=500):
     return results
 
 
-def make_amdahl_plot(amdahl_sweep_results, out_dir, ts, t_factor):
+def make_amdahl_plot(amdahl_sweep_results, out_dir, t_factor):
     """Plot Amdahl's Law curves for different atoms-per-worker levels."""
     import matplotlib
     matplotlib.use('Agg')
@@ -480,7 +480,7 @@ def make_amdahl_plot(amdahl_sweep_results, out_dir, ts, t_factor):
     ax2.grid(True, which='both', ls='--', alpha=0.4)
 
     plt.tight_layout()
-    out = os.path.join(out_dir, f'benchmark_amdahl_overhead_t{t_factor}_{ts}.png')
+    out = os.path.join(out_dir, f'benchmark_amdahl_overhead_t{t_factor}.png')
     plt.savefig(out, dpi=150, bbox_inches='tight')
     print(f"\n  Amdahl overhead plot saved to {out}")
     plt.close()
@@ -490,11 +490,12 @@ if __name__ == '__main__':
     import sys
     import datetime
 
-    # Output directory: same folder as this script.
-    # Each run gets a timestamp suffix so multiple runs don't overwrite each other.
-    OUT_DIR = os.path.dirname(os.path.abspath(__file__))
+    # Output directory: a timestamped subdirectory so each run is self-contained.
     _ts = datetime.datetime.now().strftime('%Y%m%d_%H%M%S')
-    _log_path = os.path.join(OUT_DIR, f'benchmark_output_{_ts}.txt')
+    OUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           f'run_{_ts}')
+    os.makedirs(OUT_DIR, exist_ok=True)
+    _log_path = os.path.join(OUT_DIR, f'benchmark_output.txt')
     _log_file = open(_log_path, 'w')
 
     class _Tee:
@@ -614,7 +615,7 @@ if __name__ == '__main__':
         # Plots for this t_factor
         print(f"\n  Generating plots (t=2pi x {t_factor})...")
         make_plots(sweep, t_factor)
-        make_amdahl_plot(amdahl_sweep, OUT_DIR, _ts, t_factor)
+        make_amdahl_plot(amdahl_sweep, OUT_DIR, t_factor)
 
     print(f"\nRun finished: {datetime.datetime.now().isoformat()}")
     print(f"Output saved to {_log_path}")
