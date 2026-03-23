@@ -236,28 +236,6 @@ def make_y0_list(obe, n_atoms):
     return y0_list
 
 
-def run_serial(obe, y0_list, t_factor=500):
-    """Run atoms one at a time via backend='cpu'; return (time_per_atom, final_z)."""
-    n_atoms = len(y0_list)
-    kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='cpu')
-    t_span = [0, 2 * np.pi * t_factor]
-
-    y0_batch = jnp.stack(y0_list)
-    keys = jax.random.split(jax.random.PRNGKey(SEED), n_atoms)
-
-    t0 = time.perf_counter()
-    obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw)
-    elapsed = time.perf_counter() - t0
-
-    final_z = np.array([sol.r[2, -1] for sol in obe.sols])
-    time_per_atom = elapsed / n_atoms
-    print(f"\n  Serial CPU ({n_atoms} atoms, backend='cpu'):")
-    print(f"    Total time:      {elapsed:.1f}s")
-    print(f"    Time per atom:   {time_per_atom:.3f}s")
-    print(f"    Final z:         mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
-    return time_per_atom, final_z
-
-
 # ---------------------------------------------------------------------------
 # Pathos worker — must be a module-level function so dill can pickle it.
 # Each worker process is fresh: it builds its own obe and JIT-compiles on the
@@ -397,45 +375,6 @@ def fit_amdahl_p(t_per_atom_serial, pathos_results):
     xs, ys = np.array(xs), np.array(ys)
     p = float(np.clip(np.dot(xs, ys) / np.dot(xs, xs), 0.0, 1.0))
     return p, measured_speedups
-
-
-def run_amdahl_overhead_sweep(obe, t_factor=500):
-    """Run pathos at multiple atoms-per-worker levels to show overhead amortisation.
-
-    For each level in AMDAHL_ATOMS_PER_WORKER, runs all PATHOS_CORE_COUNTS and
-    fits a separate p.  Each level gets its own serial baseline so the
-    comparison is fair at that atom count.
-
-    Returns:
-        list of (atoms_per_worker, p, measured_speedups) tuples.
-    """
-    max_cores = max(PATHOS_CORE_COUNTS)
-    results = []
-
-    for apw in AMDAHL_ATOMS_PER_WORKER:
-        n_total = apw * max_cores
-        print(f"\n  --- Amdahl sweep: {apw} atoms/worker, {n_total} total atoms ---")
-        y0_list = make_y0_list(obe, n_total)
-
-        # Serial baseline at this atom count.
-        t_serial, _ = run_serial(obe, y0_list, t_factor=t_factor)
-
-        pathos_res = {}
-        try:
-            for n_cores in PATHOS_CORE_COUNTS:
-                t_pa, z_pa = run_pathos(y0_list, n_cores, t_factor=t_factor)
-                pathos_res[n_cores] = (t_pa, z_pa)
-        except Exception as e:
-            print(f"    Pathos failed at {n_cores} cores: {e}")
-
-        p, speedups = fit_amdahl_p(t_serial, pathos_res)
-        if p is not None:
-            print(f"    Fitted p = {p:.4f}  ({p*100:.1f}% parallel)")
-            results.append((apw, p, speedups))
-        else:
-            print(f"    Not enough data to fit p (got {len(pathos_res)} measurements)")
-
-    return results
 
 
 def make_amdahl_plot(amdahl_sweep_results, out_dir, t_factor):
@@ -599,11 +538,31 @@ if __name__ == '__main__':
         else:
             print("\n  Amdahl's Law: skipped (no atom count has all core counts measured)")
 
-        # Amdahl overhead sweep
+        # Amdahl overhead sweep — reuse data from the evolve sweep above.
+        # Each atoms_per_worker level maps to n_total = apw * max_cores atoms;
+        # the evolve sweep already measured serial + pathos at those counts.
+        max_cores = max(PATHOS_CORE_COUNTS)
         print(f"\n  Amdahl Overhead Sweep (t=2pi x {t_factor})")
         print(f"  Atoms per worker levels: {AMDAHL_ATOMS_PER_WORKER}")
         print(f"  Core counts per level:   {PATHOS_CORE_COUNTS}")
-        amdahl_sweep = run_amdahl_overhead_sweep(obe, t_factor=t_factor)
+        amdahl_sweep = []
+        for apw in AMDAHL_ATOMS_PER_WORKER:
+            n_total = apw * max_cores
+            if (n_total in sweep
+                    and sweep[n_total]['serial'] is not None
+                    and all(c in sweep[n_total]['pathos']
+                            for c in PATHOS_CORE_COUNTS)):
+                t_ser = sweep[n_total]['serial']
+                pathos_for_fit = {c: (sweep[n_total]['pathos'][c], None)
+                                  for c in PATHOS_CORE_COUNTS}
+                p, speedups = fit_amdahl_p(t_ser, pathos_for_fit)
+                if p is not None:
+                    print(f"    {apw} atoms/worker ({n_total} atoms): "
+                          f"p = {p:.4f}  ({p*100:.1f}% parallel)")
+                    amdahl_sweep.append((apw, p, speedups))
+            else:
+                print(f"    {apw} atoms/worker ({n_total} atoms): "
+                      f"skipped (not in sweep or missing data)")
 
         if amdahl_sweep:
             print(f"\n  {'Atoms/worker':>13}  {'p':>7}  {'p (%)':>7}  {'Max speedup':>12}")
