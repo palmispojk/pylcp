@@ -1,0 +1,519 @@
+Run started: 2026-03-23T11:44:45.548286
+
+Hardware:
+  CPU cores (logical): 16
+  GPU: cuda:0  memory=8.2 GiB
+
+Parameters: det=-2.5, s=1.25, alpha=0.0001
+Seed: 42
+
+Warming up JIT (evolve motion)...
+
+  state_dim=22, optimal GPU batch size: 2846
+
+==================================================
+  t = 2pi x 100  (Evolve Motion Sweep)
+==================================================
+
+  --- 4 atoms ---
+    CPU serial: 1.5338s/atom
+
+  Pathos CPU (4 atoms, 2 cores, 2 atoms/worker):
+    Total time:      13.1s
+    Time per atom:   3.275s
+    Final z:         mean=4563.74, std=11774.18
+
+  Pathos CPU (4 atoms, 4 cores, 1 atoms/worker):
+    Total time:      11.6s
+    Time per atom:   2.897s
+    Final z:         mean=4563.74, std=11774.18
+    GPU: 1.5125s/atom
+
+  --- 8 atoms ---
+    CPU serial: 1.0030s/atom
+
+  Pathos CPU (8 atoms, 2 cores, 4 atoms/worker):
+    Total time:      17.7s
+    Time per atom:   2.207s
+    Final z:         mean=713.30, std=10268.20
+
+  Pathos CPU (8 atoms, 4 cores, 2 atoms/worker):
+    Total time:      14.1s
+    Time per atom:   1.768s
+    Final z:         mean=713.30, std=10268.20
+
+  Pathos CPU (8 atoms, 8 cores, 1 atoms/worker):
+    Total time:      12.1s
+    Time per atom:   1.513s
+    Final z:         mean=713.30, std=10268.20
+    GPU: 0.7686s/atom
+
+  --- 16 atoms ---
+    CPU serial: 0.7601s/atom
+
+  Pathos CPU (16 atoms, 2 cores, 8 atoms/worker):
+    Total time:      26.4s
+    Time per atom:   1.652s
+    Final z:         mean=-1934.50, std=10760.01
+
+  Pathos CPU (16 atoms, 4 cores, 4 atoms/worker):
+    Total time:      19.2s
+    Time per atom:   1.198s
+    Final z:         mean=-1934.50, std=10760.01
+
+  Pathos CPU (16 atoms, 8 cores, 2 atoms/worker):
+    Total time:      15.5s
+    Time per atom:   0.969s
+    Final z:         mean=-1934.50, std=10760.01
+    GPU: 0.4062s/atom
+
+  --- 32 atoms ---
+    CPU serial: 0.6488s/atom
+
+  Pathos CPU (32 atoms, 2 cores, 16 atoms/worker):
+    Total time:      45.4s
+    Time per atom:   1.420s
+    Final z:         mean=-857.94, std=11808.12
+
+  Pathos CPU (32 atoms, 4 cores, 8 atoms/worker):
+    Total time:      29.5s
+    Time per atom:   0.923s
+    Final z:         mean=-857.94, std=11808.12
+
+  Pathos CPU (32 atoms, 8 cores, 4 atoms/worker):
+    Total time:      22.7s
+    Time per atom:   0.710s
+    Final z:         mean=-857.94, std=11808.12
+    GPU: 0.1941s/atom
+
+  --- 64 atoms ---
+    CPU serial: 0.5802s/atom
+
+  Pathos CPU (64 atoms, 2 cores, 32 atoms/worker):
+    Total time:      81.7s
+    Time per atom:   1.277s
+    Final z:         mean=-543.73, std=11794.38
+
+  Pathos CPU (64 atoms, 4 cores, 16 atoms/worker):
+    Total time:      50.7s
+    Time per atom:   0.792s
+    Final z:         mean=-543.73, std=11794.38
+
+  Pathos CPU (64 atoms, 8 cores, 8 atoms/worker):
+    Total time:      37.1s
+    Time per atom:   0.579s
+    Final z:         mean=-543.73, std=11794.38
+    GPU: 0.1041s/atom
+
+  --- 128 atoms ---
+    CPU serial: 0.5474s/atom
+
+  Pathos CPU (128 atoms, 2 cores, 64 atoms/worker):
+    Total time:      154.7s
+    Time per atom:   1.208s
+    Final z:         mean=-1390.07, std=11630.03
+
+  Pathos CPU (128 atoms, 4 cores, 32 atoms/worker):
+    Total time:      92.8s
+    Time per atom:   0.725s
+    Final z:         mean=-1390.07, std=11630.03
+
+  Pathos CPU (128 atoms, 8 cores, 16 atoms/worker):
+    Total time:      65.7s
+    Time per atom:   0.513s
+    Final z:         mean=-1390.07, std=11630.03
+    GPU: 0.0561s/atom
+
+  --- 256 atoms ---
+    GPU: 0.0318s/atom
+
+  --- 512 atoms ---
+    GPU: 0.0191s/atom
+
+  --- 1024 atoms ---
+    GPU: 0.0134s/atom
+
+  --- 2846 atoms ---
+    GPU: 0.0118s/atom
+
+  Numerical check (4 atoms, first 4 vs serial):
+    GPU  max|z diff|:  0.0000e+00
+
+  Amdahl's Law (from 128-atom sweep point)
+  Formula: S(n) = 1 / ((1 - p) + p/n)
+  Measurements used for fit:
+     2 cores: S=0.45x
+     4 cores: S=0.76x
+     8 cores: S=1.07x
+  Fitted p = 0.0000  (0.0% of work is parallel)
+
+     Cores   Predicted S    Time/atom (s)
+  --------  ------------  ---------------
+         1          1.00            0.547
+         2          1.00            0.547  ← measured S=0.45x
+         4          1.00            0.547  ← measured S=0.76x
+         8          1.00            0.547  ← measured S=1.07x
+        16          1.00            0.547
+        32          1.00            0.547
+        64          1.00            0.547
+       128          1.00            0.547
+
+  Amdahl Overhead Sweep (t=2pi x 100)
+  Atoms per worker levels: [2, 4, 8, 16]
+  Core counts per level:   [2, 4, 8]
+    2 atoms/worker (16 atoms): p = 0.0000  (0.0% parallel)
+    4 atoms/worker (32 atoms): p = 0.0000  (0.0% parallel)
+    8 atoms/worker (64 atoms): p = 0.0000  (0.0% parallel)
+    16 atoms/worker (128 atoms): p = 0.0000  (0.0% parallel)
+
+   Atoms/worker        p    p (%)   Max speedup
+  -------------  -------  -------  ------------
+              2   0.0000     0.0%           1.0x
+              4   0.0000     0.0%           1.0x
+              8   0.0000     0.0%           1.0x
+             16   0.0000     0.0%           1.0x
+
+  Generating plots (t=2pi x 100)...
+
+  Plot saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_cpu_vs_gpu_t100.png
+
+  Amdahl overhead plot saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_amdahl_overhead_t100.png
+
+==================================================
+  t = 2pi x 500  (Evolve Motion Sweep)
+==================================================
+
+  --- 4 atoms ---
+    CPU serial: 3.3434s/atom
+
+  Pathos CPU (4 atoms, 2 cores, 2 atoms/worker):
+    Total time:      13.9s
+    Time per atom:   3.479s
+    Final z:         mean=4155.08, std=10702.44
+
+  Pathos CPU (4 atoms, 4 cores, 1 atoms/worker):
+    Total time:      12.1s
+    Time per atom:   3.015s
+    Final z:         mean=4155.08, std=10702.44
+    GPU: 2.8658s/atom
+
+  --- 8 atoms ---
+    CPU serial: 2.5463s/atom
+
+  Pathos CPU (8 atoms, 2 cores, 4 atoms/worker):
+    Total time:      19.1s
+    Time per atom:   2.384s
+    Final z:         mean=639.97, std=9367.50
+
+  Pathos CPU (8 atoms, 4 cores, 2 atoms/worker):
+    Total time:      14.8s
+    Time per atom:   1.845s
+    Final z:         mean=639.97, std=9367.50
+
+  Pathos CPU (8 atoms, 8 cores, 1 atoms/worker):
+    Total time:      12.8s
+    Time per atom:   1.602s
+    Final z:         mean=639.97, std=9367.50
+    GPU: 1.4657s/atom
+
+  --- 16 atoms ---
+    CPU serial: 2.3474s/atom
+
+  Pathos CPU (16 atoms, 2 cores, 8 atoms/worker):
+    Total time:      29.9s
+    Time per atom:   1.869s
+    Final z:         mean=-1750.37, std=9811.14
+
+  Pathos CPU (16 atoms, 4 cores, 4 atoms/worker):
+    Total time:      21.1s
+    Time per atom:   1.319s
+    Final z:         mean=-1750.37, std=9811.14
+
+  Pathos CPU (16 atoms, 8 cores, 2 atoms/worker):
+    Total time:      17.2s
+    Time per atom:   1.072s
+    Final z:         mean=-1750.37, std=9811.14
+    GPU: 0.7766s/atom
+
+  --- 32 atoms ---
+    CPU serial: 2.3298s/atom
+
+  Pathos CPU (32 atoms, 2 cores, 16 atoms/worker):
+    Total time:      52.0s
+    Time per atom:   1.624s
+    Final z:         mean=-763.20, std=10755.15
+
+  Pathos CPU (32 atoms, 4 cores, 8 atoms/worker):
+    Total time:      33.4s
+    Time per atom:   1.043s
+    Final z:         mean=-763.20, std=10755.15
+
+  Pathos CPU (32 atoms, 8 cores, 4 atoms/worker):
+    Total time:      25.4s
+    Time per atom:   0.794s
+    Final z:         mean=-763.20, std=10755.15
+    GPU: 0.3464s/atom
+
+  --- 64 atoms ---
+    CPU serial: 2.2631s/atom
+
+  Pathos CPU (64 atoms, 2 cores, 32 atoms/worker):
+    Total time:      95.5s
+    Time per atom:   1.493s
+    Final z:         mean=-485.13, std=10748.45
+
+  Pathos CPU (64 atoms, 4 cores, 16 atoms/worker):
+    Total time:      57.8s
+    Time per atom:   0.903s
+    Final z:         mean=-485.13, std=10748.45
+
+  Pathos CPU (64 atoms, 8 cores, 8 atoms/worker):
+    Total time:      42.7s
+    Time per atom:   0.667s
+    Final z:         mean=-485.13, std=10748.45
+    GPU: 0.1996s/atom
+
+  --- 128 atoms ---
+    CPU serial: 2.2067s/atom
+
+  Pathos CPU (128 atoms, 2 cores, 64 atoms/worker):
+    Total time:      183.7s
+    Time per atom:   1.435s
+    Final z:         mean=-1256.08, std=10590.28
+
+  Pathos CPU (128 atoms, 4 cores, 32 atoms/worker):
+    Total time:      106.4s
+    Time per atom:   0.831s
+    Final z:         mean=-1256.08, std=10590.28
+
+  Pathos CPU (128 atoms, 8 cores, 16 atoms/worker):
+    Total time:      77.1s
+    Time per atom:   0.602s
+    Final z:         mean=-1256.08, std=10590.28
+    GPU: 0.1064s/atom
+
+  --- 256 atoms ---
+    GPU: 0.0607s/atom
+
+  --- 512 atoms ---
+    GPU: 0.0338s/atom
+
+  --- 1024 atoms ---
+    GPU: 0.0226s/atom
+
+  --- 2846 atoms ---
+    GPU: 0.0203s/atom
+
+  Numerical check (4 atoms, first 4 vs serial):
+    GPU  max|z diff|:  0.0000e+00
+
+  Amdahl's Law (from 128-atom sweep point)
+  Formula: S(n) = 1 / ((1 - p) + p/n)
+  Measurements used for fit:
+     2 cores: S=1.54x
+     4 cores: S=2.65x
+     8 cores: S=3.66x
+  Fitted p = 0.8102  (81.0% of work is parallel)
+
+     Cores   Predicted S    Time/atom (s)
+  --------  ------------  ---------------
+         1          1.00            2.207
+         2          1.68            1.313  ← measured S=1.54x
+         4          2.55            0.866  ← measured S=2.65x
+         8          3.44            0.642  ← measured S=3.66x
+        16          4.16            0.531
+        32          4.65            0.475
+        64          4.94            0.447
+       128          5.10            0.433
+
+  Amdahl Overhead Sweep (t=2pi x 500)
+  Atoms per worker levels: [2, 4, 8, 16]
+  Core counts per level:   [2, 4, 8]
+    2 atoms/worker (16 atoms): p = 0.5740  (57.4% parallel)
+    4 atoms/worker (32 atoms): p = 0.7241  (72.4% parallel)
+    8 atoms/worker (64 atoms): p = 0.7846  (78.5% parallel)
+    16 atoms/worker (128 atoms): p = 0.8102  (81.0% parallel)
+
+   Atoms/worker        p    p (%)   Max speedup
+  -------------  -------  -------  ------------
+              2   0.5740    57.4%           2.3x
+              4   0.7241    72.4%           3.6x
+              8   0.7846    78.5%           4.6x
+             16   0.8102    81.0%           5.3x
+
+  Generating plots (t=2pi x 500)...
+
+  Plot saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_cpu_vs_gpu_t500.png
+
+  Amdahl overhead plot saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_amdahl_overhead_t500.png
+
+==================================================
+  t = 2pi x 2000  (Evolve Motion Sweep)
+==================================================
+
+  --- 4 atoms ---
+    CPU serial: 10.7197s/atom
+
+  Pathos CPU (4 atoms, 2 cores, 2 atoms/worker):
+    Total time:      18.3s
+    Time per atom:   4.582s
+    Final z:         mean=1594.91, std=4047.67
+
+  Pathos CPU (4 atoms, 4 cores, 1 atoms/worker):
+    Total time:      15.0s
+    Time per atom:   3.738s
+    Final z:         mean=1594.91, std=4047.67
+    GPU: 8.7802s/atom
+
+  --- 8 atoms ---
+    CPU serial: 8.8846s/atom
+
+  Pathos CPU (8 atoms, 2 cores, 4 atoms/worker):
+    Total time:      26.1s
+    Time per atom:   3.259s
+    Final z:         mean=236.18, std=3606.23
+
+  Pathos CPU (8 atoms, 4 cores, 2 atoms/worker):
+    Total time:      18.7s
+    Time per atom:   2.332s
+    Final z:         mean=236.18, std=3606.23
+
+  Pathos CPU (8 atoms, 8 cores, 1 atoms/worker):
+    Total time:      16.1s
+    Time per atom:   2.018s
+    Final z:         mean=236.18, std=3606.23
+    GPU: 4.5108s/atom
+
+  --- 16 atoms ---
+    CPU serial: 8.8858s/atom
+
+  Pathos CPU (16 atoms, 2 cores, 8 atoms/worker):
+    Total time:      42.7s
+    Time per atom:   2.669s
+    Final z:         mean=-641.35, std=3766.73
+
+  Pathos CPU (16 atoms, 4 cores, 4 atoms/worker):
+    Total time:      28.2s
+    Time per atom:   1.764s
+    Final z:         mean=-641.35, std=3766.73
+
+  Pathos CPU (16 atoms, 8 cores, 2 atoms/worker):
+    Total time:      22.9s
+    Time per atom:   1.432s
+    Final z:         mean=-641.35, std=3766.73
+    GPU: 2.4505s/atom
+
+  --- 32 atoms ---
+    CPU serial: 9.2985s/atom
+
+  Pathos CPU (32 atoms, 2 cores, 16 atoms/worker):
+    Total time:      83.3s
+    Time per atom:   2.604s
+    Final z:         mean=-255.86, std=4103.82
+
+  Pathos CPU (32 atoms, 4 cores, 8 atoms/worker):
+    Total time:      49.0s
+    Time per atom:   1.530s
+    Final z:         mean=-255.86, std=4103.82
+
+  Pathos CPU (32 atoms, 8 cores, 4 atoms/worker):
+    Total time:      38.2s
+    Time per atom:   1.194s
+    Final z:         mean=-255.86, std=4103.82
+    GPU: 1.1923s/atom
+
+  --- 64 atoms ---
+    CPU serial: 9.3050s/atom
+
+  Pathos CPU (64 atoms, 2 cores, 32 atoms/worker):
+    Total time:      157.5s
+    Time per atom:   2.460s
+    Final z:         mean=-164.88, std=4113.85
+
+  Pathos CPU (64 atoms, 4 cores, 16 atoms/worker):
+    Total time:      89.5s
+    Time per atom:   1.399s
+    Final z:         mean=-164.88, std=4113.85
+
+  Pathos CPU (64 atoms, 8 cores, 8 atoms/worker):
+    Total time:      66.5s
+    Time per atom:   1.038s
+    Final z:         mean=-164.88, std=4113.85
+    GPU: 0.6092s/atom
+
+  --- 128 atoms ---
+    CPU serial: 9.0571s/atom
+
+  Pathos CPU (128 atoms, 2 cores, 64 atoms/worker):
+    Total time:      297.3s
+    Time per atom:   2.323s
+    Final z:         mean=-460.32, std=4039.38
+
+  Pathos CPU (128 atoms, 4 cores, 32 atoms/worker):
+    Total time:      165.9s
+    Time per atom:   1.296s
+    Final z:         mean=-460.32, std=4039.38
+
+  Pathos CPU (128 atoms, 8 cores, 16 atoms/worker):
+    Total time:      122.7s
+    Time per atom:   0.959s
+    Final z:         mean=-460.32, std=4039.38
+    GPU: 0.3172s/atom
+
+  --- 256 atoms ---
+    GPU: 0.1803s/atom
+
+  --- 512 atoms ---
+    GPU: 0.0947s/atom
+
+  --- 1024 atoms ---
+    GPU: 0.0613s/atom
+
+  --- 2846 atoms ---
+    GPU: 0.0536s/atom
+
+  Numerical check (4 atoms, first 4 vs serial):
+    GPU  max|z diff|:  0.0000e+00
+
+  Amdahl's Law (from 128-atom sweep point)
+  Formula: S(n) = 1 / ((1 - p) + p/n)
+  Measurements used for fit:
+     2 cores: S=3.90x
+     4 cores: S=6.99x
+     8 cores: S=9.45x
+  Fitted p = 1.0000  (100.0% of work is parallel)
+
+     Cores   Predicted S    Time/atom (s)
+  --------  ------------  ---------------
+         1          1.00            9.057
+         2          2.00            4.529  ← measured S=3.90x
+         4          4.00            2.264  ← measured S=6.99x
+         8          8.00            1.132  ← measured S=9.45x
+        16         16.00            0.566
+        32         32.00            0.283
+        64         64.00            0.142
+       128        128.00            0.071
+
+  Amdahl Overhead Sweep (t=2pi x 2000)
+  Atoms per worker levels: [2, 4, 8, 16]
+  Core counts per level:   [2, 4, 8]
+    2 atoms/worker (16 atoms): p = 1.0000  (100.0% parallel)
+    4 atoms/worker (32 atoms): p = 1.0000  (100.0% parallel)
+    8 atoms/worker (64 atoms): p = 1.0000  (100.0% parallel)
+    16 atoms/worker (128 atoms): p = 1.0000  (100.0% parallel)
+
+   Atoms/worker        p    p (%)   Max speedup
+  -------------  -------  -------  ------------
+              2   1.0000   100.0%           infx
+              4   1.0000   100.0%           infx
+              8   1.0000   100.0%           infx
+             16   1.0000   100.0%           infx
+
+  Generating plots (t=2pi x 2000)...
+
+  Plot saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_cpu_vs_gpu_t2000.png
+
+  Amdahl overhead plot saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_amdahl_overhead_t2000.png
+
+Run finished: 2026-03-23T13:47:36.082655
+Output saved to /home/nqcp-neutralatoms/JohanPalm/pylcp/benchmarks/cpu_vs_gpu/run_20260323_114445/benchmark_output.txt
