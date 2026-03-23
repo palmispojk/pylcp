@@ -318,7 +318,7 @@ if __name__ == '__main__':
     print(f"\nParameters: det={DET}, s={S}, alpha={ALPHA}")
     print(f"Max steps: {MAX_STEPS}")
 
-    # --- Theoretical memory estimate ---
+    # --- Setup and baseline memory ---
     obe = setup()
     obe.set_initial_rho_equally()
     state_dim = len(obe.rho0) + 6  # rho + v(3) + r(3)
@@ -334,8 +334,23 @@ if __name__ == '__main__':
     print(f"    Free:   {mem_baseline['bytes_free']/2**20:.1f} MiB")
     print(f"    Total:  {mem_baseline['bytes_limit']/2**20:.1f} MiB")
 
+    # --- Warmup ---
+    # Must happen BEFORE optimal_batch_size so the estimate accounts for
+    # GPU memory consumed by JIT caches; otherwise the sweep overshoots
+    # and OOMs at the limit.
+    print("\n" + "=" * 60)
+    print("  JIT Warmup")
+    print("=" * 60)
+    warmup_evolve(obe)
+    mem_post_warmup = gpu_memory_info()
+    print(f"\n  Post-warmup GPU memory:")
+    print(f"    In-use: {mem_post_warmup['bytes_in_use']/2**20:.1f} MiB")
+    print(f"    Peak:   {mem_post_warmup['peak_bytes_in_use']/2**20:.1f} MiB")
+    print(f"    Free:   {mem_post_warmup['bytes_free']/2**20:.1f} MiB")
+
+    # --- Compute optimal batch size (post-warmup) ---
     optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
-    print(f"  optimal_batch_size (safety=0.6): {optimal_n}")
+    print(f"\n  optimal_batch_size (safety=0.6): {optimal_n}")
 
     # Per-GPU capacity breakdown (useful for heterogeneous multi-GPU).
     per_gpu = optimal_batch_size_per_gpu(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
@@ -361,17 +376,6 @@ if __name__ == '__main__':
     if not ATOM_COUNTS or ATOM_COUNTS[-1] != max_atoms:
         ATOM_COUNTS.append(max_atoms)
     print(f"  Atom counts to sweep: {ATOM_COUNTS}")
-
-    # --- Warmup ---
-    print("\n" + "=" * 60)
-    print("  JIT Warmup")
-    print("=" * 60)
-    warmup_evolve(obe)
-    mem_post_warmup = gpu_memory_info()
-    print(f"\n  Post-warmup GPU memory:")
-    print(f"    In-use: {mem_post_warmup['bytes_in_use']/2**20:.1f} MiB")
-    print(f"    Peak:   {mem_post_warmup['peak_bytes_in_use']/2**20:.1f} MiB")
-    print(f"    Free:   {mem_post_warmup['bytes_free']/2**20:.1f} MiB")
 
     # --- Sweep ---
     print("\n" + "=" * 60)
