@@ -62,11 +62,7 @@ ALPHA = 1e-4
 N_SERIAL = 4              # atoms for serial (shared y0s used for numeric check)
 PATHOS_CORE_COUNTS = [2, 4, 8]
 # Each worker handles this many atoms so JIT overhead is amortised over real work.
-# N_PATHOS_ATOMS is fixed independently of PATHOS_CORE_COUNTS so that adding or
-# removing core counts does not change the atom pool and skew per-atom timings.
-# Must be divisible by all entries in _ALL_PATHOS_CORE_COUNTS.
 N_ATOMS_PER_WORKER = 4
-N_PATHOS_ATOMS = 32  # fixed; divisible by 2, 4, 8, 16
 
 # Amdahl overhead sweep: run pathos at different atoms-per-worker counts to see
 # how JIT/spawn overhead is amortised.  Each level uses (atoms_per_worker * max_cores)
@@ -74,6 +70,8 @@ N_PATHOS_ATOMS = 32  # fixed; divisible by 2, 4, 8, 16
 AMDAHL_ATOMS_PER_WORKER = [2, 4, 8, 16]
 SEED = 42
 MAX_STEPS = 10000
+# Time spans to sweep: each is [0, 2*pi*T]; longer spans mean more solver work.
+SWEEP_T_FACTORS = [100, 500, 2000]
 
 # Core counts to project via Amdahl's Law
 AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, os.cpu_count()]
@@ -81,13 +79,8 @@ AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128, os.cpu_count()]
 # Sweep parameters
 # Evolve motion: atom counts for CPU and GPU sweeps.
 # CPU serial is expensive (~3s/atom) so capped lower than GPU.
-EVOLVE_SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64, 128]
-EVOLVE_SWEEP_GPU_ATOMS = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
-# Pathos sweep: core count used in the evolve sweep comparison.
-# Atom counts must be divisible by this; filtered automatically.
-EVOLVE_SWEEP_PATHOS_CORES = 8
-EVOLVE_SWEEP_PATHOS_ATOMS = [n for n in EVOLVE_SWEEP_CPU_ATOMS
-                              if n >= EVOLVE_SWEEP_PATHOS_CORES]
+SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64, 128]
+SWEEP_GPU_ATOMS = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
 
 
 def setup():
@@ -106,87 +99,111 @@ def setup():
     return obe
 
 
-def run_evolve_sweep(obe):
-    """Sweep over atom counts; return {n: [t_cpu, t_gpu, t_pathos]}.
+def run_evolve_sweep(obe, t_factor=500):
+    """Unified sweep: serial CPU, pathos (all core counts), and GPU.
 
-    CPU serial is measured for EVOLVE_SWEEP_CPU_ATOMS (expensive at large N).
-    GPU is measured for EVOLVE_SWEEP_GPU_ATOMS.
-    Pathos (multi-core CPU) is measured for EVOLVE_SWEEP_PATHOS_ATOMS.
-    Missing values are None.
-    A single warmup call is made before each new atom count so JIT cost is
-    not included in the measured time.
+    For each atom count, runs (in order):
+      1. Serial CPU           (if n in SWEEP_CPU_ATOMS)
+      2. Pathos at each core  (if n in SWEEP_CPU_ATOMS and n >= cores)
+      3. GPU batched           (if n in SWEEP_GPU_ATOMS)
+
+    Args:
+        t_factor: Time span is [0, 2*pi*t_factor].
+
+    Returns:
+        {n: {'serial': t|None, 'gpu': t|None, 'pathos': {cores: t, ...},
+             'z_serial': array|None, 'z_gpu': array|None}}
     """
-    t_span = [0, 2 * np.pi * 500]
+    t_span = [0, 2 * np.pi * t_factor]
     kw_cpu = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='cpu')
     kw_gpu = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
 
-    all_counts = sorted(set(EVOLVE_SWEEP_CPU_ATOMS)
-                        | set(EVOLVE_SWEEP_GPU_ATOMS)
-                        | set(EVOLVE_SWEEP_PATHOS_ATOMS))
-    results = {n: [None, None, None] for n in all_counts}
+    all_counts = sorted(set(SWEEP_CPU_ATOMS) | set(SWEEP_GPU_ATOMS))
+    results = {}
 
     for n in all_counts:
+        results[n] = {'serial': None, 'gpu': None, 'pathos': {},
+                      'z_serial': None, 'z_gpu': None}
         y0_list = make_y0_list(obe, n)
         y0_batch = jnp.stack(y0_list)
         keys = jax.random.split(jax.random.PRNGKey(SEED), n)
         print(f"\n  --- {n} atoms ---")
 
-        if n in EVOLVE_SWEEP_CPU_ATOMS:
-            # Warmup
+        if n in SWEEP_CPU_ATOMS:
+            # Serial CPU
             obe.evolve_motion(t_span, y0_batch=y0_batch[:min(n, 2)],
                               keys_batch=keys[:min(n, 2)], **kw_cpu)
             t0 = time.perf_counter()
             obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw_cpu)
             t_cpu = (time.perf_counter() - t0) / n
-            results[n][0] = t_cpu
+            z_serial = np.array([sol.r[2, -1] for sol in obe.sols])
+            results[n]['serial'] = t_cpu
+            results[n]['z_serial'] = z_serial
             print(f"    CPU serial: {t_cpu:.4f}s/atom")
 
-        if n in EVOLVE_SWEEP_PATHOS_ATOMS:
-            try:
-                t_pa, _ = run_pathos(y0_list, EVOLVE_SWEEP_PATHOS_CORES)
-                results[n][2] = t_pa
-            except Exception as e:
-                print(f"    Pathos failed: {e}")
+            # Pathos at each core count (only where n >= cores)
+            for n_cores in PATHOS_CORE_COUNTS:
+                if n >= n_cores:
+                    try:
+                        t_pa, _ = run_pathos(y0_list, n_cores, t_factor=t_factor)
+                        results[n]['pathos'][n_cores] = t_pa
+                    except Exception as e:
+                        print(f"    Pathos {n_cores} cores failed: {e}")
 
-        if n in EVOLVE_SWEEP_GPU_ATOMS:
-            # Warmup
+        if n in SWEEP_GPU_ATOMS:
+            # GPU
             obe.evolve_motion(t_span, y0_batch=y0_batch[:min(n, 2)],
                               keys_batch=keys[:min(n, 2)], **kw_gpu)
             t0 = time.perf_counter()
             obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw_gpu)
             t_gpu = (time.perf_counter() - t0) / n
-            results[n][1] = t_gpu
+            z_gpu = np.array([sol.r[2, -1] for sol in obe.sols])
+            results[n]['gpu'] = t_gpu
+            results[n]['z_gpu'] = z_gpu
             print(f"    GPU: {t_gpu:.4f}s/atom")
 
     return results
 
 
-def make_plots(evolve_data):
+def make_plots(sweep_data, t_factor):
     import matplotlib.pyplot as plt
 
     fig, ax = plt.subplots(figsize=(7, 5))
 
-    ns_e = sorted(evolve_data.keys())
-    cpu_pts = [(n, evolve_data[n][0]) for n in ns_e if evolve_data[n][0] is not None]
-    gpu_pts = [(n, evolve_data[n][1]) for n in ns_e if evolve_data[n][1] is not None]
-    pathos_pts = [(n, evolve_data[n][2]) for n in ns_e if evolve_data[n][2] is not None]
+    ns = sorted(sweep_data.keys())
+
+    # Serial CPU
+    cpu_pts = [(n, sweep_data[n]['serial']) for n in ns
+               if sweep_data[n]['serial'] is not None]
     if cpu_pts:
         ax.plot(*zip(*cpu_pts), 'o-', label='Serial CPU')
-    if pathos_pts:
-        ax.plot(*zip(*pathos_pts), '^-',
-                label=f'Pathos CPU ({EVOLVE_SWEEP_PATHOS_CORES} cores)')
+
+    # Pathos lines (one per core count)
+    all_cores = sorted({c for n in ns for c in sweep_data[n]['pathos']})
+    markers = ['^', 'v', 'D', 'p', 'h', '*']
+    for i, n_cores in enumerate(all_cores):
+        pts = [(n, sweep_data[n]['pathos'][n_cores]) for n in ns
+               if n_cores in sweep_data[n]['pathos']]
+        if pts:
+            m = markers[i % len(markers)]
+            ax.plot(*zip(*pts), f'{m}-', label=f'Pathos CPU ({n_cores} cores)')
+
+    # GPU
+    gpu_pts = [(n, sweep_data[n]['gpu']) for n in ns
+               if sweep_data[n]['gpu'] is not None]
     if gpu_pts:
         ax.plot(*zip(*gpu_pts), 's-', label='GPU batched')
+
     ax.set_xlabel('Number of atoms (N)')
     ax.set_ylabel('Time per atom (s)')
-    ax.set_title('Evolve Motion: CPU vs GPU')
+    ax.set_title(f'Evolve Motion: CPU vs GPU  (t=2\u03c0\u00d7{t_factor})')
     ax.set_xscale('log')
     ax.set_yscale('log')
     ax.legend()
     ax.grid(True, which='both', ls='--', alpha=0.4)
 
     plt.tight_layout()
-    out = os.path.join(OUT_DIR, f'benchmark_cpu_vs_gpu_{_ts}.png')
+    out = os.path.join(OUT_DIR, f'benchmark_cpu_vs_gpu_t{t_factor}_{_ts}.png')
     plt.savefig(out, dpi=150, bbox_inches='tight')
     print(f"\n  Plot saved to {out}")
     plt.close()
@@ -219,11 +236,11 @@ def make_y0_list(obe, n_atoms):
     return y0_list
 
 
-def run_serial(obe, y0_list):
+def run_serial(obe, y0_list, t_factor=500):
     """Run atoms one at a time via backend='cpu'; return (time_per_atom, final_z)."""
     n_atoms = len(y0_list)
     kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='cpu')
-    t_span = [0, 2 * np.pi * 500]
+    t_span = [0, 2 * np.pi * t_factor]
 
     y0_batch = jnp.stack(y0_list)
     keys = jax.random.split(jax.random.PRNGKey(SEED), n_atoms)
@@ -238,35 +255,6 @@ def run_serial(obe, y0_list):
     print(f"    Total time:      {elapsed:.1f}s")
     print(f"    Time per atom:   {time_per_atom:.3f}s")
     print(f"    Final z:         mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
-    return time_per_atom, final_z
-
-
-def run_batched(obe, y0_list, n_shared=None):
-    """Run atoms in one GPU-batched call via backend='gpu'; return (time_per_atom, final_z).
-
-    Args:
-        n_shared: If given, report mean/std only on the first n_shared atoms
-            (the subset shared with the CPU runs) so statistics are comparable.
-    """
-    n_atoms = len(y0_list)
-    kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
-    t_span = [0, 2 * np.pi * 500]
-
-    y0_batch = jnp.stack(y0_list)
-    keys = jax.random.split(jax.random.PRNGKey(SEED), n_atoms)
-
-    t0 = time.perf_counter()
-    obe.evolve_motion(t_span, y0_batch=y0_batch, keys_batch=keys, **kw)
-    elapsed = time.perf_counter() - t0
-
-    final_z = np.array([sol.r[2, -1] for sol in obe.sols])
-    time_per_atom = elapsed / n_atoms
-    z_stats = final_z[:n_shared] if n_shared is not None else final_z
-    print(f"\n  Batched GPU ({n_atoms} atoms):")
-    print(f"    Total time:      {elapsed:.1f}s")
-    print(f"    Time per atom:   {time_per_atom:.3f}s")
-    print(f"    Final z:         mean={np.mean(z_stats):.2f}, std={np.std(z_stats):.2f}"
-          f"  (first {len(z_stats)} atoms)")
     return time_per_atom, final_z
 
 
@@ -300,11 +288,12 @@ def _pathos_worker(y0_batch_np):
                      hamiltonian, transform_into_re_im=True)
     obe.set_initial_rho_equally()
 
+    t_factor = float(os.environ.get('_PYLCP_BENCH_T_FACTOR', '500'))
     results = []
     for y0_np in y0_batch_np:
         y0 = _jnp.array(y0_np)
         obe.evolve_motion(
-            [0, 2 * _np.pi * 500],
+            [0, 2 * _np.pi * t_factor],
             y0_batch=y0[_jnp.newaxis, :],
             freeze_axis=[True, True, False],
             max_steps=MAX_STEPS,
@@ -314,7 +303,7 @@ def _pathos_worker(y0_batch_np):
     return results
 
 
-def run_pathos(y0_list, n_cores):
+def run_pathos(y0_list, n_cores, t_factor=500):
     """Run atoms in parallel using pathos; return (time_per_atom, final_z).
 
     Atoms are split evenly across n_cores workers.  Each worker runs its chunk
@@ -336,8 +325,9 @@ def run_pathos(y0_list, n_cores):
     # Split atoms into n_cores chunks (one per worker).
     chunks = [y0_np_list[i::n_cores] for i in range(n_cores)]
 
-    # Set worker flag before spawning so children inherit it.
+    # Set worker flags before spawning so children inherit them.
     os.environ['_PYLCP_BENCH_WORKER'] = '1'
+    os.environ['_PYLCP_BENCH_T_FACTOR'] = str(t_factor)
     pool = ProcessPool(nodes=n_cores)
     try:
         t0 = time.perf_counter()
@@ -350,6 +340,7 @@ def run_pathos(y0_list, n_cores):
         pool.join()
         pool.clear()
         os.environ.pop('_PYLCP_BENCH_WORKER', None)
+        os.environ.pop('_PYLCP_BENCH_T_FACTOR', None)
 
     # Reassemble: chunks[i][j] → atom index i + j*n_cores
     final_z = np.empty(n_atoms)
@@ -408,7 +399,7 @@ def fit_amdahl_p(t_per_atom_serial, pathos_results):
     return p, measured_speedups
 
 
-def run_amdahl_overhead_sweep(obe):
+def run_amdahl_overhead_sweep(obe, t_factor=500):
     """Run pathos at multiple atoms-per-worker levels to show overhead amortisation.
 
     For each level in AMDAHL_ATOMS_PER_WORKER, runs all PATHOS_CORE_COUNTS and
@@ -427,12 +418,12 @@ def run_amdahl_overhead_sweep(obe):
         y0_list = make_y0_list(obe, n_total)
 
         # Serial baseline at this atom count.
-        t_serial, _ = run_serial(obe, y0_list)
+        t_serial, _ = run_serial(obe, y0_list, t_factor=t_factor)
 
         pathos_res = {}
         try:
             for n_cores in PATHOS_CORE_COUNTS:
-                t_pa, z_pa = run_pathos(y0_list, n_cores)
+                t_pa, z_pa = run_pathos(y0_list, n_cores, t_factor=t_factor)
                 pathos_res[n_cores] = (t_pa, z_pa)
         except Exception as e:
             print(f"    Pathos failed at {n_cores} cores: {e}")
@@ -447,7 +438,7 @@ def run_amdahl_overhead_sweep(obe):
     return results
 
 
-def make_amdahl_plot(amdahl_sweep_results, out_dir, ts):
+def make_amdahl_plot(amdahl_sweep_results, out_dir, ts, t_factor):
     """Plot Amdahl's Law curves for different atoms-per-worker levels."""
     import matplotlib
     matplotlib.use('Agg')
@@ -472,7 +463,7 @@ def make_amdahl_plot(amdahl_sweep_results, out_dir, ts):
 
     ax1.set_xlabel('Number of cores')
     ax1.set_ylabel('Speedup S(n)')
-    ax1.set_title("Amdahl's Law: Overhead Amortisation")
+    ax1.set_title(f"Amdahl's Law: Overhead Amortisation  (t=2\u03c0\u00d7{t_factor})")
     ax1.set_xscale('log', base=2)
     ax1.legend(fontsize=9)
     ax1.grid(True, which='both', ls='--', alpha=0.4)
@@ -489,7 +480,7 @@ def make_amdahl_plot(amdahl_sweep_results, out_dir, ts):
     ax2.grid(True, which='both', ls='--', alpha=0.4)
 
     plt.tight_layout()
-    out = os.path.join(out_dir, f'benchmark_amdahl_overhead_{ts}.png')
+    out = os.path.join(out_dir, f'benchmark_amdahl_overhead_t{t_factor}_{ts}.png')
     plt.savefig(out, dpi=150, bbox_inches='tight')
     print(f"\n  Amdahl overhead plot saved to {out}")
     plt.close()
@@ -542,122 +533,88 @@ if __name__ == '__main__':
 
     obe = setup()
 
-    # --- Evolve motion benchmark ---
-    print("\n" + "=" * 50)
-    print("  Evolve Motion Benchmark")
-    print("=" * 50)
-
     print("\nWarming up JIT (evolve motion)...")
     warmup_evolve(obe)
 
-    # Determine optimal GPU batch size from live memory after warmup.
-    # state_dim is exact: rho0 length (set by obe internals) + v(3) + r(3).
+    # Determine optimal GPU batch size and add it to the sweep.
     state_dim = len(obe.rho0) + 6
     n_batched = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
-    if n_batched is None:
-        n_batched = 64  # CPU fallback
+    if n_batched is not None and n_batched not in SWEEP_GPU_ATOMS:
+        SWEEP_GPU_ATOMS.append(n_batched)
+        SWEEP_GPU_ATOMS.sort()
     print(f"\n  state_dim={state_dim}, optimal GPU batch size: {n_batched}")
 
-    # Build all y0s once with a fixed seed.
-    # pathos_y0: N_PATHOS_ATOMS atoms (fixed, independent of PATHOS_CORE_COUNTS)
-    # reused across all core-count runs so wall-times are directly comparable.
-    # GPU batch uses n_batched atoms; first N_PATHOS_ATOMS are shared with CPU
-    # so mean/std are reported only on the shared subset.
-    all_y0    = make_y0_list(obe, max(n_batched, N_PATHOS_ATOMS))
-    pathos_y0 = all_y0[:N_PATHOS_ATOMS]
-    gpu_y0    = all_y0[:n_batched]
+    # --- Loop over time spans ---
+    for t_factor in SWEEP_T_FACTORS:
+        print("\n" + "=" * 50)
+        print(f"  t = 2pi x {t_factor}  (Evolve Motion Sweep)")
+        print("=" * 50)
+        sweep = run_evolve_sweep(obe, t_factor=t_factor)
 
-    t_per_atom_serial, z_serial = run_serial(obe, pathos_y0)
+        # Numerical check (first N_SERIAL atoms, smallest count with both)
+        check_candidates = [n for n in sweep
+                            if sweep[n]['serial'] is not None
+                            and sweep[n]['gpu'] is not None]
+        if check_candidates:
+            check_n = min(check_candidates)
+            z_serial = sweep[check_n]['z_serial']
+            z_gpu = sweep[check_n]['z_gpu']
+            print(f"\n  Numerical check ({check_n} atoms, first {N_SERIAL} vs serial):")
+            print(f"    GPU  max|z diff|:  "
+                  f"{np.max(np.abs(z_serial[:N_SERIAL] - z_gpu[:N_SERIAL])):.4e}")
 
-    # Run pathos at each core count; collect (n_cores, t_per_atom, z).
-    # Wrap in try/except so stale worker processes are killed on error
-    # and the benchmark can continue with whatever results were collected.
-    pathos_results = {}
-    try:
-        for n_cores in PATHOS_CORE_COUNTS:
-            t_pa, z_pa = run_pathos(pathos_y0, n_cores)
-            pathos_results[n_cores] = (t_pa, z_pa)
-    except Exception as e:
-        print(f"\n  Pathos failed at {n_cores} cores: {e}")
-        print(f"  Continuing with {len(pathos_results)} successful core counts.")
-        # Kill any orphaned worker processes spawned by pathos.
-        import subprocess
-        subprocess.run(
-            ['pkill', '-P', str(os.getpid())],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        )
+        # Amdahl's Law from sweep data
+        amdahl_candidates = [
+            n for n in sorted(sweep.keys())
+            if sweep[n]['serial'] is not None
+            and all(c in sweep[n]['pathos'] for c in PATHOS_CORE_COUNTS)
+        ]
+        if amdahl_candidates:
+            amdahl_n = amdahl_candidates[-1]
+            t_serial = sweep[amdahl_n]['serial']
+            pathos_for_fit = {c: (sweep[amdahl_n]['pathos'][c], None)
+                              for c in PATHOS_CORE_COUNTS}
+            p_parallel, measured_speedups = fit_amdahl_p(t_serial, pathos_for_fit)
 
-    t_per_atom_batch, z_batch = run_batched(obe, gpu_y0, n_shared=N_PATHOS_ATOMS)
+            if p_parallel is not None:
+                print(f"\n  Amdahl's Law (from {amdahl_n}-atom sweep point)")
+                print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
+                print(f"  Measurements used for fit:")
+                for n_cores in sorted(PATHOS_CORE_COUNTS):
+                    print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x")
+                print(f"  Fitted p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
+                print(f"\n  {'Cores':>8}  {'Predicted S':>12}  {'Time/atom (s)':>15}")
+                print(f"  {'-'*8}  {'-'*12}  {'-'*15}")
+                measured_set = set(PATHOS_CORE_COUNTS)
+                seen: set = set()
+                for n in AMDAHL_CORE_COUNTS:
+                    if n in seen:
+                        continue
+                    seen.add(n)
+                    s_pred = amdahl_speedup(p_parallel, n)
+                    t_pred = t_serial / s_pred
+                    marker = f"  ← measured S={measured_speedups[n]:.2f}x" if n in measured_set else ""
+                    print(f"  {n:>8}  {s_pred:>12.2f}  {t_pred:>15.3f}{marker}")
+        else:
+            print("\n  Amdahl's Law: skipped (no atom count has all core counts measured)")
 
-    # --- Numerical check (first N_SERIAL atoms identical across all runs) ---
-    print(f"\n  Numerical check (first {N_SERIAL} atoms vs serial):")
-    for n_cores, (_, z_pa) in pathos_results.items():
-        diff = np.max(np.abs(z_serial[:N_SERIAL] - z_pa[:N_SERIAL]))
-        print(f"    Pathos {n_cores:>2} cores  max|z diff|:  {diff:.4e}")
-    zdiff_gpu = z_serial[:N_SERIAL] - z_batch[:N_SERIAL]
-    print(f"    GPU             max|z diff|:  {np.max(np.abs(zdiff_gpu)):.4e}")
+        # Amdahl overhead sweep
+        print(f"\n  Amdahl Overhead Sweep (t=2pi x {t_factor})")
+        print(f"  Atoms per worker levels: {AMDAHL_ATOMS_PER_WORKER}")
+        print(f"  Core counts per level:   {PATHOS_CORE_COUNTS}")
+        amdahl_sweep = run_amdahl_overhead_sweep(obe, t_factor=t_factor)
 
-    # --- Amdahl's Law projection (baseline: N_ATOMS_PER_WORKER atoms/worker) ---
-    p_parallel, measured_speedups = fit_amdahl_p(t_per_atom_serial, pathos_results)
+        if amdahl_sweep:
+            print(f"\n  {'Atoms/worker':>13}  {'p':>7}  {'p (%)':>7}  {'Max speedup':>12}")
+            print(f"  {'-'*13}  {'-'*7}  {'-'*7}  {'-'*12}")
+            for apw, p, _ in amdahl_sweep:
+                s_max = 1.0 / (1.0 - p) if p < 1.0 else float('inf')
+                print(f"  {apw:>13}  {p:>7.4f}  {p*100:>6.1f}%  {s_max:>12.1f}x")
 
-    if p_parallel is not None:
-        print(f"\n  Amdahl's Law (CPU parallel projection)")
-        print(f"  Formula: S(n) = 1 / ((1 - p) + p/n)")
-        print(f"  Fit: linearised least-squares  p = Σ(xᵢyᵢ)/Σ(xᵢ²)  where x=1-1/n, y=1-1/S")
-        print(f"  Measurements used for fit ({N_ATOMS_PER_WORKER} atoms/worker):")
-        for n_cores in sorted(pathos_results.keys()):
-            print(f"    {n_cores:>2} cores: S={measured_speedups[n_cores]:.2f}x")
-        print(f"  Fitted p = {p_parallel:.4f}  ({p_parallel*100:.1f}% of work is parallel)")
-        print(f"\n  {'Cores':>8}  {'Predicted S':>12}  {'Time/atom (s)':>15}")
-        print(f"  {'-'*8}  {'-'*12}  {'-'*15}")
-        measured_set = set(pathos_results.keys())
-        seen: set = set()
-        for n in AMDAHL_CORE_COUNTS:
-            if n in seen:
-                continue
-            seen.add(n)
-            s_pred = amdahl_speedup(p_parallel, n)
-            t_pred = t_per_atom_serial / s_pred
-            marker = f"  ← measured S={measured_speedups[n]:.2f}x" if n in measured_set else ""
-            print(f"  {n:>8}  {s_pred:>12.2f}  {t_pred:>15.3f}{marker}")
-    else:
-        print(f"\n  Amdahl's Law: skipped (need ≥2 pathos measurements, got {len(pathos_results)})")
-
-    s_gpu = t_per_atom_serial / t_per_atom_batch
-    print(f"\n  GPU batched speedup for reference: {s_gpu:.1f}x  "
-          f"({t_per_atom_batch:.4f}s / atom)")
-
-    # --- Amdahl overhead sweep ---
-    # Run pathos at multiple atoms-per-worker levels to see how JIT/spawn
-    # overhead is amortised.  Each level gets its own serial baseline and
-    # Amdahl fit, producing separate curves on the plot.
-    print("\n" + "=" * 50)
-    print("  Amdahl Overhead Sweep (varying atoms per worker)")
-    print("=" * 50)
-    print(f"  Atoms per worker levels: {AMDAHL_ATOMS_PER_WORKER}")
-    print(f"  Core counts per level:   {PATHOS_CORE_COUNTS}")
-    amdahl_sweep = run_amdahl_overhead_sweep(obe)
-
-    # Print summary table.
-    if amdahl_sweep:
-        print(f"\n  {'Atoms/worker':>13}  {'p':>7}  {'p (%)':>7}  {'Max speedup':>12}")
-        print(f"  {'-'*13}  {'-'*7}  {'-'*7}  {'-'*12}")
-        for apw, p, _ in amdahl_sweep:
-            s_max = 1.0 / (1.0 - p) if p < 1.0 else float('inf')
-            print(f"  {apw:>13}  {p:>7.4f}  {p*100:>6.1f}%  {s_max:>12.1f}x")
-
-    # --- Evolve motion sweep ---
-    print("\n" + "=" * 50)
-    print("  Evolve Motion Sweep (CPU vs GPU across atom counts)")
-    print("=" * 50)
-    evolve_sweep = run_evolve_sweep(obe)
-
-    # --- Plots ---
-    print("\n" + "=" * 50)
-    print("  Generating plots")
-    print("=" * 50)
-    make_plots(evolve_sweep)
-    make_amdahl_plot(amdahl_sweep, OUT_DIR, _ts)
+        # Plots for this t_factor
+        print(f"\n  Generating plots (t=2pi x {t_factor})...")
+        make_plots(sweep, t_factor)
+        make_amdahl_plot(amdahl_sweep, OUT_DIR, _ts, t_factor)
 
     print(f"\nRun finished: {datetime.datetime.now().isoformat()}")
     print(f"Output saved to {_log_path}")
