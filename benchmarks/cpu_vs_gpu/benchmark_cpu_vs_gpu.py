@@ -221,8 +221,13 @@ def run_serial(obe, y0_list):
     return time_per_atom, final_z
 
 
-def run_batched(obe, y0_list):
-    """Run atoms in one GPU-batched call via backend='gpu'; return (time_per_atom, final_z)."""
+def run_batched(obe, y0_list, n_shared=None):
+    """Run atoms in one GPU-batched call via backend='gpu'; return (time_per_atom, final_z).
+
+    Args:
+        n_shared: If given, report mean/std only on the first n_shared atoms
+            (the subset shared with the CPU runs) so statistics are comparable.
+    """
     n_atoms = len(y0_list)
     kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
     t_span = [0, 2 * np.pi * 500]
@@ -236,10 +241,12 @@ def run_batched(obe, y0_list):
 
     final_z = np.array([sol.r[2, -1] for sol in obe.sols])
     time_per_atom = elapsed / n_atoms
+    z_stats = final_z[:n_shared] if n_shared is not None else final_z
     print(f"\n  Batched GPU ({n_atoms} atoms):")
     print(f"    Total time:      {elapsed:.1f}s")
     print(f"    Time per atom:   {time_per_atom:.3f}s")
-    print(f"    Final z:         mean={np.mean(final_z):.2f}, std={np.std(final_z):.2f}")
+    print(f"    Final z:         mean={np.mean(z_stats):.2f}, std={np.std(z_stats):.2f}"
+          f"  (first {len(z_stats)} atoms)")
     return time_per_atom, final_z
 
 
@@ -534,7 +541,8 @@ if __name__ == '__main__':
     # Build all y0s once with a fixed seed.
     # pathos_y0: N_PATHOS_ATOMS atoms (fixed, independent of PATHOS_CORE_COUNTS)
     # reused across all core-count runs so wall-times are directly comparable.
-    # GPU batch uses n_batched atoms; first N_SERIAL shared for numeric check.
+    # GPU batch uses n_batched atoms; first N_PATHOS_ATOMS are shared with CPU
+    # so mean/std are reported only on the shared subset.
     all_y0    = make_y0_list(obe, max(n_batched, N_PATHOS_ATOMS))
     pathos_y0 = all_y0[:N_PATHOS_ATOMS]
     gpu_y0    = all_y0[:n_batched]
@@ -559,7 +567,7 @@ if __name__ == '__main__':
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
         )
 
-    t_per_atom_batch, z_batch = run_batched(obe, gpu_y0)
+    t_per_atom_batch, z_batch = run_batched(obe, gpu_y0, n_shared=N_PATHOS_ATOMS)
 
     # --- Numerical check (first N_SERIAL atoms identical across all runs) ---
     print(f"\n  Numerical check (first {N_SERIAL} atoms vs serial):")
