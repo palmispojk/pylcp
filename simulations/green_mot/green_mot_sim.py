@@ -10,6 +10,7 @@ import os
 if 'XLA_PYTHON_CLIENT_MEM_FRACTION' not in os.environ:
     os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.94'
 
+import time
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -44,7 +45,7 @@ tmax = 1e3
 MAX_STEPS = 5000  # ~5000 output points, matching original t_eval resolution
 
 state_dim = hamiltonian.n**2 + 6
-optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
+optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=128, safety=0.6)
 Natoms = optimal_n if optimal_n is not None else 96
 print(f"State dim: {state_dim}, optimal batch size: {optimal_n}, using Natoms={Natoms}")
 
@@ -69,6 +70,7 @@ keys_batch = jax.random.split(jax.random.PRNGKey(rng.integers(0, 2**31)), Natoms
 # Run simulation
 # ---------------------------------------------------------------------------
 print(f"Starting batched simulation of {Natoms} atoms on {jax.default_backend()}...")
+t_total_start = time.monotonic()
 
 sols = obe.evolve_motion(
     [0, tmax],
@@ -80,7 +82,11 @@ sols = obe.evolve_motion(
     max_steps=MAX_STEPS,
 )
 
-print(f"Simulation complete — {len(sols)} trajectories.")
+t_total = time.monotonic() - t_total_start
+m, s = divmod(int(t_total), 60)
+h, m = divmod(m, 60)
+print(f"Simulation complete — {len(sols)} trajectories in {h}h{m:02d}m{s:02d}s")
+print(f"  {t_total/Natoms:.2f} s/atom")
 
 # ---------------------------------------------------------------------------
 # Save results
