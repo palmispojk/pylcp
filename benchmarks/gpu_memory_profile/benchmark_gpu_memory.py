@@ -7,10 +7,17 @@ and a plot showing how GPU memory is consumed as the batch size grows.
 
 Uses the same F=0→F=1 3D MOT setup as the CPU vs GPU benchmark.
 """
+import gc
 import os
 import sys
 import time
 import datetime
+
+# Must be set before importing JAX so it preallocates a larger GPU pool.
+# Only applies to this process; reverts when the script exits.
+if 'XLA_PYTHON_CLIENT_MEM_FRACTION' not in os.environ:
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.94'
+
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -87,6 +94,61 @@ def physical_gpu_memory():
         return None
 
 
+def nvidia_smi_used_memory():
+    """Query current GPU memory usage in bytes via nvidia-smi.
+
+    Returns used bytes, or None if nvidia-smi is unavailable.
+    """
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=memory.used',
+             '--format=csv,noheader,nounits', '--id=0'],
+            text=True,
+        )
+        return int(out.strip()) * 2**20
+    except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def preallocation_recommendation(phys_bytes, jax_pool_bytes, margin_bytes=300 * 2**20):
+    """Compute safe max JAX preallocation fraction.
+
+    Parameters
+    ----------
+    phys_bytes : int
+        Total physical GPU memory.
+    jax_pool_bytes : int
+        Current JAX memory pool limit.
+    margin_bytes : int
+        Safety margin to leave free (default 300 MiB).
+
+    Returns
+    -------
+    dict with current_fraction, safe_max_fraction, non_jax_bytes,
+    headroom_bytes, and can_increase (bool).
+    """
+    nvidia_used = nvidia_smi_used_memory()
+    if nvidia_used is None:
+        return None
+
+    # Memory used by non-JAX processes (display server, other CUDA apps).
+    non_jax = max(nvidia_used - jax_pool_bytes, 0)
+    safe_max = (phys_bytes - non_jax - margin_bytes) / phys_bytes
+    safe_max = max(0.0, min(safe_max, 0.99))  # clamp to [0, 0.99]
+    current_fraction = jax_pool_bytes / phys_bytes
+    headroom = (safe_max - current_fraction) * phys_bytes
+
+    return {
+        'current_fraction': current_fraction,
+        'safe_max_fraction': safe_max,
+        'non_jax_bytes': non_jax,
+        'margin_bytes': margin_bytes,
+        'headroom_bytes': headroom,
+        'can_increase': safe_max > current_fraction + 0.02,
+    }
+
+
 def setup():
     """Build the OBE object (F=0→F=1 3D MOT)."""
     Hg, Bgq = pylcp.hamiltonians.singleF(F=0, gF=0, muB=1)
@@ -140,8 +202,21 @@ def run_sweep(obe, atom_counts):
     t_span = [0, 2 * np.pi * 500]
     kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
     results = []
+    y0_batch = keys = None
 
     for n_atoms in atom_counts:
+        # Free all GPU buffers from the prior iteration: solution arrays
+        # stored on obe, plus the batch inputs.  Block until async work
+        # finishes, then GC so the allocator can reclaim everything.
+        del y0_batch, keys
+        if hasattr(obe, 'sols'):
+            del obe.sols
+        if hasattr(obe, 'sol'):
+            del obe.sol
+        jax.effects_barrier()
+        gc.collect()
+        jax.clear_caches()
+
         # Snapshot memory before run.
         mem_before = gpu_memory_info()
         if mem_before is None:
@@ -315,10 +390,25 @@ if __name__ == '__main__':
         print(f"    Unavailable to JAX:            {wasted/2**30:.2f} GiB "
               f"({wasted/phys_mem*100:.1f}% of physical)")
 
+    # --- Preallocation headroom check ---
+    if phys_mem is not None:
+        rec = preallocation_recommendation(phys_mem, jax_pool)
+        if rec is not None:
+            print(f"\n  Preallocation headroom analysis:")
+            print(f"    Non-JAX GPU usage (other procs): {rec['non_jax_bytes']/2**20:.0f} MiB")
+            print(f"    Safety margin:                   {rec['margin_bytes']/2**20:.0f} MiB")
+            print(f"    Current fraction:                {rec['current_fraction']*100:.1f}%")
+            print(f"    Safe max fraction:               {rec['safe_max_fraction']*100:.1f}%")
+            if rec['can_increase']:
+                print(f"    -> Pool could grow by ~{rec['headroom_bytes']/2**20:.0f} MiB. "
+                      f"Set XLA_PYTHON_CLIENT_MEM_FRACTION={rec['safe_max_fraction']:.2f}")
+            else:
+                print(f"    -> Current fraction is near the safe limit, no increase recommended.")
+
     print(f"\nParameters: det={DET}, s={S}, alpha={ALPHA}")
     print(f"Max steps: {MAX_STEPS}")
 
-    # --- Theoretical memory estimate ---
+    # --- Setup and baseline memory ---
     obe = setup()
     obe.set_initial_rho_equally()
     state_dim = len(obe.rho0) + 6  # rho + v(3) + r(3)
@@ -334,8 +424,23 @@ if __name__ == '__main__':
     print(f"    Free:   {mem_baseline['bytes_free']/2**20:.1f} MiB")
     print(f"    Total:  {mem_baseline['bytes_limit']/2**20:.1f} MiB")
 
+    # --- Warmup ---
+    # Must happen BEFORE optimal_batch_size so the estimate accounts for
+    # GPU memory consumed by JIT caches; otherwise the sweep overshoots
+    # and OOMs at the limit.
+    print("\n" + "=" * 60)
+    print("  JIT Warmup")
+    print("=" * 60)
+    warmup_evolve(obe)
+    mem_post_warmup = gpu_memory_info()
+    print(f"\n  Post-warmup GPU memory:")
+    print(f"    In-use: {mem_post_warmup['bytes_in_use']/2**20:.1f} MiB")
+    print(f"    Peak:   {mem_post_warmup['peak_bytes_in_use']/2**20:.1f} MiB")
+    print(f"    Free:   {mem_post_warmup['bytes_free']/2**20:.1f} MiB")
+
+    # --- Compute optimal batch size (post-warmup) ---
     optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
-    print(f"  optimal_batch_size (safety=0.6): {optimal_n}")
+    print(f"\n  optimal_batch_size (safety=0.6): {optimal_n}")
 
     # Per-GPU capacity breakdown (useful for heterogeneous multi-GPU).
     per_gpu = optimal_batch_size_per_gpu(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
@@ -361,17 +466,6 @@ if __name__ == '__main__':
     if not ATOM_COUNTS or ATOM_COUNTS[-1] != max_atoms:
         ATOM_COUNTS.append(max_atoms)
     print(f"  Atom counts to sweep: {ATOM_COUNTS}")
-
-    # --- Warmup ---
-    print("\n" + "=" * 60)
-    print("  JIT Warmup")
-    print("=" * 60)
-    warmup_evolve(obe)
-    mem_post_warmup = gpu_memory_info()
-    print(f"\n  Post-warmup GPU memory:")
-    print(f"    In-use: {mem_post_warmup['bytes_in_use']/2**20:.1f} MiB")
-    print(f"    Peak:   {mem_post_warmup['peak_bytes_in_use']/2**20:.1f} MiB")
-    print(f"    Free:   {mem_post_warmup['bytes_free']/2**20:.1f} MiB")
 
     # --- Sweep ---
     print("\n" + "=" * 60)
