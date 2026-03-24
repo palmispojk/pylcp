@@ -12,6 +12,12 @@ import os
 import sys
 import time
 import datetime
+
+# Must be set before importing JAX so it preallocates a larger GPU pool.
+# Only applies to this process; reverts when the script exits.
+if 'XLA_PYTHON_CLIENT_MEM_FRACTION' not in os.environ:
+    os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '0.94'
+
 import numpy as np
 import jax
 import jax.numpy as jnp
@@ -196,14 +202,18 @@ def run_sweep(obe, atom_counts):
     t_span = [0, 2 * np.pi * 500]
     kw = dict(freeze_axis=[True, True, False], max_steps=MAX_STEPS, backend='gpu')
     results = []
+    y0_batch = keys = None
 
     for n_atoms in atom_counts:
-        # Free GPU buffers held by the obe object from the prior iteration,
-        # then garbage-collect so JAX's allocator reclaims the memory.
+        # Free all GPU buffers from the prior iteration: solution arrays
+        # stored on obe, plus the batch inputs.  Block until async work
+        # finishes, then GC so the allocator can reclaim everything.
+        del y0_batch, keys
         if hasattr(obe, 'sols'):
             del obe.sols
         if hasattr(obe, 'sol'):
             del obe.sol
+        jax.effects_barrier()
         gc.collect()
         jax.clear_caches()
 
