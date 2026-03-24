@@ -439,11 +439,11 @@ if __name__ == '__main__':
     print(f"    Free:   {mem_post_warmup['bytes_free']/2**20:.1f} MiB")
 
     # --- Compute optimal batch size (post-warmup) ---
-    optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
-    print(f"\n  optimal_batch_size (safety=0.6): {optimal_n}")
+    optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.9)
+    print(f"\n  optimal_batch_size (safety=0.9): {optimal_n}")
 
     # Per-GPU capacity breakdown (useful for heterogeneous multi-GPU).
-    per_gpu = optimal_batch_size_per_gpu(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.6)
+    per_gpu = optimal_batch_size_per_gpu(state_dim, MAX_STEPS, inner_max_steps=64, safety=0.9)
     if per_gpu and len(per_gpu) > 1:
         print(f"\n  Per-GPU capacity (heterogeneous breakdown):")
         for dev, cap in per_gpu:
