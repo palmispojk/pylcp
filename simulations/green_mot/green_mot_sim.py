@@ -40,7 +40,7 @@ obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 # ---------------------------------------------------------------------------
 # Build batched initial conditions
 # ---------------------------------------------------------------------------
-tmax = 1e5
+tmax = 1e3
 MAX_STEPS = 5000  # ~5000 output points, matching original t_eval resolution
 
 state_dim = hamiltonian.n**2 + 6
