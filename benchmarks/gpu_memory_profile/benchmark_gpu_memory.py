@@ -7,6 +7,7 @@ and a plot showing how GPU memory is consumed as the batch size grows.
 
 Uses the same F=0→F=1 3D MOT setup as the CPU vs GPU benchmark.
 """
+import gc
 import os
 import sys
 import time
@@ -87,6 +88,61 @@ def physical_gpu_memory():
         return None
 
 
+def nvidia_smi_used_memory():
+    """Query current GPU memory usage in bytes via nvidia-smi.
+
+    Returns used bytes, or None if nvidia-smi is unavailable.
+    """
+    import subprocess
+    try:
+        out = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=memory.used',
+             '--format=csv,noheader,nounits', '--id=0'],
+            text=True,
+        )
+        return int(out.strip()) * 2**20
+    except (FileNotFoundError, subprocess.CalledProcessError, ValueError):
+        return None
+
+
+def preallocation_recommendation(phys_bytes, jax_pool_bytes, margin_bytes=300 * 2**20):
+    """Compute safe max JAX preallocation fraction.
+
+    Parameters
+    ----------
+    phys_bytes : int
+        Total physical GPU memory.
+    jax_pool_bytes : int
+        Current JAX memory pool limit.
+    margin_bytes : int
+        Safety margin to leave free (default 300 MiB).
+
+    Returns
+    -------
+    dict with current_fraction, safe_max_fraction, non_jax_bytes,
+    headroom_bytes, and can_increase (bool).
+    """
+    nvidia_used = nvidia_smi_used_memory()
+    if nvidia_used is None:
+        return None
+
+    # Memory used by non-JAX processes (display server, other CUDA apps).
+    non_jax = max(nvidia_used - jax_pool_bytes, 0)
+    safe_max = (phys_bytes - non_jax - margin_bytes) / phys_bytes
+    safe_max = max(0.0, min(safe_max, 0.99))  # clamp to [0, 0.99]
+    current_fraction = jax_pool_bytes / phys_bytes
+    headroom = (safe_max - current_fraction) * phys_bytes
+
+    return {
+        'current_fraction': current_fraction,
+        'safe_max_fraction': safe_max,
+        'non_jax_bytes': non_jax,
+        'margin_bytes': margin_bytes,
+        'headroom_bytes': headroom,
+        'can_increase': safe_max > current_fraction + 0.02,
+    }
+
+
 def setup():
     """Build the OBE object (F=0→F=1 3D MOT)."""
     Hg, Bgq = pylcp.hamiltonians.singleF(F=0, gF=0, muB=1)
@@ -142,6 +198,15 @@ def run_sweep(obe, atom_counts):
     results = []
 
     for n_atoms in atom_counts:
+        # Free GPU buffers held by the obe object from the prior iteration,
+        # then garbage-collect so JAX's allocator reclaims the memory.
+        if hasattr(obe, 'sols'):
+            del obe.sols
+        if hasattr(obe, 'sol'):
+            del obe.sol
+        gc.collect()
+        jax.clear_caches()
+
         # Snapshot memory before run.
         mem_before = gpu_memory_info()
         if mem_before is None:
@@ -314,6 +379,21 @@ if __name__ == '__main__':
         wasted = phys_mem - jax_pool
         print(f"    Unavailable to JAX:            {wasted/2**30:.2f} GiB "
               f"({wasted/phys_mem*100:.1f}% of physical)")
+
+    # --- Preallocation headroom check ---
+    if phys_mem is not None:
+        rec = preallocation_recommendation(phys_mem, jax_pool)
+        if rec is not None:
+            print(f"\n  Preallocation headroom analysis:")
+            print(f"    Non-JAX GPU usage (other procs): {rec['non_jax_bytes']/2**20:.0f} MiB")
+            print(f"    Safety margin:                   {rec['margin_bytes']/2**20:.0f} MiB")
+            print(f"    Current fraction:                {rec['current_fraction']*100:.1f}%")
+            print(f"    Safe max fraction:               {rec['safe_max_fraction']*100:.1f}%")
+            if rec['can_increase']:
+                print(f"    -> Pool could grow by ~{rec['headroom_bytes']/2**20:.0f} MiB. "
+                      f"Set XLA_PYTHON_CLIENT_MEM_FRACTION={rec['safe_max_fraction']:.2f}")
+            else:
+                print(f"    -> Current fraction is near the safe limit, no increase recommended.")
 
     print(f"\nParameters: det={DET}, s={S}, alpha={ALPHA}")
     print(f"Max steps: {MAX_STEPS}")
