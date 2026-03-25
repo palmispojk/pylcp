@@ -138,6 +138,8 @@ def _ensure_3arg(func):
     return func
 
 
+
+
 class RandomOdeResult:
     """Result of a single ODE trajectory.
 
@@ -223,6 +225,7 @@ def _batched_random_trajectories(
     dt0,
     solver_type="Dopri5",
     inner_max_steps=64,
+    args=None,
     ):
     """
     JIT-compiled batched execution for simulating stochastic trajectories.
@@ -316,16 +319,17 @@ def _batched_random_trajectories(
             t1=t_next,
             dt0=dt_curr,
             y0=state['y'],
+            args=args,
             stepsize_controller=PIDController(rtol=rtol, atol=atol),
             saveat=SaveAt(t1=True),
             max_steps=inner_max_steps,
         )
-        
+
         y_next = sol.ys[-1]
         nfev_add = sol.stats['num_steps']
-        
+
         y_jump, n_scatters, dt_max_suggested, key_new = random_func(
-            t_next, y_next, actual_dt, state['key']
+            t_next, y_next, actual_dt, state['key'], args
         )
         
         dt_next = jnp.minimum(dt_max_suggested, max_step_global)
@@ -502,6 +506,7 @@ def solve_ivp_random(
     rtol=1e-5,
     atol=1e-6,
     batch_size=None,
+    args=None,
     **options
     ):
     """
@@ -604,7 +609,7 @@ def solve_ivp_random(
             fun, random_func, t0, tf,
             y0_chunk, keys_chunk,
             max_steps, max_step, rtol, atol, dt0,
-            solver_type, inner_max_steps,
+            solver_type, inner_max_steps, args,
         )
         return [
             RandomOdeResult(_batched_state=batched_state, _index=i, _tf=tf)
@@ -812,7 +817,7 @@ if __name__ == '__main__':
     def dydt(t, y):
         return jnp.array([-y[1], y[0]])
 
-    def func2(t, y, dt, key):
+    def func2(t, y, dt, key, args):
         key, subkey1, subkey2 = jax.random.split(key, 3)
         roll = jax.random.uniform(subkey1)
         did_scatter = roll < 2 * dt

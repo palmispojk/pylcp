@@ -154,6 +154,7 @@ class obe(governingeq):
         # Changing the field invalidates the cached closures so JAX retraces
         # and compiles a new XLA kernel with the updated field.
         self.__dict__.pop('_dydt', None)
+        self.__dict__.pop('_motion_dydt', None)
 
     @property
     def laserBeams(self):
@@ -163,6 +164,7 @@ class obe(governingeq):
     def laserBeams(self, value):
         self._laserBeams = value
         self.__dict__.pop('_dydt', None)
+        self.__dict__.pop('_motion_dydt', None)
 
     def update_H0(self, hamiltonian):
         """
@@ -185,6 +187,7 @@ class obe(governingeq):
         dtype = jnp.float64 if self.transform_into_re_im else jnp.complex128
         self.ev_mat['H0'] = jnp.asarray(H0_ev, dtype=dtype)
         self.__dict__.pop('_dydt', None)
+        self.__dict__.pop('_motion_dydt', None)
 
     def __cast_ev_mat_to_jax(self):
         """Recursively convert the nested dictionaries of numpy arrays to jax arrays"""
@@ -686,6 +689,90 @@ class obe(governingeq):
             return jnp.concatenate((drhodt, a, v))
         return dydt
 
+    @functools.cached_property
+    def _motion_dydt(self):
+        """Stable ODE RHS for evolve_motion.
+
+        Per-call parameters (``free_axes``) are read from the ``args``
+        pytree so the function identity stays constant across calls,
+        enabling JIT cache reuse.
+        """
+        def dydt(t, y, args):
+            r = y[-3:]
+            v = y[-6:-3]
+            rho = y[:-6]
+            free_axes = args['free_axes']
+
+            F = self.force(r, t, rho, return_details=False)
+            dvdt = (F * free_axes) / self.hamiltonian.mass + self.constant_accel
+            drdt = v
+            drhodt = self.__drhodt(r, t, rho)
+            return jnp.concatenate((drhodt, dvdt, drdt))
+        return dydt
+
+    @functools.cached_property
+    def _motion_recoil_fn(self):
+        """Stable random-recoil function for evolve_motion.
+
+        Decay channel data is captured once from ``self`` when the
+        property is first accessed.  Per-call parameters
+        (``free_axes``, ``max_scatter_probability``) come from ``args``.
+        """
+        # Pre-snapshot decay data as JAX arrays so the closure is
+        # self-contained and the dict iteration order is frozen.
+        decay_channels = []
+        for dk in self.decay_rates:
+            decay_channels.append((
+                jnp.asarray(self.decay_rates_truncated[dk]),
+                jnp.asarray(self.decay_rho_indices[dk]),
+                jnp.asarray(self.recoil_velocity[dk]),
+            ))
+
+        def recoil_fn(t, y, dt, key, args):
+            free_axes = args['free_axes']
+            max_scatter_probability = args['max_scatter_probability']
+
+            def _rand_vec(k):
+                k1, k2 = jax.random.split(k)
+                phi = 2.0 * jnp.pi * jax.random.uniform(k1)
+                z = 2.0 * jax.random.uniform(k2) - 1.0
+                r = jnp.sqrt(1.0 - z**2)
+                return jnp.array([r * jnp.cos(phi), r * jnp.sin(phi), z]) * free_axes
+
+            y_jump = y
+            num_of_scatters = 0
+            total_P = 0.
+
+            for rates, indices, recoil_v in decay_channels:
+                P = dt * rates * jnp.real(y[indices])
+
+                key, sk_dice, sk_v1, sk_v2 = jax.random.split(key, 4)
+                dice = jax.random.uniform(sk_dice, shape=P.shape)
+                n_ch = jnp.sum(jnp.where(dice < P, 1, 0))
+
+                kick = recoil_v * (_rand_vec(sk_v1) + _rand_vec(sk_v2))
+                y_jump = jnp.where(
+                    n_ch > 0,
+                    y_jump.at[-6:-3].add(kick * n_ch),
+                    y_jump
+                )
+
+                num_of_scatters += n_ch
+                total_P += jnp.sum(P)
+
+            new_dt_max = jnp.where(
+                total_P > 0,
+                (max_scatter_probability / total_P) * dt,
+                jnp.inf
+            )
+            return y_jump, num_of_scatters, new_dt_max, key
+        return recoil_fn
+
+    @staticmethod
+    def _no_recoil(t, y, dt, key, args):
+        """No-op recoil function with stable identity for JIT caching."""
+        return y, 0, jnp.inf, key
+
     def evolve_density(self, t_span, y0_batch=None, n_points=1000, **kwargs):
         """
         Evolve the density operators :math:`\\rho_{ij}` in time.
@@ -855,71 +942,26 @@ class obe(governingeq):
             keys_batch = jax.random.split(jax.random.PRNGKey(np.random.randint(0, 2**31)), y0_batch.shape[0])
 
         free_axes = jnp.bitwise_not(jnp.asarray(freeze_axis, dtype=bool))
-        random_recoil_flag = random_recoil
 
-        def dydt(t, y, _args):
-            # since jax handles batching, y is 1D array of one atom
-            r = y[-3:]
-            v = y[-6 : -3]
-            rho = y[:-6]
-            
-            F = self.force(r, t, rho, return_details=False)
-            
-            dvdt = (F * free_axes) / self.hamiltonian.mass + self.constant_accel
-            drdt = v
-            drhodt = self.__drhodt(r, t, rho)
+        # Pack per-call parameters into a JAX pytree.  The cached
+        # closures (_motion_dydt, _motion_recoil_fn) read these at
+        # runtime so their Python identity stays constant across calls,
+        # allowing the JIT-compiled XLA kernel to be reused.
+        args = {
+            'free_axes': free_axes,
+            'max_scatter_probability': jnp.asarray(
+                max_scatter_probability, dtype=jnp.float64),
+        }
 
-            return jnp.concatenate((drhodt, dvdt, drdt))
-        
-        def _jax_random_vector(key):
-            key_phi, key_z = jax.random.split(key)
-            phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
-            z = 2.0 * jax.random.uniform(key_z) - 1.0
-            
-            r_vec = jnp.sqrt(1.0 - z**2)
-            return jnp.array([r_vec * jnp.cos(phi), r_vec * jnp.sin(phi), z]) * free_axes
-        
-        def random_recoil_fn(t, y, dt, key):
-            num_of_scatters = 0
-            total_P = 0.
-            
-            y_jump = y
-            
-            for decay_key in self.decay_rates:
-                P = dt * self.decay_rates_truncated[decay_key] * jnp.real(y[self.decay_rho_indices[decay_key]])
-                
-                key, subkey_dice, subkey_v1, subkey_v2 = jax.random.split(key, 4)
-                dice = jax.random.uniform(subkey_dice, shape=P.shape)
-                scatters_mask = jnp.where(dice < P, 1, 0)
-                num_scatters_this_channel = jnp.sum(scatters_mask)
-
-                vec1 = _jax_random_vector(subkey_v1)
-                vec2 = _jax_random_vector(subkey_v2)
-
-                kick = self.recoil_velocity[decay_key] * (vec1 + vec2)
-                
-                y_jump = jnp.where(
-                    num_scatters_this_channel > 0,
-                    y_jump.at[-6:-3].add(kick * num_scatters_this_channel),
-                    y_jump
-                )
-                
-                num_of_scatters += num_scatters_this_channel
-                total_P += jnp.sum(P)
-            
-            new_dt_max = jnp.where(total_P > 0, (max_scatter_probability / total_P) * dt, jnp.inf)
-
-            return y_jump, num_of_scatters, new_dt_max, key
-        
+        # Use cached closures for stable JIT cache keys.
+        dydt = self._motion_dydt
+        recoil_func = (
+            self._no_recoil if not random_recoil
+            else self._motion_recoil_fn
+        )
 
         if 'max_step' not in kwargs:
             kwargs['max_step'] = (t_span[1] - t_span[0]) / 500
-
-        recoil_func = (
-            (lambda t, y, dt, key: (y, 0, jnp.inf, key))
-            if not random_recoil_flag
-            else random_recoil_fn
-        )
 
         # Resolve backend: 'auto' uses GPU when a CUDA device is present.
         resolved = backend
@@ -933,6 +975,7 @@ class obe(governingeq):
                 t_span=t_span,
                 y0_batch=y0_batch,
                 keys_batch=keys_batch,
+                args=args,
                 **kwargs
             )
         else:
@@ -945,6 +988,7 @@ class obe(governingeq):
                     t_span=t_span,
                     y0_batch=y0_batch[i:i+1],
                     keys_batch=keys_batch[i:i+1],
+                    args=args,
                     **kwargs
                 )
                 self.sols.extend(sol_list)
