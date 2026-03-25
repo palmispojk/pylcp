@@ -404,16 +404,25 @@ class obe(governingeq):
 
 
     def __reshape_rho(self, rho):
-        rho = jnp.asarray(rho)
-        if self.transform_into_re_im:
-            rho = rho.astype(jnp.complex128)
-
-            if len(rho.shape) == 1:
-                rho = jnp.dot(self.U, rho)
-            else:
-                rho = jnp.tensordot(self.U, rho, axes=([1], [0]))
-
-        rho = jnp.reshape(rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:])
+        # Use numpy ops when input is already on CPU to avoid GPU memory
+        # accumulation (e.g. when called from __reshape_sol after np.asarray).
+        if isinstance(rho, np.ndarray):
+            if self.transform_into_re_im:
+                rho = rho.astype(np.complex128)
+                if len(rho.shape) == 1:
+                    rho = np.dot(self.U, rho)
+                else:
+                    rho = np.tensordot(self.U, rho, axes=([1], [0]))
+            rho = np.reshape(rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:])
+        else:
+            rho = jnp.asarray(rho)
+            if self.transform_into_re_im:
+                rho = rho.astype(jnp.complex128)
+                if len(rho.shape) == 1:
+                    rho = jnp.dot(self.U, rho)
+                else:
+                    rho = jnp.tensordot(self.U, rho, axes=([1], [0]))
+            rho = jnp.reshape(rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:])
         
 
         """# If not:
@@ -434,12 +443,16 @@ class obe(governingeq):
         """
         Reshape the solution to have all the proper parts.
         """
-        # Each RandomOdeResult.y has shape (state_dim, n_steps)
+        # Each RandomOdeResult.y has shape (state_dim, n_steps).
+        # Transfer to CPU first so that __reshape_rho uses numpy ops and the
+        # reshaped sol.rho arrays don't accumulate on the GPU (which causes OOM
+        # when processing large batches after a long simulation).
         for sol in self.sols:
-            rho_flat = sol.y[:-6, :]      # (n^2, n_steps)
+            y_cpu = np.asarray(sol.y)          # GPU → CPU transfer
+            rho_flat = y_cpu[:-6, :]           # (n^2, n_steps)
             sol.rho = self.__reshape_rho(rho_flat)
-            sol.v = jnp.real(sol.y[-6:-3, :])  # (3, n_steps)
-            sol.r = jnp.real(sol.y[-3:, :])    # (3, n_steps)
+            sol.v = np.real(y_cpu[-6:-3, :])   # (3, n_steps)
+            sol.r = np.real(y_cpu[-3:, :])     # (3, n_steps)
             del sol.y
 
 

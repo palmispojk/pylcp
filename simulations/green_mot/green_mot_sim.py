@@ -23,6 +23,9 @@ import constants
 # ---------------------------------------------------------------------------
 # Build the trap
 # ---------------------------------------------------------------------------
+print(f"Starting to build the setup.")
+trap_time = time.monotonic()
+
 laserBeams = pylcp.conventional3DMOTBeams(
     k=constants.kmag, s=constants.s, delta=0., beam_type=pylcp.infinitePlaneWaveBeam
 )
@@ -41,12 +44,13 @@ obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 # ---------------------------------------------------------------------------
 # Build batched initial conditions
 # ---------------------------------------------------------------------------
-tmax = 1e3
-MAX_STEPS = 5000  # ~5000 output points, matching original t_eval resolution
+tmax = 1e5
+MAX_STEPS = 5000  # ~2500 output points, 5000 in original t_eval resolution
 
 state_dim = hamiltonian.n**2 + 6
-optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=128, safety=0.6)
-Natoms = optimal_n if optimal_n is not None else 96
+INNER_MAX_STEPS = 512
+optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=INNER_MAX_STEPS, safety=0.6)
+Natoms = min(optimal_n, 512) if optimal_n is not None else 96 # Overly conservative with the gpu
 print(f"State dim: {state_dim}, optimal batch size: {optimal_n}, using Natoms={Natoms}")
 
 rng = np.random.default_rng()
@@ -66,6 +70,10 @@ rho0_all = np.stack(rho0_all)
 y0_batch = jnp.array(np.concatenate([rho0_all, v0_all, r0_all], axis=1))
 keys_batch = jax.random.split(jax.random.PRNGKey(rng.integers(0, 2**31)), Natoms)
 
+trap_time_total = time.monotonic() - trap_time
+m, s = divmod(int(trap_time_total), 60)
+h, m = divmod(m, 60)
+print(f"Trap build time: {h}h{m:02d}m{s:02d}s")
 # ---------------------------------------------------------------------------
 # Run simulation
 # ---------------------------------------------------------------------------
@@ -80,6 +88,7 @@ sols = obe.evolve_motion(
     max_scatter_probability=0.5,
     max_step=tmax / MAX_STEPS,
     max_steps=MAX_STEPS,
+    inner_max_steps=INNER_MAX_STEPS,
 )
 
 t_total = time.monotonic() - t_total_start

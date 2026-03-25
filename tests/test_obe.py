@@ -1647,8 +1647,12 @@ class TestRandomRecoilCPU:
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
-                        random_recoil=True, backend='cpu')
+        # Fixed key for determinism; t=[0,50] gives ~5000 steps at P≈0.0045/step
+        # so P(zero events) ≈ 1e-10 — effectively guaranteed.
+        keys_batch = jax.random.split(jax.random.PRNGKey(0), 1)
+        o.evolve_motion([0, 50], freeze_axis=[False, False, False],
+                        random_recoil=True, backend='cpu',
+                        keys_batch=keys_batch)
         sol = o.sols[0]
         assert len(sol.t_random) > 0, "Should have scatter events"
         assert jnp.any(sol.n_random > 0), "Should have nonzero scatter counts"
