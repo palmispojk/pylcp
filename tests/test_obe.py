@@ -1619,35 +1619,60 @@ class TestRandomRecoilCPU:
         return obe(beams, B, ham, transform_into_re_im=True)
 
     def test_random_recoil_no_nan(self, scattering_obe):
+        """Position and velocity must stay finite under stochastic recoil.
+
+        Deterministic: uses a fixed PRNG key.  The fixture's high saturation
+        (s=10, on resonance) ensures many scattering events per run regardless
+        of the chosen seed, so the test exercises the recoil code path.
+        """
         o = scattering_obe
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
+        keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
         assert not jnp.any(jnp.isnan(o.sols[0].v))
 
     def test_random_recoil_produces_velocity_change(self, scattering_obe):
-        """With scattering, the atom should acquire velocity from recoil kicks."""
+        """Atom must acquire nonzero velocity from recoil kicks.
+
+        Deterministic: uses a fixed PRNG key.  The fixture's high saturation
+        (s=10, on resonance) ensures many scattering events per run regardless
+        of the chosen seed, so a velocity change is guaranteed.
+        """
         o = scattering_obe
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
+        keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         v_final = np.array(o.sols[0].v[:, -1])
         assert np.linalg.norm(v_final) > 0, \
             "Atom should have nonzero velocity after scattering with recoil"
 
     def test_random_recoil_scatter_events_recorded(self, scattering_obe):
-        """Solution must record scatter events."""
+        """Solution must record scatter events.
+
+        Deterministic: uses a fixed PRNG key.  The fixture's high saturation
+        (s=10, on resonance) ensures many scattering events per run regardless
+        of the chosen seed.
+        """
         o = scattering_obe
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
+        keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         sol = o.sols[0]
         assert len(sol.t_random) > 0, "Should have scatter events"
@@ -1737,33 +1762,60 @@ class TestRandomRecoilGPU:
         return obe(beams, B, ham, transform_into_re_im=True)
 
     def test_random_recoil_no_nan(self, scattering_obe):
+        """Position and velocity must stay finite under stochastic recoil.
+
+        Deterministic: uses a fixed PRNG key.  The fixture's high saturation
+        (s=10, on resonance) ensures many scattering events per run regardless
+        of the chosen seed, so the test exercises the recoil code path.
+        """
         o = scattering_obe
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
+        keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
                         random_recoil=True, backend='gpu')
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
         assert not jnp.any(jnp.isnan(o.sols[0].v))
 
     def test_random_recoil_produces_velocity_change(self, scattering_obe):
+        """Atom must acquire nonzero velocity from recoil kicks.
+
+        Deterministic: uses a fixed PRNG key.  The fixture's high saturation
+        (s=10, on resonance) ensures many scattering events per run regardless
+        of the chosen seed, so a velocity change is guaranteed.
+        """
         o = scattering_obe
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
+        keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
                         random_recoil=True, backend='gpu')
         v_final = np.array(o.sols[0].v[:, -1])
         assert np.linalg.norm(v_final) > 0, \
             "Atom should have nonzero velocity after scattering with recoil"
 
     def test_random_recoil_scatter_events_recorded(self, scattering_obe):
+        """Solution must record scatter events.
+
+        Deterministic: uses a fixed PRNG key.  The fixture's high saturation
+        (s=10, on resonance) ensures many scattering events per run regardless
+        of the chosen seed.
+        """
         o = scattering_obe
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 5], freeze_axis=[False, False, False],
+        y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
+        keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
+        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+                        freeze_axis=[False, False, False],
                         random_recoil=True, backend='gpu')
         sol = o.sols[0]
         assert len(sol.t_random) > 0, "Should have scatter events"
