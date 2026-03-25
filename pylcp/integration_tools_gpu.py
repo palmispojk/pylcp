@@ -367,12 +367,30 @@ def _batched_random_trajectories(
 def _bytes_per_atom(state_dim, max_steps, inner_max_steps=64):
     """Estimated peak GPU allocation per atom in the batched solver.
 
-    Accounts for:
-        outer ts:  (max_steps,)                   float64
-        outer ys:  (max_steps, state_dim)          float64
-        inner ys:  (inner_max_steps, state_dim)    float64  (per diffrax call)
+    Accounts for all arrays in the ``while_loop`` carry state, diffrax
+    internal stage buffers, and XLA's double-buffering of the carry.
+
+    Arrays per atom:
+        outer ts:       (max_steps,)                   float64
+        outer ys:       (max_steps, state_dim)          float64
+        t_random:       (max_steps,)                   float64
+        n_random:       (max_steps,)                   int32
+        inner ys:       (inner_max_steps, state_dim)    float64  (diffrax saveat)
+        diffrax stages: ~7 * state_dim                  float64  (Dopri5 + PID)
+        scalars:        t, dt, y, key, step_idx, nfev  ~64 bytes
+
+    The total is multiplied by 2 to account for XLA ``while_loop``
+    double-buffering of the carry state.
     """
-    return 8 * (max_steps * (1 + state_dim) + inner_max_steps * state_dim)
+    outer_ts = max_steps * 8
+    outer_ys = max_steps * state_dim * 8
+    t_random = max_steps * 8
+    n_random = max_steps * 4
+    inner_buf = inner_max_steps * state_dim * 8
+    diffrax_stages = 7 * state_dim * 8
+    scalars = 64
+    per_atom = outer_ts + outer_ys + t_random + n_random + inner_buf + diffrax_stages + scalars
+    return int(per_atom * 2.0)
 
 
 def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6):
