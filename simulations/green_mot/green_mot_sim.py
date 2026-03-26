@@ -45,12 +45,20 @@ obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 # Build batched initial conditions
 # ---------------------------------------------------------------------------
 tmax = 1e5
-MAX_STEPS = 5000  # ~2500 output points, 5000 in original t_eval resolution
+# MAX_STEPS drives how far the outer while_loop runs.  Each outer step is
+# scatter-rate limited to ~0.25–1.72 natural units depending on how close the
+# atom is to resonance.  Worst case (fully captured, near resonance): dt≈0.25
+# → need tmax/0.25 = 400 000 steps to reach tmax=1e5.
+# SAVE_EVERY keeps output at 5000 points regardless of MAX_STEPS.
+# INNER_MAX_STEPS: benchmark shows ~5 inner evals/outer step at max_step=0.25,
+# so 64 is sufficient.
+MAX_STEPS = 400_000
+SAVE_EVERY = 80        # 400_000 // 80 = 5000 output points
+INNER_MAX_STEPS = 64
 
 state_dim = hamiltonian.n**2 + 6
-INNER_MAX_STEPS = 512
-optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=INNER_MAX_STEPS, safety=0.6)
-Natoms = min(optimal_n, 512) if optimal_n is not None else 96 # Overly conservative with the gpu
+optimal_n = optimal_batch_size(state_dim, MAX_STEPS, inner_max_steps=INNER_MAX_STEPS, safety=0.6, save_every=SAVE_EVERY)
+Natoms = min(optimal_n, 1024) if optimal_n is not None else 96
 print(f"State dim: {state_dim}, optimal batch size: {optimal_n}, using Natoms={Natoms}")
 
 rng = np.random.default_rng()
@@ -89,20 +97,33 @@ sols = obe.evolve_motion(
     max_step=tmax / MAX_STEPS,
     max_steps=MAX_STEPS,
     inner_max_steps=INNER_MAX_STEPS,
+    save_every=SAVE_EVERY,
+    progress=True,
 )
 
 t_total = time.monotonic() - t_total_start
 m, s = divmod(int(t_total), 60)
 h, m = divmod(m, 60)
+n_success = sum(1 for sol in sols if sol.success)
+final_ts = np.array([float(sol._batched_state['t'][sol._index]) for sol in sols])
 print(f"Simulation complete — {len(sols)} trajectories in {h}h{m:02d}m{s:02d}s")
 print(f"  {t_total/Natoms:.2f} s/atom")
+print(f"  Reached tmax: {n_success}/{Natoms} ({100*n_success/Natoms:.0f}%)")
+print(f"  Final t: min={final_ts.min():.0f}  median={np.median(final_ts):.0f}  max={final_ts.max():.0f}")
 
 # ---------------------------------------------------------------------------
 # Save results
 # ---------------------------------------------------------------------------
 results = []
 for sol in sols:
-    results.append((np.asarray(sol.t), np.asarray(sol.r), np.asarray(sol.v)))
+    results.append({
+        't':        np.asarray(sol.t),
+        'r':        np.asarray(sol.r),
+        'v':        np.asarray(sol.v),
+        'success':  sol.success,
+        't_random': np.asarray(sol.t_random),
+        'n_random': np.asarray(sol.n_random),
+    })
 
 with open('mot_simulation_data.pkl', 'wb') as f:
     pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
