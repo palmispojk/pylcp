@@ -223,30 +223,32 @@ def _batched_random_trajectories(
     tf,
     y0_batch,
     keys_batch,
-    max_steps,
     max_step_global,
     rtol,
     atol,
     dt0,
     solver_type="Dopri5",
-    inner_max_steps=64,
     args=None,
-    save_every=1,
+    n_output=5000,
     progress=False,
     output_dir=None,
     ):
     """
     Batched stochastic trajectory solver with disk-backed output accumulation.
 
-    Runs groups of ``save_every`` ODE steps on GPU via a JIT-compiled
+    The host loop iterates over ``n_output`` evenly-spaced save times.
+    For each save slot the JIT-compiled inner kernel advances every atom
+    from its current time to the next save time (or ``tf``, whichever is
+    smaller) using adaptive recoil-limited steps inside a
     ``jax.lax.while_loop`` vmapped across atoms.  After each group the
     snapshot (one point per atom) is written to a memory-mapped file and
-    the next group is dispatched.  **No output history arrays are ever
-    allocated on GPU or in RAM** — only the small per-atom carry
-    (y, t, dt, key, counters) and diffrax scratch buffers reside on
-    device; output goes straight to disk via the OS page cache.  Peak
-    memory (GPU *and* CPU) is therefore independent of ``max_steps``
-    and ``save_every``.
+    the next group is dispatched.
+
+    **No output history arrays are ever allocated on GPU or in RAM** —
+    only the small per-atom carry (y, t, dt, key, counters) and diffrax
+    scratch buffers reside on device; output goes straight to disk via
+    the OS page cache.  Peak memory (GPU *and* CPU) is therefore
+    independent of the number of internal steps taken.
 
     The JIT kernel compiles once on the first group call and is reused
     for all subsequent groups.  Host-loop dispatch overhead is ~0.5 ms
@@ -255,6 +257,8 @@ def _batched_random_trajectories(
     the OS, so they add no measurable latency to the host loop.
 
     Args:
+        n_output (int): Number of evenly-spaced output points.
+            Default: 5000.
         progress (bool): Print progress every ~5 %%.  Default: False.
         output_dir (str or None): Directory for temporary memmap files.
             Defaults to the system temp directory.  Use a fast local
@@ -279,25 +283,30 @@ def _batched_random_trajectories(
                          f"solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
 
     term = ODETerm(_ensure_3arg(func))
-    n_save = max_steps // save_every
     N = y0_batch.shape[0]
     state_dim = y0_batch.shape[1]
 
-    # -- JIT kernel: one save group (save_every steps) ---------------------
-    # The while_loop carry is TINY (no output arrays).  XLA double-buffers
-    # this carry, but at ~1 KiB/atom that is negligible.
+    # -- Time-based save grid ----------------------------------------------
+    # n_output evenly-spaced save boundaries from t0 to tf.
+    # The host loop drives one group per save slot; the inner kernel
+    # takes as many adaptive steps as needed to reach t_save_next.
+    t_save_grid = np.linspace(float(t0), float(tf), n_output + 1)
+
+    # -- JIT kernel: advance to a target time ------------------------------
+    # t_save_next is a dynamic field in the carry, so the same compiled
+    # kernel is reused for every save slot.
 
     def _single_group(carry):
-        """Run up to save_every ODE steps for one atom."""
+        """Run adaptive steps for one atom until t >= t_save_next."""
+        t_save_next = carry['t_save_next']
+
         def cond_fn(s):
-            return ((s['t'] < tf) &
-                    (s['count'] < save_every) &
-                    (s['step_idx'] < max_steps))
+            return (s['t'] < t_save_next)
 
         def body_fn(s):
             t_curr = s['t']
             dt_curr = s['dt']
-            t_next = jnp.minimum(t_curr + dt_curr, tf)
+            t_next = jnp.minimum(t_curr + dt_curr, s['t_save_next'])
             actual_dt = t_next - t_curr
 
             sol = diffeqsolve(
@@ -306,7 +315,7 @@ def _batched_random_trajectories(
                 y0=s['y'], args=args,
                 stepsize_controller=PIDController(rtol=rtol, atol=atol),
                 saveat=SaveAt(t1=True),
-                max_steps=inner_max_steps,
+                max_steps=None,
             )
             y_next = sol.ys[-1]
             nfev_add = sol.stats['num_steps']
@@ -319,19 +328,17 @@ def _batched_random_trajectories(
             return {
                 't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
                 'step_idx': s['step_idx'] + 1,
-                'count': s['count'] + 1,
                 'nfev': s['nfev'] + nfev_add,
                 'last_t_random': jnp.where(
                     n_scatters > 0, t_next, s['last_t_random']),
                 'last_n_random': jnp.where(
                     n_scatters > 0, jnp.int32(n_scatters),
                     s['last_n_random']),
+                't_save_next': s['t_save_next'],
             }
 
-        init = {**carry, 'count': jnp.int32(0)}
-        final = jax.lax.while_loop(cond_fn, body_fn, init)
-        # Drop the loop counter — not needed outside the group.
-        return {k: v for k, v in final.items() if k != 'count'}
+        final = jax.lax.while_loop(cond_fn, body_fn, carry)
+        return final
 
     @jax.jit
     def _run_group(carry_batch):
@@ -347,10 +354,11 @@ def _batched_random_trajectories(
         'nfev': jnp.zeros(N, dtype=jnp.int32),
         'last_t_random': jnp.zeros(N, dtype=jnp.float64),
         'last_n_random': jnp.zeros(N, dtype=jnp.int32),
+        't_save_next': jnp.full(N, t_save_grid[1], dtype=jnp.float64),
     }
 
     # -- Pre-allocate disk-backed output arrays (memmap) --------------------
-    n_total = n_save + 1  # +1 for initial state in slot 0
+    n_total = n_output + 1  # +1 for initial state in slot 0
     _tmpdir = output_dir or tempfile.gettempdir()
 
     def _make_mmap(name, shape, dtype):
@@ -372,13 +380,11 @@ def _batched_random_trajectories(
     ts_cpu[:, 0] = np.asarray(carry['t'])
     ys_cpu[:, 0, :] = np.asarray(carry['y'])
 
-    # -- Host loop: run groups, snapshot to CPU ----------------------------
-    tf_float = float(tf)
-    save_idx = 1
-    _log_interval = max(1, n_save // 20)  # ~5 % increments
+    # -- Host loop: one group per save slot --------------------------------
+    _log_interval = max(1, n_output // 20)  # ~5 % increments
     _t_first_group = None
 
-    for _gi in range(n_save):
+    for _gi in range(n_output):
         carry = _run_group(carry)
 
         # Start timer after first group (which includes JIT compilation).
@@ -388,38 +394,34 @@ def _batched_random_trajectories(
         if progress and _gi > 0 and _gi % _log_interval == 0:
             elapsed = time.monotonic() - _t_first_group
             rate = _gi / elapsed
-            eta = (n_save - _gi) / rate if rate > 0 else 0
+            eta = (n_output - _gi) / rate if rate > 0 else 0
             m, s = divmod(int(eta), 60)
             h, m = divmod(m, 60)
-            print(f"\r  [{_gi}/{n_save}] {100*_gi/n_save:.0f}%  "
+            print(f"\r  [{_gi}/{n_output}] {100*_gi/n_output:.0f}%  "
                   f"ETA {h}h{m:02d}m{s:02d}s", end="", flush=True)
 
         # Tiny transfer: scalars + one state vector per atom.
+        save_idx = _gi + 1
         ts_cpu[:, save_idx] = np.asarray(carry['t'])
         ys_cpu[:, save_idx, :] = np.asarray(carry['y'])
         t_random_cpu[:, save_idx] = np.asarray(carry['last_t_random'])
         n_random_cpu[:, save_idx] = np.asarray(carry['last_n_random'])
-        save_idx += 1
 
-        # Reset scatter accumulators for the next group.
-        carry = {
-            **carry,
-            'last_t_random': jnp.zeros(N, dtype=jnp.float64),
-            'last_n_random': jnp.zeros(N, dtype=jnp.int32),
-        }
-
-        # Early exit when every atom has finished.
-        t_now = ts_cpu[:, save_idx - 1]
-        steps_now = np.asarray(carry['step_idx'])
-        if np.all((t_now >= tf_float) | (steps_now >= max_steps)):
-            break
+        # Reset scatter accumulators and advance save target for next group.
+        if _gi < n_output - 1:
+            carry = {
+                **carry,
+                'last_t_random': jnp.zeros(N, dtype=jnp.float64),
+                'last_n_random': jnp.zeros(N, dtype=jnp.int32),
+                't_save_next': jnp.full(N, t_save_grid[_gi + 2],
+                                        dtype=jnp.float64),
+            }
 
     if progress:
-        print(f"\r  [{n_save}/{n_save}] 100%  done.          ")
+        print(f"\r  [{n_output}/{n_output}] 100%  done.          ")
 
-    # Compute per-atom save_idx (number of valid output points).
-    # All atoms save the same number of groups, so save_idx is uniform.
-    save_idx_arr = np.full(N, save_idx, dtype=np.int32)
+    # All atoms save exactly n_output + 1 points (including initial state).
+    save_idx_arr = np.full(N, n_output + 1, dtype=np.int32)
 
     return {
         't': np.asarray(carry['t']),
@@ -433,34 +435,35 @@ def _batched_random_trajectories(
         'nfev': np.asarray(carry['nfev']),
     }
 
-def _bytes_per_atom(state_dim, max_steps, inner_max_steps=64, save_every=1):
+def _bytes_per_atom(state_dim):
     """Estimated peak GPU allocation per atom in the batched solver.
 
     The solver streams output to **disk-backed memmap files** via a host
     loop, so neither GPU nor CPU RAM hold the output history.  Only the
     small per-atom while_loop carry and diffrax scratch buffers reside
-    on device.  Peak GPU memory is therefore independent of
-    ``max_steps`` and ``save_every``.
+    on device.  The inner diffrax solver uses ``max_steps=None``
+    (unbounded ``jax.lax.while_loop``), so there are no step-count-
+    dependent buffers — only the RK stages.
 
     While_loop carry (double-buffered by XLA):
         y, t, dt, key, counters, scatter info     ~(state_dim * 8 + 100) bytes × 2
 
     Diffrax internals per inner solve:
         RK stages:      ~7 * state_dim             float64  (Dopri5 + PID)
-        step buffers:   (inner_max_steps, state_dim) float64
     """
     # Carry state (double-buffered by XLA's while_loop):
     #   y (state_dim f64), t (f64), dt (f64), key (2×u32),
-    #   step_idx (i32), count (i32), nfev (i32),
-    #   last_t_random (f64), last_n_random (i32)  ≈ state_dim*8 + 48
+    #   step_idx (i32), nfev (i32),
+    #   last_t_random (f64), last_n_random (i32),
+    #   t_save_next (f64)  ≈ state_dim*8 + 56
     carry = 2 * (state_dim * 8 + 100)
-    # Diffrax internal buffers inside the body:
-    diffrax_buf = inner_max_steps * state_dim * 8 + 7 * state_dim * 8
+    # Diffrax internal buffers (RK stages only, no step-count buffers):
+    diffrax_buf = 7 * state_dim * 8
     per_atom = carry + diffrax_buf
     return int(per_atom)
 
 
-def _probe_bytes_per_atom(state_dim, inner_max_steps=64):
+def _probe_bytes_per_atom(state_dim):
     """Measure actual GPU bytes-per-atom by running a tiny probe.
 
     Runs a 2-step integration for N=2 and N=8 atoms, measures peak GPU
@@ -471,7 +474,7 @@ def _probe_bytes_per_atom(state_dim, inner_max_steps=64):
     The probe uses a trivial ODE (dy/dt = 0) and completes in <1 s.
     The JIT-compiled kernel shape matches the real solver because it
     uses the same code path with identical ``state_dim`` and
-    ``inner_max_steps``.
+    ``max_steps=None`` (unbounded inner solver).
 
     Returns:
         int: Measured bytes per atom, or falls back to the analytical
@@ -479,7 +482,7 @@ def _probe_bytes_per_atom(state_dim, inner_max_steps=64):
     """
     gpu_devs = _gpu_devices()
     if not gpu_devs:
-        return _bytes_per_atom(state_dim, 1, inner_max_steps)
+        return _bytes_per_atom(state_dim)
 
     from diffrax import diffeqsolve, ODETerm, Dopri5, SaveAt, PIDController
 
@@ -502,7 +505,7 @@ def _probe_bytes_per_atom(state_dim, inner_max_steps=64):
                 y0=s['y'], args=None,
                 stepsize_controller=PIDController(rtol=1e-5, atol=1e-6),
                 saveat=SaveAt(t1=True),
-                max_steps=inner_max_steps,
+                max_steps=None,
             )
             return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],
                     'count': s['count'] + 1}
@@ -540,7 +543,7 @@ def _probe_bytes_per_atom(state_dim, inner_max_steps=64):
     measured_bpa = max(1, (mem_8 - mem_2) // (8 - 2))
 
     # Fall back to analytical if measurement looks wrong
-    analytical_bpa = _bytes_per_atom(state_dim, 1, inner_max_steps)
+    analytical_bpa = _bytes_per_atom(state_dim)
     if measured_bpa < analytical_bpa:
         measured_bpa = analytical_bpa
 
@@ -559,7 +562,7 @@ def _probe_bytes_per_atom(state_dim, inner_max_steps=64):
     return int(measured_bpa)
 
 
-def _probe_throughput_cap(state_dim, inner_max_steps=64, threshold=1.15,
+def _probe_throughput_cap(state_dim, threshold=1.15,
                           max_n=131072, n_groups=5):
     """Find the batch size where GPU compute throughput saturates.
 
@@ -573,7 +576,6 @@ def _probe_throughput_cap(state_dim, inner_max_steps=64, threshold=1.15,
 
     Args:
         state_dim: Length of the per-atom state vector.
-        inner_max_steps: Inner diffrax buffer size.
         threshold: Minimum speedup ratio (s_per_atom_prev / s_per_atom_cur)
             to keep doubling.  Default 1.15 (15% improvement).
         max_n: Hard upper limit on probe batch size.
@@ -608,7 +610,7 @@ def _probe_throughput_cap(state_dim, inner_max_steps=64, threshold=1.15,
                 y0=s['y'], args=None,
                 stepsize_controller=PIDController(rtol=1e-5, atol=1e-6),
                 saveat=SaveAt(t1=True),
-                max_steps=inner_max_steps,
+                max_steps=None,
             )
             return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],
                     'count': s['count'] + 1}
@@ -680,7 +682,7 @@ def _probe_throughput_cap(state_dim, inner_max_steps=64, threshold=1.15,
     return knee_n
 
 
-def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6, save_every=1):
+def optimal_batch_size(state_dim, safety=0.6, **_ignored):
     """Return the optimal batch size considering both GPU memory and throughput.
 
     Runs two probes at startup (~5-10 s total):
@@ -697,12 +699,8 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6, sav
 
     Args:
         state_dim (int): Length of the per-atom state vector (``y0.shape[-1]``).
-        max_steps (int): Outer buffer size passed to the solver.
-        inner_max_steps (int, optional): Inner diffrax buffer size. Defaults to 64.
         safety (float, optional): Fraction of free memory to use. Defaults to 0.6
             to leave headroom for XLA workspace and compilation buffers.
-        save_every (int, optional): Stride passed to ``_batched_random_trajectories``.
-            Output buffers are sized ``max_steps // save_every + 1``. Defaults to 1.
 
     Returns:
         int: Recommended total batch size, or ``None`` if no GPU is present.
@@ -715,7 +713,7 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6, sav
 
     # --- Memory ceiling ---
     infos = _gpu_device_info(gpu_devs)
-    bpa = _probe_bytes_per_atom(state_dim, inner_max_steps)
+    bpa = _probe_bytes_per_atom(state_dim)
 
     capacities = []
     for info in infos:
@@ -728,7 +726,7 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6, sav
     memory_cap = min_cap * len(gpu_devs)
 
     # --- Throughput ceiling ---
-    throughput_cap = _probe_throughput_cap(state_dim, inner_max_steps)
+    throughput_cap = _probe_throughput_cap(state_dim)
 
     total = min(memory_cap, throughput_cap)
 
@@ -760,7 +758,7 @@ def optimal_batch_size(state_dim, max_steps, inner_max_steps=64, safety=0.6, sav
     return total
 
 
-def optimal_batch_size_per_gpu(state_dim, max_steps, inner_max_steps=64, safety=0.6, save_every=1):
+def optimal_batch_size_per_gpu(state_dim, safety=0.6, **_ignored):
     """Return per-GPU atom capacities for heterogeneous multi-GPU setups.
 
     Unlike :func:`optimal_batch_size` which returns a single total capped by
@@ -768,9 +766,8 @@ def optimal_batch_size_per_gpu(state_dim, max_steps, inner_max_steps=64, safety=
     callers can assign proportional work.
 
     Args:
-        state_dim, max_steps, inner_max_steps, safety: Same as
-            :func:`optimal_batch_size`.
-        save_every (int, optional): Stride for output decimation. Defaults to 1.
+        state_dim (int): Length of the per-atom state vector.
+        safety (float, optional): Fraction of free memory to use. Defaults to 0.6.
 
     Returns:
         list of (jax.Device, int) pairs, or ``None`` if no GPU is present.
@@ -781,7 +778,7 @@ def optimal_batch_size_per_gpu(state_dim, max_steps, inner_max_steps=64, safety=
         return None
 
     infos = _gpu_device_info(gpu_devs)
-    bpa = _probe_bytes_per_atom(state_dim, inner_max_steps)
+    bpa = _probe_bytes_per_atom(state_dim)
 
     result = []
     for info in infos:
@@ -799,14 +796,12 @@ def solve_ivp_random(
     y0_batch,
     keys_batch,
     solver_type="Dopri5",
-    max_steps=100000,
-    inner_max_steps=None,
     max_step=float('inf'),
     rtol=1e-5,
     atol=1e-6,
     batch_size=None,
     args=None,
-    save_every=1,
+    n_output=5000,
     progress=False,
     output_dir=None,
     **options
@@ -817,6 +812,11 @@ def solve_ivp_random(
     This function is the parallel, GPU-accelerated replacement for standard
     `scipy.integrate.solve_ivp`. It takes a batch of initial conditions and
     simulates thousands of trajectories concurrently using Diffrax.
+
+    Output is saved at ``n_output`` evenly-spaced times between ``t_span[0]``
+    and ``t_span[1]``, regardless of how many internal steps the solver takes.
+    This decouples output resolution from the adaptive step size, following
+    the same pattern as ``scipy.integrate.solve_ivp(t_eval=...)``.
 
     Args:
         fun (callable):
@@ -837,33 +837,23 @@ def solve_ivp_random(
         solver_type (str, optional):
             Integration method mapped to Diffrax. Options include "Dopri5" (RK45),
             "Bosh3" (RK23), or "Kvaerno5" (Radau/BDF). Defaults to "Dopri5".
-        max_steps (int or None, optional):
-            Maximum number of outer steps before termination.  If ``None``
-            (default), auto-calculated as ``2 * t_range / max_step`` with
-            headroom for adaptive stepping.
-        max_step (float or None, optional):
-            Maximum global allowed step size.  If ``None`` (default),
-            auto-calculated from ``max_scatter_probability`` in ``args``.
+        max_step (float, optional):
+            Maximum allowed step size (ceiling on the recoil-limited dt).
+            Default: ``inf`` (no ceiling; the recoil limiter controls dt).
         rtol (float, optional):
             Relative tolerance for the step size controller. Defaults to 1e-5.
         atol (float, optional):
-            Absolute tolerance for the step size controller. Defaults to 1e-5.
-        inner_max_steps (int, optional):
-            Maximum adaptive steps the inner diffrax solver may take per
-            outer time step.  The outer loop already controls time
-            progression; the inner solver only integrates one ``dt``
-            interval, so a small value (default 64) is sufficient and
-            avoids massive over-allocation on GPU.
+            Absolute tolerance for the step size controller. Defaults to 1e-6.
         batch_size (int, optional):
             Maximum number of atoms to integrate simultaneously.  When
             set, atoms are processed in chunks of this size to limit peak
             GPU memory.  Each chunk reuses the same compiled kernel so
-            there is no extra JIT cost.  Default: ``None`` (all atoms in
-            one batch).
+            there is no extra JIT cost.  Default: ``None`` (auto-detected
+            from available GPU memory).
         n_output (int, optional):
-            Desired number of output points per trajectory.  Used to
-            auto-calculate the internal ``save_every`` stride.
-            Default: 5000.
+            Number of evenly-spaced output points per trajectory.  The
+            solver takes as many internal adaptive steps as needed and
+            saves the state at each output time.  Default: 5000.
         output_dir (str or None, optional):
             Directory for temporary memmap output files.  Defaults to the
             system temp directory.  Use a fast local filesystem (SSD/NVMe)
@@ -873,32 +863,29 @@ def solve_ivp_random(
             (e.g., standard `method` overrides).
 
     Returns:
-        list of RandomOdeResult: 
-            A list containing `N` result objects (one for each atom in the batch). 
-            Each `RandomOdeResult` mimics standard SciPy behavior with padded 
+        list of RandomOdeResult:
+            A list containing `N` result objects (one for each atom in the batch).
+            Each `RandomOdeResult` mimics standard SciPy behavior with padded
             zeroes cleanly trimmed off. Key attributes of each result include:
-            - `t` (ndarray): Time points.
+            - `t` (ndarray): Time points (evenly spaced, shape ``(n_output+1,)``).
             - `y` (ndarray): Values of the solution at `t`.
             - `t_random` (ndarray): Times at which stochastic scattering jumps occurred.
             - `inds_random` (ndarray): Boolean mask mapping jump events to the `t` and `y` grids.
             - `success` (bool): True if the solver reached `tf`.
             - `status` (int): 0 if successful, -1 if terminated early.
     """
-    
+
     # cast to jnp just in case
     y0_batch = jnp.asarray(y0_batch)
     keys_batch = jnp.asarray(keys_batch)
     t0, tf = jnp.asarray(t_span[0], dtype=jnp.float64), jnp.asarray(t_span[1], dtype=jnp.float64)
-    dt0 = jnp.minimum(jnp.asarray((tf - t0) * 1e-3, dtype=jnp.float64),
+    t_range = float(tf - t0)
+    dt0 = jnp.minimum(jnp.asarray(t_range * 1e-3, dtype=jnp.float64),
                        jnp.asarray(max_step, dtype=jnp.float64))
     N = y0_batch.shape[0]
 
-    if inner_max_steps is None:
-        inner_max_steps = max_steps
-
     if batch_size is None:
-        state_dim = y0_batch.shape[-1]
-        batch_size = optimal_batch_size(state_dim, max_steps, inner_max_steps, save_every=save_every) or N
+        batch_size = N
 
     gpu_devs = _gpu_devices()
     n_gpus = len(gpu_devs)
@@ -908,7 +895,7 @@ def solve_ivp_random(
         _log.info(
             f"[GPU DEBUG: solve_ivp_random] N={N}, batch_size={batch_size}, "
             f"n_gpus={n_gpus}, state_dim={y0_batch.shape[-1]}, "
-            f"max_steps={max_steps}"
+            f"n_output={n_output}"
         )
 
     def _run_chunk(y0_chunk, keys_chunk, chunk_N):
@@ -916,14 +903,12 @@ def solve_ivp_random(
         if n_gpus > 1:
             y0_chunk, _ = _shard_batch(y0_chunk, gpu_devs)
             keys_chunk, _ = _shard_batch(keys_chunk, gpu_devs)
-        # _batched_random_trajectories returns CPU numpy arrays directly
-        # (output is accumulated on host, not GPU).
         batched_state = _batched_random_trajectories(
             fun, random_func, t0, tf,
             y0_chunk, keys_chunk,
-            max_steps, max_step, rtol, atol, dt0,
-            solver_type, inner_max_steps, args,
-            save_every=save_every,
+            max_step, rtol, atol, dt0,
+            solver_type, args,
+            n_output=n_output,
             progress=progress,
             output_dir=output_dir,
         )

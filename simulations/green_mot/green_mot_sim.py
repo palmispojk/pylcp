@@ -17,7 +17,6 @@ import jax.numpy as jnp
 import pickle
 
 import pylcp
-from pylcp.integration_tools_gpu import optimal_batch_size
 import constants
 
 # ---------------------------------------------------------------------------
@@ -45,21 +44,10 @@ obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 # Build batched initial conditions
 # ---------------------------------------------------------------------------
 tmax = 1e5
-# MAX_STEPS drives how far the outer while_loop runs.  Each outer step is
-# scatter-rate limited to ~0.25–1.72 natural units depending on how close the
-# atom is to resonance.  Worst case (fully captured, near resonance): dt≈0.25
-# → need tmax/0.25 = 400 000 steps to reach tmax=1e5.
-# SAVE_EVERY keeps output at 5000 points regardless of MAX_STEPS.
-# INNER_MAX_STEPS: benchmark shows ~5 inner evals/outer step at max_step=0.25,
-# so 64 is sufficient.
-MAX_STEPS = 400_000
-SAVE_EVERY = 80        # 400_000 // 80 = 5000 output points
-INNER_MAX_STEPS = 64
 
 state_dim = hamiltonian.n**2 + 6
-optimal_n = optimal_batch_size(state_dim, max_steps=200_000, inner_max_steps=INNER_MAX_STEPS)
-Natoms = min(optimal_n, 1024) if optimal_n is not None else 96
-print(f"State dim: {state_dim}, optimal batch size: {optimal_n}, using Natoms={Natoms}")
+Natoms = 1024
+print(f"State dim: {state_dim}, using Natoms={Natoms}")
 
 rng = np.random.default_rng()
 r0_all = constants.rscale[None, :] * rng.standard_normal((Natoms, 3)) + constants.roffset[None, :]
@@ -94,7 +82,7 @@ sols = obe.evolve_motion(
     keys_batch=keys_batch,
     random_recoil=True,
     max_scatter_probability=0.5,
-    inner_max_steps=INNER_MAX_STEPS,
+    n_output=5000,
     progress=True,
 )
 

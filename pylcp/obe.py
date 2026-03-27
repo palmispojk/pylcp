@@ -887,38 +887,29 @@ class obe(governingeq):
             Additional keyword arguments passed to ``solve_ivp_random``.
             Important options include:
 
-            max_step : float, optional
-                Maximum time step the solver is allowed to take. This directly
-                controls the time resolution of the output, since one data
-                point is recorded per step. If not provided, defaults to
-                ``(t_span[1] - t_span[0]) / 500``, yielding ~500 output
-                points. Set a smaller value for finer resolution or a larger
-                value to speed up the integration at the cost of coarser
-                output.
+            n_output : int, optional
+                Number of evenly-spaced output time points.  The solver
+                takes as many internal adaptive steps as needed and saves
+                the state at each output time.  Default: 5000.
 
                 Examples::
 
-                    # Default: ~500 output points
+                    # Default: 5000 output points
                     obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False])
 
-                    # Fine resolution: ~5000 output points
+                    # Coarser output (faster host loop, fewer mmap writes)
                     obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False],
-                                      max_step=10.)
+                                      n_output=500)
 
-                    # Coarse resolution: ~50 output points (faster)
-                    obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False],
-                                      max_step=1000.)
-
-            max_steps : int, optional
-                Maximum number of steps (and thus output points) the solver
-                will take. Pre-allocates JAX arrays to this size. Default:
-                100000.
+            max_step : float, optional
+                Ceiling on the recoil-limited step size.  Default: ``inf``
+                (the recoil limiter controls dt adaptively).
             rtol : float, optional
                 Relative tolerance for the adaptive step controller.
                 Default: 1e-5.
             atol : float, optional
                 Absolute tolerance for the adaptive step controller.
-                Default: 1e-5.
+                Default: 1e-6.
             solver_type : str, optional
                 Diffrax solver to use: ``'Dopri5'``, ``'Bosh3'``, or
                 ``'Kvaerno5'``. Default: ``'Dopri5'``.
@@ -959,9 +950,6 @@ class obe(governingeq):
             self._no_recoil if not random_recoil
             else self._motion_recoil_fn
         )
-
-        if 'max_step' not in kwargs:
-            kwargs['max_step'] = (t_span[1] - t_span[0]) / 500
 
         # Resolve backend: 'auto' uses GPU when a CUDA device is present.
         resolved = backend

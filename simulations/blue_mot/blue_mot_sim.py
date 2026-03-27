@@ -23,7 +23,6 @@ import jax.numpy as jnp
 import pickle
 
 import pylcp
-from pylcp.integration_tools_gpu import optimal_batch_size
 import constants
 
 # ---------------------------------------------------------------------------
@@ -53,11 +52,8 @@ obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 # Build batched initial conditions — Zeeman slower beam
 # ---------------------------------------------------------------------------
 state_dim = hamiltonian.n**2 + 6
-optimal_n = optimal_batch_size(state_dim, constants.MAX_STEPS,
-    inner_max_steps=constants.INNER_MAX_STEPS, safety=0.6,
-    save_every=constants.SAVE_EVERY)
-Natoms = min(optimal_n, constants.MAX_ATOMS) if optimal_n is not None else 256
-print(f"State dim: {state_dim}, optimal batch size: {optimal_n}, using Natoms={Natoms}")
+Natoms = constants.MAX_ATOMS
+print(f"State dim: {state_dim}, using Natoms={Natoms}")
 
 rng = np.random.default_rng()
 
@@ -115,10 +111,7 @@ sols = obe.evolve_motion(
     keys_batch=keys_batch,
     random_recoil=True,
     max_scatter_probability=0.5,
-    max_step=constants.tmax / constants.MAX_STEPS,
-    max_steps=constants.MAX_STEPS,
-    inner_max_steps=constants.INNER_MAX_STEPS,
-    save_every=constants.SAVE_EVERY,
+    n_output=5000,
     progress=True,
 )
 

@@ -90,7 +90,4 @@ roffset = np.array([0.0, 0.0, z_offset])
 # 1 / gamma_real ~ 5.2 ns, so 1e6 natural units ~ 5 ms
 # Tang Fig 3.8 (p.43) shows equilibrium within 15 ms; start with 5 ms
 tmax            = 1e6
-MAX_STEPS       = 2_000_000
-SAVE_EVERY      = 400        # 5000 output points
-INNER_MAX_STEPS = 64
 MAX_ATOMS       = 8192
