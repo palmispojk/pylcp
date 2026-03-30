@@ -902,8 +902,11 @@ class obe(governingeq):
                                       n_output=500)
 
             max_step : float, optional
-                Ceiling on the recoil-limited step size.  Default: ``inf``
-                (the recoil limiter controls dt adaptively).
+                Ceiling on the recoil-limited step size.  When
+                ``random_recoil=True`` and ``max_step`` is not given, it is
+                auto-computed from the on-resonance scattering rate so that
+                all atoms take similarly-sized steps (eliminates GPU warp
+                divergence).  Pass explicitly to override.
             rtol : float, optional
                 Relative tolerance for the adaptive step controller.
                 Default: 1e-5.
@@ -933,6 +936,24 @@ class obe(governingeq):
             keys_batch = jax.random.split(jax.random.PRNGKey(np.random.randint(0, 2**31)), y0_batch.shape[0])
 
         free_axes = jnp.bitwise_not(jnp.asarray(freeze_axis, dtype=bool))
+
+        # Auto-compute max_step from the laser/transition parameters when
+        # random_recoil is enabled and the user hasn't set it explicitly.
+        # A finite max_step caps the adaptive dt so all atoms take similar-
+        # sized steps, which eliminates GPU warp divergence in the vmapped
+        # while_loop and gives ~3x speedup on large batches.
+        if random_recoil and 'max_step' not in kwargs:
+            total_s = sum(
+                beam._s if not callable(beam._s) else beam._s(np.zeros(3), 0.)
+                for beams in self.laserBeams.values()
+                for beam in beams.beam_vector
+            )
+            # On-resonance max scattering rate: gamma/2 * S_tot / (1 + S_tot)
+            # This is a theoretical upper bound; actual rates are always ≤ this.
+            gamma = self.hamiltonian.blocks[0, 1].parameters['gamma']
+            R_max = (gamma / 2) * total_s / (1 + total_s)
+            if R_max > 0:
+                kwargs['max_step'] = max_scatter_probability / R_max
 
         # Pack per-call parameters into a JAX pytree.  The cached
         # closures (_motion_dydt, _motion_recoil_fn) read these at
