@@ -4,21 +4,16 @@ Shared analysis utilities for MOT simulations.
 Extracts physical quantities (temperature, cloud size, capture fraction,
 phase-space density, etc.) from simulation result pickles.
 
-All functions accept a list of result dicts as produced by the simulation
-scripts (keys: 't', 'r', 'v', 'success', 't_random', 'n_random') and a
-unit-conversion dict.
+CLI usage::
 
-Usage from any simulation folder::
+    python analysis.py <pkl_path> <constants.py>
 
-    import sys, os
-    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-    from analysis import load_results, make_units, cloud_summary
-    import constants
+Library usage::
 
-    results = load_results('mot_simulation_data.pkl')
-    units = make_units(constants.kmag_real, constants.gamma_real, constants.mass_real)
-    print(cloud_summary(results, units))
+    from analysis import analyze
+    results, units, summary = analyze('data.pkl', kmag_real, gamma_real, mass_real)
 """
+import os
 import pickle
 import numpy as np
 import scipy.constants as const
@@ -263,6 +258,157 @@ def scattering_rate(results, units, mask=None):
 
 
 # ---------------------------------------------------------------------------
+#  Phase-space density
+# ---------------------------------------------------------------------------
+
+def phase_space_density(results, units, mask=None):
+    """Compute peak phase-space density of the cloud.
+
+    PSD = n_peak * lambda_dB^3, where n_peak is the peak density
+    (assuming Gaussian cloud) and lambda_dB is the thermal de Broglie
+    wavelength.
+
+    Returns:
+        dict with 'psd', 'lambda_dB' (m), 'n_peak' (1/m^3).
+    """
+    temp_info = temperature(results, units, mask=mask)
+    size_info = cloud_size(results, units, mask=mask)
+    n_cap = mask.sum() if mask is not None else len(results)
+
+    T = temp_info['T_mean']
+    m = units['mass_real']
+
+    if T <= 0 or n_cap == 0:
+        return {'psd': np.nan, 'lambda_dB': np.nan, 'n_peak': np.nan}
+
+    # Thermal de Broglie wavelength
+    lambda_dB = np.sqrt(2 * np.pi * const.hbar**2 / (m * const.k * T))
+
+    # Peak density of a 3D Gaussian: N / ((2*pi)^(3/2) * sigma_x * sigma_y * sigma_z)
+    sx = size_info['sigma_x']
+    sy = size_info['sigma_y']
+    sz = size_info['sigma_z']
+    n_peak = n_cap / ((2 * np.pi)**1.5 * sx * sy * sz)
+
+    psd = n_peak * lambda_dB**3
+
+    return {'psd': psd, 'lambda_dB': lambda_dB, 'n_peak': n_peak}
+
+
+# ---------------------------------------------------------------------------
+#  Capture velocity
+# ---------------------------------------------------------------------------
+
+def capture_velocity(results, units, r_thresh=5000, v_thresh=0.5):
+    """Estimate the capture velocity of the MOT.
+
+    Finds the maximum initial speed among atoms that ended up captured.
+
+    Returns:
+        dict with 'v_capture_si' (m/s), 'v_capture_nat' (natural units),
+        'v_capture_95' (95th percentile of captured atoms' initial speeds, m/s).
+    """
+    mask = classify_captured(results, r_thresh=r_thresh, v_thresh=v_thresh)
+    v0 = np.array([res['v'][:, 0] for res in results])
+    speed0 = np.sqrt(np.sum(v0**2, axis=1))
+
+    cap_speeds = speed0[mask]
+    if len(cap_speeds) == 0:
+        return {'v_capture_si': np.nan, 'v_capture_nat': np.nan,
+                'v_capture_95': np.nan}
+
+    v_max = np.max(cap_speeds)
+    v_95 = np.percentile(cap_speeds, 95)
+
+    return {
+        'v_capture_si': v_max * units['v_to_si'],
+        'v_capture_nat': v_max,
+        'v_capture_95': v_95 * units['v_to_si'],
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Equilibration time
+# ---------------------------------------------------------------------------
+
+def equilibration_time(results, units, mask=None, frac=0.90):
+    """Estimate the time for the cloud to reach steady state.
+
+    Computes the RMS speed of (optionally masked) atoms at each saved
+    time step.  The equilibration time is defined as the first time the
+    RMS speed drops below ``frac`` of the way from initial to final value.
+
+    Returns:
+        dict with 't_eq_nat' (natural units), 't_eq_si' (seconds),
+        't_eq_ms' (milliseconds).
+    """
+    subset = results
+    if mask is not None:
+        subset = [r for r, m in zip(results, mask) if m]
+
+    if len(subset) == 0:
+        return {'t_eq_nat': np.nan, 't_eq_si': np.nan, 't_eq_ms': np.nan}
+
+    # Use the time grid from the first atom (all share the same grid)
+    t = subset[0]['t']
+    n_steps = len(t)
+
+    # Compute mean RMS speed at each time step across atoms
+    rms_speed = np.zeros(n_steps)
+    for res in subset:
+        v = res['v']  # shape (3, n_steps)
+        rms_speed += np.sqrt(np.sum(v**2, axis=0))
+    rms_speed /= len(subset)
+
+    v_init = rms_speed[0]
+    v_final = rms_speed[-1]
+    threshold = v_final + (1.0 - frac) * (v_init - v_final)
+
+    # Find first crossing
+    below = np.where(rms_speed <= threshold)[0]
+    if len(below) == 0:
+        t_eq = t[-1]
+    else:
+        t_eq = t[below[0]]
+
+    return {
+        't_eq_nat': t_eq,
+        't_eq_si': t_eq * units['t_to_si'],
+        't_eq_ms': t_eq * units['t_to_si'] * 1e3,
+    }
+
+
+# ---------------------------------------------------------------------------
+#  Atom number vs time (loading curve)
+# ---------------------------------------------------------------------------
+
+def loading_curve(results, units, r_thresh=5000, v_thresh=0.5):
+    """Compute the number of atoms within the capture region at each time step.
+
+    Returns:
+        dict with 't' (natural units), 't_ms' (milliseconds),
+        'n_captured' (atom count at each time step).
+    """
+    t = results[0]['t']
+    n_steps = len(t)
+    n_captured = np.zeros(n_steps, dtype=int)
+
+    for res in results:
+        r = res['r']  # (3, n_steps)
+        v = res['v']  # (3, n_steps)
+        dist = np.sqrt(np.sum(r**2, axis=0))
+        speed = np.sqrt(np.sum(v**2, axis=0))
+        captured = (dist < r_thresh) & (speed < v_thresh)
+        n_captured += captured.astype(int)
+
+    return {
+        't': t,
+        't_ms': t * units['t_to_si'] * 1e3,
+        'n_captured': n_captured,
+    }
+
+
+# ---------------------------------------------------------------------------
 #  Summary
 # ---------------------------------------------------------------------------
 
@@ -280,6 +426,16 @@ def cloud_summary(results, units, r_thresh=5000, v_thresh=0.5):
     T_D = doppler_temperature(units['gamma_real'])
     size = cloud_size(results, units, mask=mask)
     scat = scattering_rate(results, units, mask=mask)
+    psd = phase_space_density(results, units, mask=mask)
+    v_cap = capture_velocity(results, units, r_thresh=r_thresh, v_thresh=v_thresh)
+    t_eq = equilibration_time(results, units, mask=mask)
+    loading = loading_curve(results, units, r_thresh=r_thresh, v_thresh=v_thresh)
+
+    # Loading curve milestones
+    n_captured = loading['n_captured']
+    t_ms = loading['t_ms']
+    half_idx = np.searchsorted(n_captured, n_captured[-1] * 0.5)
+    t_half = t_ms[min(half_idx, len(t_ms) - 1)]
 
     lines = [
         f"=== MOT Simulation Summary ===",
@@ -300,8 +456,74 @@ def cloud_summary(results, units, r_thresh=5000, v_thresh=0.5):
         f"  sigma_z = {size['sigma_z_mm']:.3f} mm",
         f"  center  = ({size['center_x']*1e3:.3f}, {size['center_y']*1e3:.3f}, {size['center_z']*1e3:.3f}) mm",
         f"",
+        f"--- Phase-space density ---",
+        f"  PSD = {psd['psd']:.2e}",
+        f"  lambda_dB = {psd['lambda_dB']*1e9:.2f} nm",
+        f"  n_peak = {psd['n_peak']:.2e} /m^3",
+        f"",
+        f"--- Capture velocity ---",
+        f"  v_capture (max captured) = {v_cap['v_capture_si']:.2f} m/s",
+        f"  v_capture (95th pct)     = {v_cap['v_capture_95']:.2f} m/s",
+        f"",
+        f"--- Equilibration ---",
+        f"  t_eq (90% settled) = {t_eq['t_eq_ms']:.2f} ms",
+        f"  t_half (50% loaded) = {t_half:.2f} ms",
+        f"  N_final in trap = {n_captured[-1]}",
+        f"",
         f"--- Scattering ---",
         f"  Mean rate:          {scat['mean_rate']:.2e} /s",
         f"  Mean per atom:      {scat['mean_scatters_per_atom']:.0f} scatters",
     ]
     return '\n'.join(lines)
+
+
+def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True):
+    """Load results, print summary, and optionally save to a text file.
+
+    Args:
+        pkl_path: Path to the simulation pickle file.
+        kmag_real, gamma_real, mass_real: Physical constants for unit conversion.
+        log: If True, write summary to ``<pkl_stem>_analysis.txt``.
+
+    Returns:
+        tuple of (results, units, summary_string).
+    """
+    results = load_results(pkl_path)
+    units = make_units(kmag_real, gamma_real, mass_real)
+
+    header = f"Loaded {pkl_path} ({len(results)} atoms)\n"
+    summary = header + cloud_summary(results, units)
+    print(summary)
+
+    if log:
+        log_path = os.path.splitext(pkl_path)[0] + '_analysis.txt'
+        with open(log_path, 'w') as f:
+            f.write(summary + '\n')
+        print(f"\nSaved to {log_path}")
+
+    return results, units, summary
+
+
+if __name__ == '__main__':
+    import sys
+    import importlib.util
+
+    if len(sys.argv) < 3:
+        print("Usage: python analysis.py <pkl_path> <constants.py>")
+        sys.exit(1)
+
+    pkl_path = sys.argv[1]
+    constants_path = sys.argv[2]
+
+    if not os.path.exists(pkl_path):
+        print(f"Error: {pkl_path} not found")
+        sys.exit(1)
+    if not os.path.exists(constants_path):
+        print(f"Error: {constants_path} not found")
+        sys.exit(1)
+
+    spec = importlib.util.spec_from_file_location("constants", constants_path)
+    constants = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(constants)
+
+    analyze(pkl_path, constants.kmag_real, constants.gamma_real, constants.mass_real)
