@@ -315,7 +315,7 @@ def _batched_random_trajectories(
                 y0=s['y'], args=args,
                 stepsize_controller=PIDController(rtol=rtol, atol=atol),
                 saveat=SaveAt(t1=True),
-                max_steps=64,
+                max_steps=None,
             )
             y_next = sol.ys[-1]
             nfev_add = sol.stats['num_steps']
