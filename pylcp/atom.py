@@ -1,8 +1,9 @@
-# -*- coding: utf-8 -*-
 """
-Created on Thu Aug 10 12:43:11 2017
+Atomic structure data for laser-coolable alkali atoms.
 
-@author: spe
+Provides the ``state``, ``transition``, and ``atom`` classes that encode
+energy levels, hyperfine constants, lifetimes, and derived quantities
+(saturation intensity, recoil velocity, etc.) for common alkali isotopes.
 """
 import scipy.constants as cts
 import numpy as np
@@ -24,7 +25,7 @@ class state():
             Total electronic angular momentum of the state.
         lam : float, optional
             Wavelength, in meters, of the photon necessary to excite the state
-            from the ground state.  electronic angular momentum of the state.
+            from the ground state.
         E : float, optional
             Energy of the state above the ground state in :math:`\\text{cm}^{-1}`.
         tau : float, optional
@@ -122,17 +123,20 @@ class transition():
         self.nu = cts.c/self.lam  # Hz
         self.omega = 2*np.pi*self.nu
 
-        # Typical definition from Fermi's Golden rule:
-        self.Isat = cts.hbar*self.omega**3*state2.gamma/(12*np.pi*cts.c**2) # W/m^2
-        self.Isat *= 1000/1e4
+        # Saturation intensity from Fermi's Golden Rule (SI), then convert
+        # from W/m^2 to mW/cm^2 (multiply by 1000/1e4 = 0.1):
+        self.Isat = cts.hbar*self.omega**3*state2.gamma/(12*np.pi*cts.c**2)  # W/m^2
+        self.Isat *= 1000/1e4  # -> mW/cm^2
 
-        # Maximum acceleration on this transition:
-        self.a0 = cts.hbar*(2*np.pi*100*self.k)*state2.gamma/2/mass # cm/s^2 ->
-        self.v0 = state2.gamma/(2*np.pi*100*self.k) # cm/s
-        self.x0 = self.v0**2/self.a0
-        self.t0 = self.v0/self.a0
+        # Maximum scattering-force acceleration: a0 = hbar*k*gamma / (2*mass).
+        # The factor 2*pi*100 converts k from cm^{-1} to rad/m.
+        self.a0 = cts.hbar*(2*np.pi*100*self.k)*state2.gamma/2/mass  # m/s^2
+        # Doppler velocity: v0 = gamma / k (in matching CGS-like units)
+        self.v0 = state2.gamma/(2*np.pi*100*self.k)  # m/s
+        self.x0 = self.v0**2/self.a0  # characteristic length scale
+        self.t0 = self.v0/self.a0     # characteristic time scale
 
-        # Save B gamma:
+        # Magnetic field that produces a Zeeman shift equal to one linewidth:
         self.Bgamma = state2.gammaHz/cts.value('Bohr magneton in Hz/T')/1e-4
 
 
@@ -144,7 +148,7 @@ class atom():
     ----------
         species : string
             The isotope number and species of alkali atom.  For lithium-7,
-            species can be eiter "7Li" or "Li7", for example.  Supported species
+            species can be either "7Li" or "Li7", for example.  Supported species
             are "6Li", "7Li", "23Na", "39K", "40K", "41K", "85Rb", "87Rb",
             and "133Cs".
 
@@ -166,7 +170,7 @@ class atom():
             are from the ground state.
     """
     def __init__(self, species):
-        # Prepare to add in some useful electronic states:
+        # Collect the electronic states relevant for laser cooling:
         self.state = []
 
         if species == "6Li" or species == "Li6":
@@ -339,7 +343,7 @@ class atom():
         else:
             raise ValueError("Atom {0:s} not recognized.".format(species))
 
-        # Take the states and make transitions:
+        # Derive transition properties (wavelength, Isat, etc.) from the states:
         self.__make_transitions()
 
 
@@ -353,8 +357,9 @@ class atom():
 
     def __make_transitions(self):
         """
-        Take subtractions of energies to generate transitions from ground
-        state
+        Build transition objects for every excited state relative to the
+        ground state (index 0), computing wavelengths, saturation
+        intensities, and natural unit scales.
         """
         self.transition = []
         for ii, state_i in enumerate(self.state):

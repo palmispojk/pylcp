@@ -1,8 +1,17 @@
+"""
+Hamiltonian representation for multi-level atomic and molecular systems.
+
+This module provides the :class:`hamiltonian` class, which stores the internal
+Hamiltonian of an atom or molecule in a block-structured form.  Diagonal blocks
+describe the field-independent energies and magnetic-field couplings within each
+manifold, while off-diagonal blocks store the dipole matrix elements that couple
+different manifolds via laser fields.
+"""
 import numpy as np
 import jax.numpy as jnp
 from .common import spherical2cart
 
-# Next, define a Hamiltonian class to work out the internal states:
+
 class hamiltonian():
     """
     A representation of the Hamiltonian in blocks
@@ -60,6 +69,15 @@ class hamiltonian():
         block indices for properly extracting the associated :math:`d_q` matrix.
     """
     class block():
+        """
+        A single scalar block of the Hamiltonian matrix.
+
+        Each block stores a 2-D matrix that lives at a specific position in the
+        full Hamiltonian.  Diagonal blocks represent field-independent energies
+        (H_0) or magnetic-field couplings (mu_q) within a single manifold.
+        Off-diagonal blocks represent dipole matrix elements (d_q) that couple
+        two different manifolds.
+        """
         def __init__(self, label, M):
             self.label = label
             self.matrix = jnp.asarray(M, dtype=jnp.complex128)
@@ -87,6 +105,10 @@ class hamiltonian():
 
 
     class vector_block(block):
+        """
+        A spherical-basis vector block with a leading dimension of size 3
+        for the q = -1, 0, +1 components.  Used for mu_q and d_q operators.
+        """
         def __init__(self, label, M):
             super().__init__(label, M)
 
@@ -119,7 +141,7 @@ class hamiltonian():
 
             self.add_d_q_block('g', 'e', args[4], gamma=gamma, k=k)
         elif len(args)>2:
-            raise ValueError('Unknown nummber of arguments.')
+            raise ValueError('Unknown number of arguments.')
         elif len(args)>0:
             raise NotImplementedError('Not yet programmed for %d arguments.' %
                                       len(args))
@@ -489,10 +511,9 @@ class hamiltonian():
 
         Returns:
         H : pylcp.hamiltonian
-            A block-structured Hamiltonian with diagonal elemented diagonalized
-            and :math:`d_q` objects rotated
+            A block-structured Hamiltonian with diagonal elements diagonalized
+            and :math:`d_q` objects rotated into the new eigenbasis.
         """
-        # Now we get to the meat of it:
         if not (isinstance(B, float) or isinstance(B, int)):
             raise ValueError('diag_static_field: the field should be given '+
                              'by a single number, the magnitude (assumed '+
@@ -547,14 +568,13 @@ class hamiltonian():
                     # Diagonalize at this field:
                     Es, U_mat = jnp.linalg.eig(H)
 
-                    # Sort the  output, store the transformation matrix.
+                    # Sort eigenvalues by real part and store the transformation matrix.
                     ind_e = jnp.argsort(jnp.real(Es))
                     Es = Es[ind_e]
                     self.U[ii] = U_mat[:, ind_e]
 
-                    # Check to make sure the diganolization resulted in only real
-                    # components, then build the matrix with the eigenvalues and
-                    # go
+                    # Verify the diagonalization produced only real eigenvalues
+                    # (as expected for a Hermitian Hamiltonian block):
                     if jnp.allclose(jnp.imag(Es), 0.):
                         self.rotated_hamiltonian.blocks[ii, ii].matrix = jnp.diag(jnp.real(Es))
                     else:

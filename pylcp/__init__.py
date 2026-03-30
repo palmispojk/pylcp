@@ -1,7 +1,9 @@
 """
-author: SPE
+pylcp - Python Laser Cooling Physics
 
-Basics of the lcp physics package
+A JAX-accelerated simulation package for laser cooling physics, providing tools
+for computing optical Bloch equations, rate equations, and heuristic models of
+atom-light interactions in the presence of laser beams and magnetic fields.
 """
 import numpy as np
 

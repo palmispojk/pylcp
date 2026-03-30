@@ -1,5 +1,11 @@
 """
-Tools for solving the rate equations.
+Rate equation solver for multi-level laser cooling.
+
+Constructs and solves the optical pumping rate equations from the given laser
+beams, magnetic field, and block-diagonal Hamiltonian.  Supports equilibrium
+population finding, force-profile generation (JAX-vectorised for diagonal
+Hamiltonians), and time-dependent trajectory integration with optional
+stochastic photon recoil via GPU-batched diffrax solvers.
 """
 import numpy as np
 import jax
@@ -180,7 +186,8 @@ class rateeq(governingeq):
 
     def _calc_pumping_rates(self, r, v, t, Bhat):
         """
-        Calculates the pumping rates for each laser beam.
+        Compute the optical pumping rate R_{ij,l} for each laser beam l at the
+        given position, velocity, and time.  Stores results in ``self.Rijl``.
         """
         for key in self.laserBeams:
             ind = self.hamiltonian.rotated_hamiltonian.laser_keys[key]
@@ -446,12 +453,7 @@ class rateeq(governingeq):
     # ------------------------------------------------------------------
 
     def _get_jax_components(self):
-        """
-        Lazily precomputes all JAX-compatible data needed to build Rev and
-        force inside a vmapped / jit-compiled function.
-
-        Only valid for diagonal hamiltonians.
-        """
+        """Precompute JAX arrays for Rev and force (diagonal Hamiltonians only)."""
         if self._jax_components is not None:
             return self._jax_components
 
@@ -541,12 +543,9 @@ class rateeq(governingeq):
 
 
     def _make_jax_rhs(self, t_val=0., free_axes=None):
-        """
-        Returns a JAX-traceable function ``rhs(t, y) -> dy/dt`` for the
-        full motion ODE (populations + velocity + position).
+        """Build JAX-traceable RHS for the full motion ODE (N + v + r).
 
-        Only valid for diagonal hamiltonians.  Closes over precomputed data
-        from _get_jax_components().
+        Only valid for diagonal Hamiltonians.
         """
         Rev_decay_jax, pump_data, force_data, mag_mats = \
             self._get_jax_components()
@@ -824,11 +823,7 @@ class rateeq(governingeq):
 
     def _make_random_force_func(self, pump_data, n_states, mass, free_axes,
                                 max_P):
-        """
-        Returns a JAX-compatible random_force function for solve_ivp_random.
-
-        Signature: (t, y, dt, key) -> (y_out, n_scatters, dt_max, key_new)
-        """
+        """Build JAX random-force function for solve_ivp_random."""
         # Pre-count total number of laser beams across all keys
         n_beams_per_key = {k: len(self.laserBeams[k].beam_vector)
                            for k in pump_data}
@@ -903,11 +898,7 @@ class rateeq(governingeq):
 
 
     def _make_random_recoil_func(self, n_states, free_axes, max_P):
-        """
-        Returns a JAX-compatible random_recoil function for solve_ivp_random.
-
-        Signature: (t, y, dt, key) -> (y_out, n_scatters, dt_max, key_new)
-        """
+        """Build JAX random-recoil function for solve_ivp_random."""
         decay_rates_jax = {k: jnp.array(self.decay_rates[k], dtype=jnp.float64)
                            for k in self.decay_rates}
         decay_indices   = {k: jnp.array(self.decay_N_indices[k])

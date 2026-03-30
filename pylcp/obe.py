@@ -1,6 +1,11 @@
 """
-Tools for solving the OBE for laser cooling
-author: spe
+Optical Bloch equation (OBE) solver for laser cooling.
+
+Constructs and integrates the full density-matrix equations of motion for an
+atom interacting with multiple laser beams and a spatially varying magnetic
+field.  Supports GPU-batched trajectory evolution with optional stochastic
+photon recoil, equilibrium force finding via chunk-convergence, and vectorised
+force-profile generation over position/velocity grids.
 """
 import functools
 import gc
@@ -110,11 +115,11 @@ class obe(governingeq):
     Methods
     -------
     """
-    def __init__(self, laserBeams, magField, hamitlonian,
+    def __init__(self, laserBeams, magField, hamiltonian,
                  a=jnp.array([0., 0., 0.]), transform_into_re_im=True, include_mag_forces=True,
                  r0=jnp.array([0., 0., 0.]), v0=jnp.array([0., 0., 0.])):
 
-        super().__init__(laserBeams, magField, hamitlonian, a=a,
+        super().__init__(laserBeams, magField, hamiltonian, a=a,
                          r0=r0, v0=v0)
 
         # Save the optional arguments:
@@ -127,12 +132,8 @@ class obe(governingeq):
         # Reset the current solution to None
         self.sol = None
 
-        # There will be time-dependent and time-independent components of the optical
-        # Bloch equations.  The time-independent parts are related to spontaneous
-        # emission, applied magnetic field, and the zero-field Hamiltonian.  We
-        # compute the latter-two directly from the commuatator.
-
-        # Build the matricies that control evolution:
+        # Pre-build Liouvillian sub-matrices (decay, H0, B, d_q) so the RHS
+        # at each time step is just matrix-vector products:
         self.ev_mat = {}
         self.__build_decay_ev()
         self.__build_coherent_ev()
@@ -446,10 +447,7 @@ class obe(governingeq):
         """
         Reshape the solution to have all the proper parts.
         """
-        # Each RandomOdeResult.y has shape (state_dim, n_steps).
-        # Transfer to CPU first so that __reshape_rho uses numpy ops and the
-        # reshaped sol.rho arrays don't accumulate on the GPU (which causes OOM
-        # when processing large batches after a long simulation).
+        # Transfer to CPU first to avoid GPU OOM on large batches.
         for sol in self.sols:
             y_cpu = np.asarray(sol.y)          # GPU → CPU transfer
             rho_flat = y_cpu[:-6, :]           # (n^2, n_steps)
@@ -535,7 +533,6 @@ class obe(governingeq):
         Sets the diagonal elements of the initial :math:`\\rho` matrix using
         the equilibrium populations as determined by pylcp.rateeq
         """
-        # will still work since it calls `set_initial_rho_from_populations` which will transform the numpy array until `rateeq` has been implemented in jax
         if not hasattr(self, 'rateeq'):
             self.rateeq = rateeq(self.laserBeams, self.magField, self.hamiltonian)
         Neq = self.rateeq.equilibrium_populations(self.r0, self.v0, t=0)
@@ -630,12 +627,7 @@ class obe(governingeq):
 
 
     def __drhodt(self, r, t, rho):
-        """
-        It is MUCH more efficient to do matrix vector products and add the
-        results together rather than to add the matrices together (as above)
-        and then do the dot.  It is also most efficient to avoid doing useless
-        math if the applied field is zero.
-        """
+        """Compute d(rho)/dt via per-component matrix-vector products."""
         drhodt = jnp.dot(self.ev_mat['decay'], rho) + jnp.dot(self.ev_mat['H0'], rho)
 
         # Add in electric fields:
@@ -670,16 +662,7 @@ class obe(governingeq):
 
     @functools.cached_property
     def _dydt(self):
-        """
-        Fallback per-instance ODE RHS with 3-arg signature (t, y, args).
-
-        Used when _obe_args returns None (e.g. callable delta/phase beams or
-        spatially-varying intensity).  The ``args`` parameter is ignored —
-        physics is closed over from ``self``.
-
-        Stored as a cached_property so every access returns the same Python
-        object, keeping the JIT cache key stable within one instance.
-        """
+        """Density-only ODE RHS (no motion). Cached for stable JIT keys."""
         def dydt(t, y, _args):
             r    = y[-3:]
             v    = y[-6:-3]
@@ -691,12 +674,7 @@ class obe(governingeq):
 
     @functools.cached_property
     def _motion_dydt(self):
-        """Stable ODE RHS for evolve_motion.
-
-        Per-call parameters (``free_axes``) are read from the ``args``
-        pytree so the function identity stays constant across calls,
-        enabling JIT cache reuse.
-        """
+        """Full motion ODE RHS (rho + v + r). Cached for stable JIT keys."""
         def dydt(t, y, args):
             r = y[-3:]
             v = y[-6:-3]
@@ -712,14 +690,8 @@ class obe(governingeq):
 
     @functools.cached_property
     def _motion_recoil_fn(self):
-        """Stable random-recoil function for evolve_motion.
-
-        Decay channel data is captured once from ``self`` when the
-        property is first accessed.  Per-call parameters
-        (``free_axes``, ``max_scatter_probability``) come from ``args``.
-        """
-        # Pre-snapshot decay data as JAX arrays so the closure is
-        # self-contained and the dict iteration order is frozen.
+        """Stochastic recoil function. Cached for stable JIT keys."""
+        # Snapshot decay data as JAX arrays at first access.
         decay_channels = []
         for dk in self.decay_rates:
             decay_channels.append((
@@ -937,11 +909,8 @@ class obe(governingeq):
 
         free_axes = jnp.bitwise_not(jnp.asarray(freeze_axis, dtype=bool))
 
-        # Auto-compute max_step from the laser/transition parameters when
-        # random_recoil is enabled and the user hasn't set it explicitly.
-        # A finite max_step caps the adaptive dt so all atoms take similar-
-        # sized steps, which eliminates GPU warp divergence in the vmapped
-        # while_loop and gives ~3x speedup on large batches.
+        # Auto-compute max_step from on-resonance scattering rate to
+        # reduce GPU warp divergence when random_recoil is enabled.
         if random_recoil and 'max_step' not in kwargs:
             total_s = sum(
                 beam._s if not callable(beam._s) else beam._s(np.zeros(3), 0.)
@@ -955,17 +924,13 @@ class obe(governingeq):
             if R_max > 0:
                 kwargs['max_step'] = max_scatter_probability / R_max
 
-        # Pack per-call parameters into a JAX pytree.  The cached
-        # closures (_motion_dydt, _motion_recoil_fn) read these at
-        # runtime so their Python identity stays constant across calls,
-        # allowing the JIT-compiled XLA kernel to be reused.
+        # Per-call parameters as a JAX pytree (read by cached closures).
         args = {
             'free_axes': free_axes,
             'max_scatter_probability': jnp.asarray(
                 max_scatter_probability, dtype=jnp.float64),
         }
 
-        # Use cached closures for stable JIT cache keys.
         dydt = self._motion_dydt
         recoil_func = (
             self._no_recoil if not random_recoil
@@ -1150,32 +1115,18 @@ class obe(governingeq):
             if not return_details:
                 delE = _grad(self.laserBeams[key].total_electric_field_gradient, r, t)
 
-                # We are just looking at the d_q, whereas the full observable
-                # is \nabla (d_q \cdot E^\dagger) + (d_q^* E)) =
-                # 2 Re[\nabla (d_q\cdot E^\dagger)].  Putting in the units,
-                # we see we need a factor of gamma/4, making
-                # this 2 Re[\nabla (d_q\cdot E^\dagger)]/4 =
-                # Re[\nabla (d_q\cdot E^\dagger)]/2
+                # F = Re[∇(d_q · E†)] * gamma/2  (factor from dipole + RWA units)
                 for jj, q in enumerate([-1., 2., 1.]):
                     f += jnp.real((-1) ** q * gamma * mu_q_av[jj] * delE[:, 2-jj])/2
             else:
-                # Vectorised per-beam force: get all beam gradients in one
-                # fused call instead of a Python loop over individual beams.
-                # _grad returns (n_beams, 3_spatial, 3_grad, [n_pts])
+                # All beam gradients in one call: (n_beams, 3_spatial, 3_grad, [n_pts])
                 delE_all = _grad(
                     self.laserBeams[key].electric_field_gradient, r, t)
 
-                # Select the gradient column for each q component:
-                # delE_q shape: (n_beams, 3_spatial, 3_q, [n_pts])
-                delE_q = delE_all[:, :, _q_col]
+                delE_q = delE_all[:, :, _q_col]                   # select q columns
+                delE_q = jnp.moveaxis(delE_q, 0, 2)               # -> (3_s, 3_q, n_b, [n_pts])
 
-                # Broadcast multiply — no Python loops over beams or q.
-                # mu_q_av: (3_q, [n_pts]),  signs: (3_q,)
-                # Target: (3_spatial, 3_q, n_beams, [n_pts])
-                # Rearrange delE_q: move beam axis (0) to position 2
-                delE_q = jnp.moveaxis(delE_q, 0, 2)  # (3_s, 3_q, n_b, [n_pts])
-
-                # Expand signs and mu_q_av for broadcasting
+                # Broadcast signs and mu_q_av for vectorised multiply
                 if rho_mat.ndim == 2:  # single point
                     s = _q_signs[None, :, None]           # (1, 3_q, 1)
                     m = mu_q_av[None, :, None]             # (1, 3_q, 1)
@@ -1489,11 +1440,7 @@ class obe(governingeq):
                 if d is not None:
                     per_atom_deltat[i] = d
 
-        # Group atoms by their chunk_deltat.  When deltat_v is used, each
-        # atom gets its own chunk duration (integer number of oscillation
-        # cycles).  Atoms sharing the same deltat (e.g. all clamped at
-        # deltat_tmax) are batched together.  When only deltat_r is used
-        # all atoms share min(deltat) in a single parallel batch.
+        # Group atoms by chunk_deltat; atoms with the same dt are batched.
         if deltat_v is not None or deltat_func is not None:
             rounded_deltat = np.round(per_atom_deltat, decimals=6)
             unique_deltats = np.unique(rounded_deltat)
@@ -1519,9 +1466,7 @@ class obe(governingeq):
             progress = progressBar()
             atoms_done = 0
 
-        # Use a single max_steps for all groups so JAX compiles the diffrax
-        # solver only once (max_steps is a static JIT argument).  The adaptive
-        # stepper still picks its own step sizes; this is just an upper bound.
+        # Single max_steps across groups avoids repeated JIT recompilation.
         max_group_deltat = max(dt for _, dt in groups)
         fixed_max_steps = max(int(np.ceil(max_group_deltat * 16)), 4096)
 
@@ -1529,14 +1474,11 @@ class obe(governingeq):
             Ng = len(group_indices)
             y0_group = y0_batch[group_indices]  # (Ng, state_dim)
 
-            # Use fewer dense output points during convergence; the force
-            # average only needs a coarse grid.  Full Npts for the final pass.
+            # Coarse grid for convergence; full Npts on final pass.
             Npts_conv = max(int(Npts) // max(npts_conv_divisor, 1), 101)
 
-            # Per-atom convergence using consecutive chunk comparison.
-            # old_f_sq / was_decreasing guard criterion 3 during dark-state
-            # force decay so atoms don't falsely converge while the force is
-            # still monotonically shrinking toward zero.
+            # Per-atom convergence via consecutive chunk comparison.
+            # was_decreasing guards against false convergence during dark-state decay.
             old_f_chunk    = jnp.full((Ng, 3), jnp.inf)
             old_f_sq       = jnp.zeros(Ng)
             was_decreasing = jnp.zeros(Ng, dtype=bool)
@@ -1569,16 +1511,11 @@ class obe(governingeq):
                 f_sq    = jnp.sum(f_chunk ** 2, axis=1)
                 diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
 
-                # Track monotonic force decay: if force magnitude is
-                # decreasing, the atom may be in a dark state slowly
-                # relaxing toward zero.
+                # Track monotonic force decay (dark-state guard).
                 is_decreasing = f_sq < old_f_sq
                 was_decreasing = was_decreasing | is_decreasing
 
-                # Criterion 3 (diff_sq < abs_tol) is blocked when the
-                # force has been monotonically decreasing — this prevents
-                # premature convergence during dark-state force decay
-                # where absolute changes get small before equilibrium.
+                # Block abs_tol criterion while force is still decaying.
                 newly = (
                     ~atom_converged &
                     (

@@ -1,3 +1,11 @@
+"""
+Heuristic force equation for laser cooling simulations.
+
+Treats the atom as a single F=0 -> F'=1 cycling transition and computes
+the scattering force from per-beam saturation parameters projected onto
+the local magnetic field axis.  No internal-state dynamics are evolved,
+so the force is instantaneous at every point in phase space.
+"""
 import numpy as np
 import jax
 jax.config.update("jax_enable_x64", True)

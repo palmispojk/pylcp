@@ -106,7 +106,7 @@ class infiniteGratingMOTBeams(laserBeams):
                                              pol=pol, s=s, delta=delta,
                                              pol_coord='cartesian', **kwargs))
 
-        # Store the input polarization as a Carterian coordiante:
+        # Store the input polarization as a Cartesian coordinate:
         self.input_pol = self.beam_vector[0].cartesian_pol()
 
         # Calculate the reflected polarizations and k-vectors:
@@ -504,7 +504,7 @@ class maskedGaussianGratingMOTBeams(infiniteGratingMOTBeams):
                                          phase=input_phase,
                                          **kwargs))
 
-        # Store the input polarization as a Carterian coordiante:
+        # Store the input polarization as a Cartesian coordinate:
         self.input_pol = self.beam_vector[0].cartesian_pol()
 
         # Calculate the reflected polarizations and k-vectors:

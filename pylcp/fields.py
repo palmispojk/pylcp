@@ -1,3 +1,11 @@
+"""
+Magnetic field and laser beam classes for pylcp.
+
+Provides classes for defining magnetic fields (constant, quadrupole,
+Ioffe-Pritchard) and laser beams (plane wave, Gaussian, clipped Gaussian)
+used in laser cooling and trapping simulations.
+"""
+
 import jax
 import numpy as np
 import jax.numpy as jnp
@@ -7,7 +15,9 @@ from scipy.spatial.transform import Rotation
 
 
 def return_constant_val(R, t, val):
-    """Fixed backward compatibility for returning the constant value with jnp, previously numpy
+    """Return a constant scalar value, ignoring the position and time arguments.
+
+    Used internally to promote constant parameters to callable ``(R, t)`` form.
 
     Parameters
     ----------
@@ -95,8 +105,6 @@ def promote_to_lambda(val, var_name='', kind='Rt'):
                                 'understood.'% (sig, var_name))
 
         return func, sig
-
-
 
 
 class magField(object):
@@ -194,7 +202,6 @@ class iPMagneticField(magField):
     Maxwell's equations at second order.
     """
     def __init__(self, B0, B1, B2, eps = 1e-5):
-        # super().__init__(lambda R, t: jnp.array([B1*R[0]-B2*R[0]*R[2]/2, -R[1]*B1-B2*R[1]*R[2]/2, B0+B2/2*(R[2]**2 - (R[0]**2+R[1]**2)/2)]))
         self.B0 = B0
         self.B1 = B1
         self.B2 = B2
@@ -204,7 +211,6 @@ class iPMagneticField(magField):
             -R[1]*B1-B2*R[1]*R[2]/2,
             B0+B2/2*(R[2]**2 - (R[0]**2+R[1]**2)/2)
         ]))
-
 
 
 class constantMagneticField(magField):
@@ -224,12 +230,11 @@ class constantMagneticField(magField):
     def __init__(self, B0):
         self.B0 = B0
         super().__init__(lambda R, t: B0)
-    
 
 
 class quadrupoleMagneticField(magField):
     """
-    Spherical quadrupole  magnetic field
+    Spherical quadrupole magnetic field
 
     Represents a magnetic field of the form
 
@@ -250,12 +255,6 @@ class quadrupoleMagneticField(magField):
             R[2]
             ]))
 
-
-
-
-
-
-# First, define the laser beam class:
 class laserBeam(object):
     """
     The base class for a single laser beam
@@ -268,7 +267,7 @@ class laserBeam(object):
 
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`\\mathbf{k}(r,t)` is the k-vector,
-    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the deutning,
+    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the detuning,
     :math:`t` is the time, and :math:`\\phi` is the phase.
 
 
@@ -493,7 +492,7 @@ class laserBeam(object):
         calculate_norm : bool, optional
             If true, renormalizes the quant_axis.  By default, False.
         treat_nans : bool, optional
-            If true, every place that nan is encoutnered, replace with the
+            If true, every place that nan is encountered, replace with the
             $hat{z}$ axis as the quantization axis.  By default, False.
         invert : bool, optional
             If true, invert the process to project the quantization axis
@@ -732,7 +731,7 @@ class infinitePlaneWaveBeam(laserBeam):
 
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`\\mathbf{k}(r,t)` is the k-vector,
-    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the deutning,
+    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the detuning,
     :math:`t` is the time, and :math:`\\phi` is the phase.
 
     Parameters
@@ -771,9 +770,8 @@ class infinitePlaneWaveBeam(laserBeam):
         if callable(pol):
             raise TypeError('Polarization cannot be a function for an infinite plane wave.')
 
-        #ensures kvec is a jnp array
         self.con_kvec = jnp.array(kvec)
-        
+
         super().__init__(
             kvec=self.con_kvec,
             pol=pol,
@@ -802,7 +800,7 @@ class gaussianBeam(laserBeam):
 
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`\\mathbf{k}(r,t)` is the k-vector,
-    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the deutning,
+    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the detuning,
     :math:`t` is the time, and :math:`\\phi` is the phase.  Note that because
     :math:`I\\propto E^2`, :math:`w_b` is the :math:`1/e^2` radius.
 
@@ -888,7 +886,7 @@ class clippedGaussianBeam(gaussianBeam):
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`r_s` is the radius of the stop,
     :math:`\\mathbf{k}(r,t)` is the k-vector,
-    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the deutning,
+    :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the detuning,
     :math:`t` is the time, and :math:`\\phi` is the phase. Note that because
     :math:`I\\propto E^2`, :math:`w_b` is the :math:`1/e^2` radius.
 
@@ -1182,7 +1180,7 @@ class laserBeams(object):
         calculate_norm : bool, optional
             If true, renormalizes the quant_axis.  By default, False.
         treat_nans : bool, optional
-            If true, every place that nan is encoutnered, replace with the
+            If true, every place that nan is encountered, replace with the
             $hat{z}$ axis as the quantization axis.  By default, False.
         invert : bool, optional
             If true, invert the process to project the quantization axis

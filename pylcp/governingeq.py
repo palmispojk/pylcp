@@ -1,3 +1,10 @@
+"""
+Base class for all governing equations in pylcp.
+
+Defines the common interface (initial conditions, force profiles, equilibrium
+finding, trapping frequencies, damping coefficients) shared by the heuristic
+equation, rate equations, and optical Bloch equations.
+"""
 import copy
 import numpy as np
 from .fields import magField as magFieldObject
@@ -5,6 +12,7 @@ from .fields import laserBeams as laserBeamsObject
 from scipy.optimize import root_scalar, root
 import jax.numpy as jnp
 import jax
+
 
 class governingeq(object):
     """
@@ -53,18 +61,19 @@ class governingeq(object):
         
         self.set_initial_position_and_velocity(r0, v0)
         
-        # Add lasers:
-        self.laserBeams = {} # Laser beams are meant to be dictionary,
+        # Normalise laserBeams into a dict keyed by transition label (e.g. 'g->e').
+        # Lists and bare laserBeams objects default to the 'g->e' key.
+        self.laserBeams = {}
         if isinstance(laserBeams, list):
-            self.laserBeams['g->e'] = laserBeamsObject(laserBeams)  # Assume label is g->e
+            self.laserBeams['g->e'] = laserBeamsObject(laserBeams)
         elif isinstance(laserBeams, laserBeamsObject):
-            self.laserBeams['g->e'] = copy.copy(laserBeams) # Again, assume label is g->e
+            self.laserBeams['g->e'] = copy.copy(laserBeams)
         elif isinstance(laserBeams, dict):
             for key in laserBeams.keys():
                 if not isinstance(laserBeams[key], laserBeamsObject):
-                    raise TypeError('Key %s in dictionary lasersBeams ' % key +
-                                     'is in not of type laserBeams.')
-            self.laserBeams = copy.copy(laserBeams) # Now, assume that everything is the same.
+                    raise TypeError('Key %s in dictionary laserBeams ' % key +
+                                     'is not of type laserBeams.')
+            self.laserBeams = copy.copy(laserBeams)
         else:
             raise TypeError('laserBeams is not a valid type.')
 
@@ -95,10 +104,10 @@ class governingeq(object):
         # Set up a dictionary to store any resulting force profiles.
         self.profile = {}
 
-        # Set the initial sol to zero:
+        # No solution computed yet:
         self.sol = None
 
-        # Set an attribute for the equillibrium position:
+        # Set an attribute for the equilibrium position:
         self.r_eq = None
 
 
@@ -256,7 +265,7 @@ class governingeq(object):
             self.r_eq = self.r_eq.at[ax0].set(float(result.root))
 
         return self.r_eq
-        # --- to here
+
     def trapping_frequencies(self, axes, r=None, eps=0.01, **kwargs):
         """
         Find the trapping frequency

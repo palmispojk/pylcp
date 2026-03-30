@@ -1,3 +1,12 @@
+"""
+CPU-based ODE integration tools with stochastic event support.
+
+Provides :func:`solve_ivp_random`, an extension of ``scipy.integrate.solve_ivp``
+that inserts user-defined random events (e.g. photon recoil kicks) between
+adaptive time steps.  Also includes a :class:`parallelIntegrator` for
+on-the-fly integration as data arrives, and :class:`RandomOdeResult` for
+storing trajectories with scatter-event metadata.
+"""
 from __future__ import division, print_function, absolute_import
 import inspect
 import numpy as np

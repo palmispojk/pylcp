@@ -1,3 +1,12 @@
+"""
+GPU-accelerated ODE integration tools using JAX and diffrax.
+
+Provides :func:`solve_ivp_random` (batched stochastic trajectories with
+disk-backed memmap output) and :func:`solve_ivp_dense` (deterministic batched
+dense output on a fixed time grid).  Both are GPU-native, JIT-compiled, and
+support multi-GPU sharding.  Helper functions for profiling GPU memory and
+throughput (:func:`optimal_batch_size`) are also included.
+"""
 import inspect
 import os
 import logging
@@ -116,20 +125,9 @@ def _shard_batch(arr, gpu_devs):
 
 
 def _ensure_3arg(func):
-    """Wrap ``func`` so it matches the ``func(t, y, args)`` signature that
-    diffrax's ``ODETerm`` requires.
+    """Wrap ``func`` to match diffrax's ``(t, y, args)`` signature.
 
-    Functions with fewer than three *required* (positional, no-default)
-    parameters are wrapped so that the ``args`` value from diffrax is
-    ignored and the original function is called as ``func(t, y)``.  This
-    lets callers pass either the simple ``(t, y)`` form or the full
-    ``(t, y, args)`` form — the latter is needed when static physics
-    data is supplied via the ``args`` parameter of :func:`solve_ivp_dense`
-    or :func:`solve_ivp_random`.
-
-    A function like ``func(t, y, _H=default)`` counts as 2-arg (the third
-    parameter has a default) and is wrapped, so diffrax's ``args=None``
-    does not clobber the default.
+    2-arg functions are wrapped so the ``args`` parameter is ignored.
     """
     sig = inspect.signature(func)
     n_required = sum(
@@ -147,11 +145,9 @@ def _ensure_3arg(func):
 class RandomOdeResult:
     """Result of a single ODE trajectory.
 
-    Can be constructed eagerly (all arrays passed in) or lazily from a
-    batched state dict returned by ``_batched_random_trajectories``.  In
-    the lazy case, per-atom slicing and device-to-host transfer are
-    deferred until an attribute is first accessed, avoiding N separate
-    GPU→host copies during result construction.
+    Supports eager (all arrays passed in) or lazy construction from a
+    batched state dict.  Lazy mode defers GPU→host transfer until first
+    attribute access.
     """
 
     def __init__(self, t=None, y=None, t_random=None, n_random=None,
@@ -841,36 +837,21 @@ def solve_ivp_random(
 @functools.partial(jax.jit, static_argnames=('func', 'n_points', 'max_steps', 'rtol', 'atol', 'solver_type'))
 def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-6, solver_type='Dopri5', args=None):
     """
-    JIT-compiled batched ODE solve returning solution on a fixed time grid.
+    JIT-compiled batched ODE solve on a fixed time grid.
 
-    This is the performance-critical inner function used by solve_ivp_dense.
-    ``func`` and ``n_points`` are declared static so JAX traces and compiles
-    once per unique (func, n_points, rtol, atol, solver_type) combination and
-    then reuses the compiled XLA kernel for all subsequent calls.
-
-    ``func`` must have the calling signature ``func(t, y, args) -> dy/dt``.
-    Pass physics data via ``args`` (a JAX pytree) to enable sharing a single
-    compiled kernel across multiple OBE instances that have the same Hamiltonian
-    structure (same matrix shapes).  When ``func`` is a stable module-level
-    function object, JAX's JIT cache key is the same for every caller,
-    so compilation happens once per (n_points, args-pytree-shape) pair.
+    Compiled once per unique (func, n_points, rtol, atol, solver_type);
+    reused for different t_span / y0_batch / args values.
 
     Args:
-        func: RHS of the ODE.  Accepts either ``func(t, y)`` or
-              ``func(t, y, args) -> dy/dt``.  The 3-arg form receives
-              the ``args`` pytree; the 2-arg form is wrapped automatically.
-              Must be a stable Python object (e.g. a module-level function)
-              so the JIT cache key stays constant across calls.
+        func: ODE RHS, ``(t, y)`` or ``(t, y, args)``.  Use a stable
+              (e.g. module-level) function for JIT cache reuse.
         t0, t1: Start and end time (JAX float64 scalars).
         y0_batch: Initial conditions, shape (N, state_dim).
         n_points: Number of equally-spaced output time points (static).
         max_steps: Maximum number of adaptive solver steps (static). Default: 4096.
         rtol, atol: Adaptive step-size controller tolerances (static).
         solver_type: 'Dopri5', 'Bosh3', or 'Kvaerno5' (static).
-        args: JAX pytree passed as the third argument to func at every step.
-              Traced dynamically — different values with the same pytree
-              structure reuse the compiled kernel without recompilation.
-              Default: None.
+        args: JAX pytree passed to func. Traced dynamically. Default: None.
 
     Returns:
         ys: shape (N, n_points, state_dim)
@@ -946,23 +927,13 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
                     max_steps=4096, rtol=1e-5, atol=1e-6,
                     solver_type='Dopri5', args=None):
     """
-    Solve a batched ODE and return the solution on a fixed time grid.
+    Batched ODE solve returning solution on a fixed time grid (GPU-native).
 
-    GPU-native, JIT-compiled replacement for scipy's solve_ivp when you need
-    dense output at N equally-spaced time points.  The underlying kernel is
-    compiled once per unique (func, n_points, rtol, atol, solver_type)
-    combination; subsequent calls with different t_span or y0_batch reuse the
-    compiled kernel directly.
-
-    For best performance, pass a module-level function as ``func`` and supply
-    all physics data via ``args`` (a JAX pytree).  A module-level function has
-    a stable Python identity so the JIT cache key is shared across all callers
-    with the same Hamiltonian structure, reducing total compilation time.
+    Compiled once per (func, n_points, rtol, atol, solver_type); reused
+    for different t_span / y0_batch / args.
 
     Args:
-        func: RHS of the ODE.  Accepts either ``func(t, y)`` or
-              ``func(t, y, args) -> dy/dt``.  The 3-arg form receives
-              the ``args`` pytree; the 2-arg form is wrapped automatically.
+        func: ODE RHS, ``(t, y)`` or ``(t, y, args)``.
         t_span: (t0, t1) integration interval.  t1 may be a scalar
                 (shared endpoint for all atoms) or an array of shape (N,)
                 giving a per-atom endpoint.  When per-atom, the returned

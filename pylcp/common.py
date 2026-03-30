@@ -1,8 +1,22 @@
+"""
+Common utilities shared across the pylcp package.
+
+Includes coordinate-basis conversions (Cartesian <-> spherical), a terminal
+progress bar, a random unit-vector generator, and the base force-profile
+storage class used by all governing-equation solvers.
+"""
 import time
 import jax.numpy as jnp
 import jax
 
+
 class progressBar(object):
+    """
+    A terminal progress bar that displays completion percentage, a visual bar,
+    and estimated time remaining. Call ``update(fraction)`` with a value between
+    0 and 1 to refresh the display; it automatically prints a completion message
+    when the fraction reaches 1.
+    """
     def __init__(self, decimals=1, fill='█', prefix='Progress:',
                  suffix='', time_remaining_prefix=' time left', length=30,
                  update_rate=0.5):
@@ -19,7 +33,8 @@ class progressBar(object):
         self.update_rate = update_rate
 
     def format_time(self, tic_toc):
-        # Print a final time of completion
+        # Format a duration in seconds into a human-readable string
+        # (H:MM:SS, M:SS, or X.XX s depending on magnitude).
         if tic_toc>3600:
             time_str = "%d:%02d:%02d" % ((tic_toc)/3600.0,
                                         ((tic_toc)/60.0)%60.0,
@@ -39,6 +54,9 @@ class progressBar(object):
         print(string1 + pad, end='\r')
 
     def update(self, percentage):
+        # Refresh the progress bar if enough wall-clock time has elapsed since
+        # the last update (controlled by self.update_rate).  When percentage >= 1,
+        # print the total elapsed time and mark the bar as finished.
         toc = time.time()
         if percentage>0 and percentage<1 and (toc-self.last_update)>self.update_rate:
             percent = ("{0:." + str(self.decimals) + "f}").format(100*percentage)
@@ -63,12 +81,21 @@ class progressBar(object):
 
 
 def cart2spherical(A):
+    """Convert a 3-component Cartesian vector (x, y, z) to the spherical
+    (circular) basis (e_{-1}, e_0, e_{+1}).  The convention follows the
+    standard used in atomic physics for expressing polarisation components."""
     return jnp.array([(A[0]-1j*A[1])/jnp.sqrt(2), A[2], -(A[0]+1j*A[1])/jnp.sqrt(2)])
 
 def spherical2cart(A):
+    """Convert a 3-component spherical (circular) basis vector (e_{-1}, e_0,
+    e_{+1}) back to the Cartesian basis (x, y, z).  This is the inverse of
+    :func:`cart2spherical`."""
     return jnp.array([1/jnp.sqrt(2)*(-A[2]+A[0]), 1j/jnp.sqrt(2)*(A[2]+A[0]), A[1]])
 
 def spherical_dot(A, B):
+    """Compute the dot product of two vectors expressed in the spherical
+    (circular) basis.  The metric tensor in this basis introduces alternating
+    signs: A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}."""
     return jnp.tensordot(A, jnp.array([-1., 1., -1.])*B[::-1], axes=(0, 0))
 
 class base_force_profile():
@@ -145,9 +172,10 @@ def random_vector(key, free_axes=[True, True, True]):
             A JAX pseudo-random number generator key. Because JAX functions 
             must be pure and stateless for GPU acceleration, randomness requires 
         passing an explicit PRNG state.
-        free_axis: list of 3 boolean (option)
-            Which axes (x, y, z) are considered free axes.  Default:
-            [True, True, True], i.e., a 3D vector.
+        free_axes: list of 3 booleans (optional)
+            Which axes (x, y, z) are considered free for the random
+            direction.  Default: [True, True, True], i.e., a full 3D
+            unit vector.
 
     Returns
     -------
@@ -182,7 +210,7 @@ def random_vector(key, free_axes=[True, True, True]):
         ])
     
     else:
-        raise ValueError(f"free_axis must be a boolean array of length 1 to 3. free_axis is of length {axes_count}!")
+        raise ValueError(f"free_axes must be a boolean list of length 1 to 3. Got {axes_count} True entries.")
     
     
 
