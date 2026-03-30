@@ -199,7 +199,7 @@ class RandomOdeResult:
         self._cache['success'] = bool(bs['t'][i] >= self._tf)
         self._cache['status'] = 0 if self._cache['success'] else -1
         self._cache['message'] = ("Success" if self._cache['success']
-                                  else "Terminated early (max_steps limit).")
+                                  else "Terminated early (did not reach tf).")
         self._cache['nfev'] = int(bs['nfev'][i])
 
     def __getattr__(self, name):
@@ -234,43 +234,13 @@ def _batched_random_trajectories(
     output_dir=None,
     ):
     """
-    Batched stochastic trajectory solver with disk-backed output accumulation.
+    Batched stochastic trajectory solver with disk-backed output.
 
-    The host loop iterates over ``n_output`` evenly-spaced save times.
-    For each save slot the JIT-compiled inner kernel advances every atom
-    from its current time to the next save time (or ``tf``, whichever is
-    smaller) using adaptive recoil-limited steps inside a
-    ``jax.lax.while_loop`` vmapped across atoms.  After each group the
-    snapshot (one point per atom) is written to a memory-mapped file and
-    the next group is dispatched.
-
-    **No output history arrays are ever allocated on GPU or in RAM** —
-    only the small per-atom carry (y, t, dt, key, counters) and diffrax
-    scratch buffers reside on device; output goes straight to disk via
-    the OS page cache.  Peak memory (GPU *and* CPU) is therefore
-    independent of the number of internal steps taken.
-
-    The JIT kernel compiles once on the first group call and is reused
-    for all subsequent groups.  Host-loop dispatch overhead is ~0.5 ms
-    per group, typically <1 %% of total wall time.  Memmap writes are
-    serviced from the page cache and flushed to disk asynchronously by
-    the OS, so they add no measurable latency to the host loop.
-
-    Args:
-        n_output (int): Number of evenly-spaced output points.
-            Default: 5000.
-        progress (bool): Print progress every ~5 %%.  Default: False.
-        output_dir (str or None): Directory for temporary memmap files.
-            Defaults to the system temp directory.  Use a fast local
-            filesystem (SSD/NVMe) for best throughput.
-
-    Returns:
-        dict containing:
-            ``t``, ``y``, ``step_idx``, ``save_idx``,
-            ``nfev`` as CPU numpy arrays, and
-            ``ts``, ``ys``, ``t_random``, ``n_random`` as
-            ``np.memmap`` arrays backed by temporary files (auto-deleted
-            on Linux once the memmap objects are garbage-collected).
+    Saves state at ``n_output`` evenly-spaced times.  For each save slot
+    a JIT-compiled kernel (vmapped across atoms) advances every atom to
+    the next save time using adaptive recoil-limited steps inside a
+    ``jax.lax.while_loop``.  Output is written to memory-mapped files;
+    only the small per-atom carry resides on GPU.
     """
     if solver_type == "Dopri5":
         solver = Dopri5()
@@ -438,47 +408,22 @@ def _batched_random_trajectories(
 def _bytes_per_atom(state_dim):
     """Estimated peak GPU allocation per atom in the batched solver.
 
-    The solver streams output to **disk-backed memmap files** via a host
-    loop, so neither GPU nor CPU RAM hold the output history.  Only the
-    small per-atom while_loop carry and diffrax scratch buffers reside
-    on device.  The inner diffrax solver uses ``max_steps=None``
-    (unbounded ``jax.lax.while_loop``), so there are no step-count-
-    dependent buffers — only the RK stages.
-
-    While_loop carry (double-buffered by XLA):
-        y, t, dt, key, counters, scatter info     ~(state_dim * 8 + 100) bytes × 2
-
-    Diffrax internals per inner solve:
-        RK stages:      ~7 * state_dim             float64  (Dopri5 + PID)
+    Output is streamed to disk-backed memmap files, so only the per-atom
+    while_loop carry and diffrax RK stage buffers reside on device.
     """
-    # Carry state (double-buffered by XLA's while_loop):
-    #   y (state_dim f64), t (f64), dt (f64), key (2×u32),
-    #   step_idx (i32), nfev (i32),
-    #   last_t_random (f64), last_n_random (i32),
-    #   t_save_next (f64)  ≈ state_dim*8 + 56
+    # Carry (double-buffered by XLA): y, t, dt, key, counters, t_save_next
     carry = 2 * (state_dim * 8 + 100)
-    # Diffrax internal buffers (RK stages only, no step-count buffers):
+    # Diffrax RK stages (Dopri5 + PID)
     diffrax_buf = 7 * state_dim * 8
-    per_atom = carry + diffrax_buf
-    return int(per_atom)
+    return int(carry + diffrax_buf)
 
 
 def _probe_bytes_per_atom(state_dim):
     """Measure actual GPU bytes-per-atom by running a tiny probe.
 
-    Runs a 2-step integration for N=2 and N=8 atoms, measures peak GPU
-    memory for each, and returns the per-atom delta.  This captures all
-    XLA overhead (vmap replication, diffrax internals, PID controller
-    buffers) that the analytical formula misses.
-
-    The probe uses a trivial ODE (dy/dt = 0) and completes in <1 s.
-    The JIT-compiled kernel shape matches the real solver because it
-    uses the same code path with identical ``state_dim`` and
-    ``max_steps=None`` (unbounded inner solver).
-
-    Returns:
-        int: Measured bytes per atom, or falls back to the analytical
-        estimate if GPU memory stats are unavailable.
+    Runs a trivial ODE for N=2 and N=8 atoms, measures peak GPU memory
+    for each, and returns the per-atom delta.  Falls back to the
+    analytical estimate if no GPU is available.
     """
     gpu_devs = _gpu_devices()
     if not gpu_devs:
@@ -807,72 +752,29 @@ def solve_ivp_random(
     **options
     ):
     """
-    Solve an initial value problem for a system of ODEs natively in JAX with stochastic jumps.
+    GPU-batched ODE solver with stochastic jumps.
 
-    This function is the parallel, GPU-accelerated replacement for standard
-    `scipy.integrate.solve_ivp`. It takes a batch of initial conditions and
-    simulates thousands of trajectories concurrently using Diffrax.
-
-    Output is saved at ``n_output`` evenly-spaced times between ``t_span[0]``
-    and ``t_span[1]``, regardless of how many internal steps the solver takes.
-    This decouples output resolution from the adaptive step size, following
-    the same pattern as ``scipy.integrate.solve_ivp(t_eval=...)``.
+    Parallel replacement for ``scipy.integrate.solve_ivp``.  Saves at
+    ``n_output`` evenly-spaced times (like ``solve_ivp(t_eval=...)``).
 
     Args:
-        fun (callable):
-            Right-hand side of the continuous system ODE.
-            Calling signature: ``fun(t, y)``.
-        random_func (callable):
-            A JAX-compatible stochastic event detector and applier.
-            Calling signature: ``(y_jump, n_scatters, dt_max, key_new) = random_func(t, y, dt, key)``.
-        t_span (tuple of floats):
-            Interval of integration `(t0, tf)`. The solver starts with `t=t0`
-            and integrates until it reaches `t=tf`.
-        y0_batch (jax.Array):
-            A batch of initial states. Shape must be `(N, state_dim)`, where `N`
-            is the number of atoms/trajectories to simulate concurrently.
-        keys_batch (jax.Array):
-            A batch of JAX PRNGKeys for evaluating Poisson scattering variables.
-            Must be mapped to the `N` trajectories.
-        solver_type (str, optional):
-            Integration method mapped to Diffrax. Options include "Dopri5" (RK45),
-            "Bosh3" (RK23), or "Kvaerno5" (Radau/BDF). Defaults to "Dopri5".
-        max_step (float, optional):
-            Maximum allowed step size (ceiling on the recoil-limited dt).
-            Default: ``inf`` (no ceiling; the recoil limiter controls dt).
-        rtol (float, optional):
-            Relative tolerance for the step size controller. Defaults to 1e-5.
-        atol (float, optional):
-            Absolute tolerance for the step size controller. Defaults to 1e-6.
-        batch_size (int, optional):
-            Maximum number of atoms to integrate simultaneously.  When
-            set, atoms are processed in chunks of this size to limit peak
-            GPU memory.  Each chunk reuses the same compiled kernel so
-            there is no extra JIT cost.  Default: ``None`` (auto-detected
-            from available GPU memory).
-        n_output (int, optional):
-            Number of evenly-spaced output points per trajectory.  The
-            solver takes as many internal adaptive steps as needed and
-            saves the state at each output time.  Default: 5000.
-        output_dir (str or None, optional):
-            Directory for temporary memmap output files.  Defaults to the
-            system temp directory.  Use a fast local filesystem (SSD/NVMe)
-            for best throughput.
-        **options:
-            Additional keyword arguments to maintain API compatibility with SciPy
-            (e.g., standard `method` overrides).
+        fun: RHS of the ODE, signature ``fun(t, y)`` or ``fun(t, y, args)``.
+        random_func: Stochastic jump function, returns
+            ``(y_jump, n_scatters, dt_max, key_new)``.
+        t_span: ``(t0, tf)`` integration interval.
+        y0_batch: Initial states, shape ``(N, state_dim)``.
+        keys_batch: JAX PRNGKeys, one per trajectory.
+        solver_type: ``'Dopri5'``, ``'Bosh3'``, or ``'Kvaerno5'``.
+        max_step: Ceiling on step size.  Default: ``inf``.
+            Set to reduce GPU warp divergence on large batches.
+        rtol, atol: Tolerances for the adaptive step controller.
+        batch_size: Max atoms per chunk.  Default: ``None`` (all at once).
+        n_output: Number of evenly-spaced output points.  Default: 5000.
+        output_dir: Directory for temporary memmap files.
 
     Returns:
-        list of RandomOdeResult:
-            A list containing `N` result objects (one for each atom in the batch).
-            Each `RandomOdeResult` mimics standard SciPy behavior with padded
-            zeroes cleanly trimmed off. Key attributes of each result include:
-            - `t` (ndarray): Time points (evenly spaced, shape ``(n_output+1,)``).
-            - `y` (ndarray): Values of the solution at `t`.
-            - `t_random` (ndarray): Times at which stochastic scattering jumps occurred.
-            - `inds_random` (ndarray): Boolean mask mapping jump events to the `t` and `y` grids.
-            - `success` (bool): True if the solver reached `tf`.
-            - `status` (int): 0 if successful, -1 if terminated early.
+        list of RandomOdeResult with attributes ``t``, ``y``, ``success``,
+        ``t_random``, ``n_random``, ``nfev``.
     """
 
     # cast to jnp just in case
