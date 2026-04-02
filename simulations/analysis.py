@@ -17,6 +17,7 @@ import os
 import pickle
 import numpy as np
 import scipy.constants as const
+from scipy.stats import norm
 
 
 def load_results(path):
@@ -109,7 +110,7 @@ def initial_velocities(results, units=None):
 #  Capture classification
 # ---------------------------------------------------------------------------
 
-def classify_captured(results, r_thresh=5000, v_thresh=0.5):
+def classify_captured(results, r_thresh=10000, v_thresh=0.5):
     """Return a boolean mask of captured atoms.
 
     An atom is "captured" if its final distance from the origin is below
@@ -299,16 +300,23 @@ def phase_space_density(results, units, mask=None):
 #  Capture velocity
 # ---------------------------------------------------------------------------
 
-def capture_velocity(results, units, r_thresh=5000, v_thresh=0.5):
+def capture_velocity(results, units, mask=None):
     """Estimate the capture velocity of the MOT.
 
     Finds the maximum initial speed among atoms that ended up captured.
+
+    Args:
+        results: list of result dicts.
+        units: conversion dict from ``make_units``.
+        mask: boolean array from ``classify_captured``.  If None, all atoms
+            are classified using the default thresholds.
 
     Returns:
         dict with 'v_capture_si' (m/s), 'v_capture_nat' (natural units),
         'v_capture_95' (95th percentile of captured atoms' initial speeds, m/s).
     """
-    mask = classify_captured(results, r_thresh=r_thresh, v_thresh=v_thresh)
+    if mask is None:
+        mask = classify_captured(results)
     v0 = np.array([res['v'][:, 0] for res in results])
     speed0 = np.sqrt(np.sum(v0**2, axis=1))
 
@@ -382,13 +390,22 @@ def equilibration_time(results, units, mask=None, frac=0.90):
 #  Atom number vs time (loading curve)
 # ---------------------------------------------------------------------------
 
-def loading_curve(results, units, r_thresh=5000, v_thresh=0.5):
+def loading_curve(results, units, r_thresh=None, v_thresh=None):
     """Compute the number of atoms within the capture region at each time step.
+
+    Uses the same default thresholds as ``classify_captured`` when not
+    specified.
 
     Returns:
         dict with 't' (natural units), 't_ms' (milliseconds),
         'n_captured' (atom count at each time step).
     """
+    defaults = classify_captured.__defaults__  # (r_thresh, v_thresh)
+    if r_thresh is None:
+        r_thresh = defaults[0]
+    if v_thresh is None:
+        v_thresh = defaults[1]
+
     t = results[0]['t']
     n_steps = len(t)
     n_captured = np.zeros(n_steps, dtype=int)
@@ -409,16 +426,71 @@ def loading_curve(results, units, r_thresh=5000, v_thresh=0.5):
 
 
 # ---------------------------------------------------------------------------
+#  Distribution fitting
+# ---------------------------------------------------------------------------
+
+def fit_distributions(results, units, mask=None, n_bins=60):
+    """Fit normal distributions to final positions and velocities per axis.
+
+    Args:
+        results: list of result dicts.
+        units: conversion dict from ``make_units``.
+        mask: boolean array to select a subset (e.g. captured atoms only).
+        n_bins: number of histogram bins.
+
+    Returns:
+        dict with keys 'position' and 'velocity', each containing per-axis
+        dicts with keys 'data', 'mean', 'std', 'bin_edges', 'bin_centers',
+        'counts', 'fit_pdf', 'unit_label'.
+    """
+    r = final_positions(results, units)
+    v = final_velocities(results, units)
+    if mask is not None:
+        r = r[mask]
+        v = v[mask]
+
+    out = {'position': {}, 'velocity': {}}
+    labels = ['x', 'y', 'z']
+
+    for i, label in enumerate(labels):
+        for kind, arr, unit_label, scale in [
+            ('position', r[:, i] * 1e3, 'mm', 1.0),
+            ('velocity', v[:, i] * 1e2, 'cm/s', 1.0),
+        ]:
+            data = arr * scale
+            mu, std = norm.fit(data)
+            counts, bin_edges = np.histogram(data, bins=n_bins, density=True)
+            bin_centers = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+            fit_x = np.linspace(bin_edges[0], bin_edges[-1], 300)
+            fit_pdf = norm.pdf(fit_x, mu, std)
+
+            out[kind][label] = {
+                'data': data,
+                'mean': mu,
+                'std': std,
+                'bin_edges': bin_edges,
+                'bin_centers': bin_centers,
+                'counts': counts,
+                'fit_x': fit_x,
+                'fit_pdf': fit_pdf,
+                'unit_label': unit_label,
+                'n_atoms': len(data),
+            }
+
+    return out
+
+
+# ---------------------------------------------------------------------------
 #  Summary
 # ---------------------------------------------------------------------------
 
-def cloud_summary(results, units, r_thresh=5000, v_thresh=0.5):
+def cloud_summary(results, units):
     """Print a full summary of the simulation results.
 
     Returns the summary as a formatted string.
     """
     N = len(results)
-    mask = classify_captured(results, r_thresh=r_thresh, v_thresh=v_thresh)
+    mask = classify_captured(results)
     n_cap = mask.sum()
     frac = n_cap / N
 
@@ -427,9 +499,9 @@ def cloud_summary(results, units, r_thresh=5000, v_thresh=0.5):
     size = cloud_size(results, units, mask=mask)
     scat = scattering_rate(results, units, mask=mask)
     psd = phase_space_density(results, units, mask=mask)
-    v_cap = capture_velocity(results, units, r_thresh=r_thresh, v_thresh=v_thresh)
+    v_cap = capture_velocity(results, units, mask=mask)
     t_eq = equilibration_time(results, units, mask=mask)
-    loading = loading_curve(results, units, r_thresh=r_thresh, v_thresh=v_thresh)
+    loading = loading_curve(results, units)
 
     # Loading curve milestones
     n_captured = loading['n_captured']

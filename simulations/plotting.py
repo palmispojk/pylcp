@@ -99,6 +99,57 @@ def plot_trajectories(results, alpha_nat, time_scale=1e3,
     return fig, ax
 
 
+def plot_distributions(dist_fits, title='MOT Atom Distributions',
+                       filename='mot_distributions.png'):
+    """Plot histograms with Gaussian fits for position and velocity per axis.
+
+    Args:
+        dist_fits: dict returned by ``analysis.fit_distributions``.
+        title: overall figure title.
+        filename: output file path.  None to skip saving.
+
+    Returns:
+        (fig, axes) tuple.
+    """
+    fig, axes = plt.subplots(2, 3, figsize=(14, 8))
+    labels = ['x', 'y', 'z']
+
+    for col, label in enumerate(labels):
+        for row, kind in enumerate(['velocity', 'position']):
+            ax = axes[row, col]
+            info = dist_fits[kind][label]
+
+            ax.hist(info['data'], bins=info['bin_edges'], density=True,
+                    alpha=0.55, color='steelblue', edgecolor='white',
+                    linewidth=0.5, label='Data')
+            ax.plot(info['fit_x'], info['fit_pdf'], 'r-', linewidth=2,
+                    label='Gaussian fit')
+
+            mu = info['mean']
+            std = info['std']
+            unit = info['unit_label']
+            ax.set_xlabel(f'{label} ({unit})')
+            ax.set_ylabel('Probability density')
+
+            kind_label = 'Position' if kind == 'position' else 'Velocity'
+            ax.set_title(f'{kind_label} {label}')
+
+            textstr = (f'$\\mu = {mu:.3f}$ {unit}\n'
+                       f'$\\sigma = {std:.3f}$ {unit}\n'
+                       f'$N = {info["n_atoms"]}$')
+            ax.text(0.97, 0.95, textstr, transform=ax.transAxes,
+                    fontsize=9, verticalalignment='top',
+                    horizontalalignment='right',
+                    bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.8))
+            ax.legend(fontsize=8, loc='upper left')
+
+    fig.suptitle(title, fontsize=14, fontweight='bold')
+    fig.tight_layout()
+    if filename:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+    return fig, axes
+
+
 def animate_3d(results, kmag_real, filename='mot_capture.gif',
                num_frames=100, fps=20, lim_mm=2.0, title_prefix='MOT Capture'):
     """Animated 3D GIF of atom positions over time.
