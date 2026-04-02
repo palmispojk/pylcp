@@ -1247,6 +1247,79 @@ class TestRandomRecoilKickDistribution:
             "random vector * 2 instead of two independent random vectors"
         )
 
+    def test_multilevel_kicks_are_independent(self):
+        """When multiple excited states scatter simultaneously, each must get
+        its own independent random direction.
+
+        For N independent kicks of recoil_v * (vec1 + vec2) where vec1, vec2
+        are uniform on the unit sphere:
+            E[|Δv|²] = N * recoil_v² * E[|vec1+vec2|²] = N * recoil_v² * 2
+
+        If kicks share a single direction (old bug):
+            E[|Δv|²] = N² * recoil_v² * 2
+
+        The ratio is N, so for N=5 excited states the means differ by 5x.
+        """
+        # F=1 -> F'=2: 3 ground + 5 excited states
+        H0_g, mu_g = hamiltonians.singleF(F=1, gF=0)
+        H0_e, mu_e = hamiltonians.singleF(F=2, gF=0)
+        d_q = hamiltonians.dqij_two_bare_hyperfine(1, 2)
+        ham = hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q,
+                          mass=100.0, gamma=1.0, k=1.0)
+
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.1, 'delta': 0.},
+        ])
+        B = constantMagneticField(jnp.array([0., 0., 0.]))
+        o = obe(beams, B, ham, transform_into_re_im=True)
+        o.set_initial_rho_equally()
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+
+        recoil_fn = o._motion_recoil_fn
+        free_axes = jnp.bitwise_not(
+            jnp.asarray([False, False, False], dtype=bool))
+        args = {
+            'free_axes': free_axes,
+            'max_scatter_probability': jnp.float64(0.1),
+        }
+
+        # Build a state vector where all excited-state populations are large
+        # so that P = dt * rate * pop >> 1 for every excited state.
+        n2 = ham.n ** 2
+        y = jnp.zeros(n2 + 6)  # rho_flat + v(3) + r(3)
+        for dk in o.decay_rho_indices:
+            for idx in o.decay_rho_indices[dk]:
+                y = y.at[int(idx)].set(1.0)
+        dt = jnp.float64(10.0)
+
+        # Count how many excited states will scatter
+        n_exc = sum(len(o.decay_rho_indices[dk])
+                    for dk in o.decay_rho_indices)
+        recoil_v = list(o.recoil_velocity.values())[0]
+
+        dv_sq = []
+        for i in range(2000):
+            key = jax.random.PRNGKey(i)
+            y_out, _, _, _ = recoil_fn(0.0, y, dt, key, args)
+            dv = y_out[-6:-3] - y[-6:-3]
+            dv_sq.append(float(jnp.sum(dv ** 2)))
+
+        mean_dv_sq = np.mean(dv_sq)
+
+        # Independent: E[|Δv|²] = N * recoil_v² * 2
+        expected_independent = n_exc * recoil_v ** 2 * 2
+        # Correlated:  E[|Δv|²] = N² * recoil_v² * 2
+        expected_correlated = n_exc ** 2 * recoil_v ** 2 * 2
+
+        # The measured mean should be close to independent, not correlated.
+        # Use a generous tolerance (30%) since we have finite samples.
+        assert abs(mean_dv_sq - expected_independent) / expected_independent < 0.3, (
+            f"mean(|Δv|²) = {mean_dv_sq:.6e}, expected (independent) = "
+            f"{expected_independent:.6e}, but correlated would give "
+            f"{expected_correlated:.6e}"
+        )
+
 
 # ---------------------------------------------------------------------------
 # Magnetic trap OBE motion tests

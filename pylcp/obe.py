@@ -693,12 +693,14 @@ class obe(governingeq):
         """Stochastic recoil function. Cached for stable JIT keys."""
         # Snapshot decay data as JAX arrays at first access.
         decay_channels = []
+        n_excited_per_channel = []
         for dk in self.decay_rates:
             decay_channels.append((
                 jnp.asarray(self.decay_rates_truncated[dk]),
                 jnp.asarray(self.decay_rho_indices[dk]),
                 jnp.asarray(self.recoil_velocity[dk]),
             ))
+            n_excited_per_channel.append(len(self.decay_rates_truncated[dk]))
 
         def recoil_fn(t, y, dt, key, args):
             free_axes = args['free_axes']
@@ -711,33 +713,42 @@ class obe(governingeq):
                 r = jnp.sqrt(1.0 - z**2)
                 return jnp.array([r * jnp.cos(phi), r * jnp.sin(phi), z]) * free_axes
 
+            # 3 keys per excited state (dice, vec1, vec2) + 1 new key
+            total_excited = sum(n_excited_per_channel)
+            all_keys = jax.random.split(key, 3 * total_excited + 1)
+            key_new = all_keys[0]
+            ki = 1
+
             y_jump = y
-            num_of_scatters = 0
+            num_of_scatters = jnp.int32(0)
             total_P = 0.
 
-            for rates, indices, recoil_v in decay_channels:
+            for ch_idx, (rates, indices, recoil_v) in enumerate(decay_channels):
                 P = dt * rates * jnp.real(y[indices])
 
-                key, sk_dice, sk_v1, sk_v2 = jax.random.split(key, 4)
-                dice = jax.random.uniform(sk_dice, shape=P.shape)
-                n_ch = jnp.sum(jnp.where(dice < P, 1, 0))
+                for ii in range(n_excited_per_channel[ch_idx]):
+                    dice = jax.random.uniform(all_keys[ki])
+                    vec1 = _rand_vec(all_keys[ki + 1])
+                    vec2 = _rand_vec(all_keys[ki + 2])
+                    ki += 3
 
-                kick = recoil_v * (_rand_vec(sk_v1) + _rand_vec(sk_v2))
-                y_jump = jnp.where(
-                    n_ch > 0,
-                    y_jump.at[-6:-3].add(kick * n_ch),
-                    y_jump
-                )
-
-                num_of_scatters += n_ch
-                total_P += jnp.sum(P)
+                    scattered = dice < P[ii]
+                    kick = recoil_v * (vec1 + vec2)
+                    delta_v = jnp.where(
+                        scattered,
+                        kick * free_axes,
+                        jnp.zeros(3, dtype=jnp.float64))
+                    y_jump = y_jump.at[-6:-3].add(delta_v)
+                    num_of_scatters += jnp.where(
+                        scattered, jnp.int32(1), jnp.int32(0))
+                    total_P += P[ii]
 
             new_dt_max = jnp.where(
                 total_P > 0,
                 (max_scatter_probability / total_P) * dt,
                 jnp.inf
             )
-            return y_jump, num_of_scatters, new_dt_max, key
+            return y_jump, num_of_scatters, new_dt_max, key_new
         return recoil_fn
 
     @staticmethod
