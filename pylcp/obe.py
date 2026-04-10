@@ -60,6 +60,25 @@ class force_profile(base_force_profile):
             self.fq[key] = np.zeros(self.R.shape + (3, len(laserBeams[key].beam_vector)))
 
     def store_data(self, ind, Neq, F, F_laser, F_mag, iterations, F_laser_q):
+        """Store force-profile results at a single grid index.
+
+        Parameters
+        ----------
+        ind : tuple of int
+            Multi-dimensional index into the profile arrays.
+        Neq : jax.Array or None
+            Equilibrium population vector.
+        F : jax.Array, shape (3,)
+            Total force.
+        F_laser : dict of jax.Array
+            Per-laser force contributions.
+        F_mag : jax.Array, shape (3,)
+            Magnetic force contribution.
+        iterations : int
+            Number of convergence iterations required.
+        F_laser_q : dict of jax.Array
+            Per-laser, per-q-component force contributions.
+        """
         super().store_data(ind, Neq, F, F_laser, F_mag)
 
         for jj in range(3):
@@ -147,6 +166,7 @@ class obe(governingeq):
     
     @property
     def magField(self):
+        """Magnetic field object.  Invalidates cached JIT closures when set."""
         return self._magField
 
     @magField.setter
@@ -159,6 +179,7 @@ class obe(governingeq):
 
     @property
     def laserBeams(self):
+        """Laser beam collection.  Invalidates cached JIT closures when set."""
         return self._laserBeams
 
     @laserBeams.setter
@@ -703,10 +724,12 @@ class obe(governingeq):
             n_excited_per_channel.append(len(self.decay_rates_truncated[dk]))
 
         def recoil_fn(t, y, dt, key, args):
+            """Apply stochastic spontaneous-emission recoil kicks (OBE path)."""
             free_axes = args['free_axes']
             max_scatter_probability = args['max_scatter_probability']
 
             def _rand_vec(k):
+                """Return a random unit vector restricted to free axes."""
                 k1, k2 = jax.random.split(k)
                 phi = 2.0 * jnp.pi * jax.random.uniform(k1)
                 z = 2.0 * jax.random.uniform(k2) - 1.0
@@ -814,6 +837,7 @@ class obe(governingeq):
         # batched_ys shape: (n_atoms, n_points, state_dim)
 
         class Bunch:
+            """Simple namespace for OBE solution arrays (t, rho, y)."""
             pass
         self.sol = Bunch()
         self.sol.t = ts_grid
@@ -1611,6 +1635,7 @@ class obe(governingeq):
         # Equilibrium populations: cumulative mean rho → diagonal
         rho_flat_mean_jnp = jnp.array(final_rho_flat_mean)
         def get_Neq(rho_flat_i):
+            """Extract diagonal populations from a flat density-matrix vector."""
             return jnp.real(jnp.diagonal(self.__reshape_rho(rho_flat_i)))
         Neq_all = jax.vmap(get_Neq)(rho_flat_mean_jnp)        # (N, n)
 

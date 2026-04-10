@@ -45,8 +45,19 @@ class progressBar(object):
         self.update_rate = update_rate
 
     def format_time(self, tic_toc: float) -> str:
-        # Format a duration in seconds into a human-readable string
-        # (H:MM:SS, M:SS, or X.XX s depending on magnitude).
+        """Format a duration in seconds as a human-readable string.
+
+        Parameters
+        ----------
+        tic_toc : float
+            Duration in seconds.
+
+        Returns
+        -------
+        time_str : str
+            ``H:MM:SS`` for durations >= 1 hour, ``M:SS`` for >= 1 minute,
+            or ``X.XX s`` for shorter durations.
+        """
         if tic_toc>3600:
             time_str = "%d:%02d:%02d" % ((tic_toc)/3600.0,
                                         ((tic_toc)/60.0)%60.0,
@@ -60,15 +71,34 @@ class progressBar(object):
         return time_str
 
     def print_string(self, string1: str) -> None:
+        """Print a string in-place, padding to erase any longer previous output.
+
+        Tracks the maximum printed length so that shorter subsequent strings
+        do not leave stale characters on the terminal line.
+
+        Parameters
+        ----------
+        string1 : str
+            The string to print.
+        """
         # Update the maximum length of string written:
         self.max_written_length = max(self.max_written_length, len(string1))
         pad = ' ' * (self.max_written_length - len(string1))
         print(string1 + pad, end='\r')
 
     def update(self, percentage: float) -> None:
-        # Refresh the progress bar if enough wall-clock time has elapsed since
-        # the last update (controlled by self.update_rate).  When percentage >= 1,
-        # print the total elapsed time and mark the bar as finished.
+        """Refresh the progress bar display.
+
+        Redraws the bar only when enough wall-clock time has elapsed since the
+        last update (controlled by ``self.update_rate``).  When ``percentage``
+        reaches 1 the bar is replaced by a completion message showing total
+        elapsed time.
+
+        Parameters
+        ----------
+        percentage : float
+            Completion fraction in [0, 1].
+        """
         toc = time.time()
         if percentage>0 and percentage<1 and (toc-self.last_update)>self.update_rate:
             percent = ("{0:." + str(self.decimals) + "f}").format(100*percentage)
@@ -175,6 +205,21 @@ class base_force_profile():
         F_laser: dict[str, jax.Array],
         F_mag: jax.Array,
     ) -> None:
+        """Store computed force results at a single grid index.
+
+        Parameters
+        ----------
+        ind : tuple of int
+            Multi-dimensional index into the profile arrays.
+        Neq : jax.Array or None
+            Equilibrium population vector; skipped when None.
+        F : jax.Array, shape (3,)
+            Total force vector.
+        F_laser : dict of jax.Array
+            Per-laser force contributions, keyed by transition label.
+        F_mag : jax.Array, shape (3,)
+            Magnetic force contribution.
+        """
         if Neq is not None:
             self.Neq = self.Neq.at[ind].set(Neq)
 

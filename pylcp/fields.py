@@ -42,9 +42,44 @@ def return_constant_val(R: npt.ArrayLike, t: float, val: Any) -> Any:
     return val
 
 def return_constant_vector(R: npt.ArrayLike, t: float, vector: npt.ArrayLike) -> jax.Array:
+    """Return a constant vector as a JAX array, ignoring position and time.
+
+    Used internally to promote constant vector parameters to callable ``(R, t)``
+    form, analogous to :func:`return_constant_val` for scalars.
+
+    Parameters
+    ----------
+    R : array_like
+        Not used; position argument kept for API compatibility.
+    t : float
+        Not used; time argument kept for API compatibility.
+    vector : array_like, shape (3,)
+        The constant vector to return.
+
+    Returns
+    -------
+    vector : jax.Array, shape (3,)
+        The input vector converted to a JAX array.
+    """
     return jnp.array(vector)
 
 def return_constant_val_t(t: float | jax.Array, val: float) -> float | jax.Array:
+    """Return a constant value, broadcasting over a time array when needed.
+
+    Parameters
+    ----------
+    t : float or jax.Array
+        Time argument.  If a JAX array, the constant ``val`` is broadcast to
+        match its shape.
+    val : float
+        The constant value to return.
+
+    Returns
+    -------
+    val : float or jax.Array
+        ``val`` unchanged when ``t`` is a scalar; an array of shape ``t.shape``
+        filled with ``val`` when ``t`` is an array.
+    """
     if isinstance(t, jnp.ndarray):
         return val*jnp.ones(t.shape)
     else:
@@ -478,11 +513,45 @@ class laserBeam(object):
         return self._delta
 
     def phase(self, t=0.):
+        """Return the static phase offset of the laser beam at time t.
+
+        Parameters
+        ----------
+        t : float, optional
+            Time at which to evaluate the phase.  Default: 0.
+
+        Returns
+        -------
+        phase : float
+            Phase of the laser beam at time t.
+        """
         if callable(self._phase):
             return self._phase(t)
         return self._phase
 
     def delta_phase(self, t=0.):
+        """Return the cumulative phase accumulated by detuning up to time t.
+
+        Computes ``delta * t``.  Raises :exc:`NotImplementedError` if ``delta``
+        is callable, because numerical integration of a time-dependent detuning
+        is too slow inside a JIT-compiled kernel.  In that case, supply the
+        analytic phase integral as a callable ``phase`` argument instead.
+
+        Parameters
+        ----------
+        t : float, optional
+            Time at which to evaluate the cumulative phase.  Default: 0.
+
+        Returns
+        -------
+        delta_phase : float
+            ``delta * t``.
+
+        Raises
+        ------
+        NotImplementedError
+            If ``delta`` was supplied as a callable.
+        """
         if callable(self._delta):
             raise NotImplementedError(
                 "Callable delta cannot be used to compute delta_phase inside the OBE "
@@ -730,6 +799,25 @@ class laserBeam(object):
         return pol * amp * jnp.exp(phi)
     
     def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0):
+        """Return the Jacobian of the electric field with respect to position.
+
+        Computes the gradient numerically via forward-mode automatic
+        differentiation.  The returned matrix follows the convention
+        ``M[i, j] = dE_j / dR_i``, so that each row ``i`` gives the
+        spatial derivative along direction ``i``.
+
+        Parameters
+        ----------
+        R : jnp.Array, shape (3,), optional
+            Position at which to evaluate the gradient.  Default: origin.
+        t : float, optional
+            Time at which to evaluate the gradient.  Default: 0.
+
+        Returns
+        -------
+        grad_E : jnp.Array, shape (3, 3)
+            Jacobian of the electric field in the spherical basis.
+        """
         def e_field_R(R_val):
             return self.electric_field(R_val, t)
 
@@ -799,10 +887,27 @@ class infinitePlaneWaveBeam(laserBeam):
         )
 
     def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0):
-        
+        """Return the analytic Jacobian of the electric field for a plane wave.
+
+        For an infinite plane wave the gradient is exact:
+        ``dE_j / dR_i = -i k_i E_j``, i.e. ``-1j * outer(k, E)``.
+        The convention matches the base class: ``M[i, j] = dE_j / dR_i``.
+
+        Parameters
+        ----------
+        R : jnp.Array, shape (3,), optional
+            Position at which to evaluate the gradient.  Default: origin.
+        t : float, optional
+            Time at which to evaluate the gradient.  Default: 0.
+
+        Returns
+        -------
+        grad_E : jnp.Array, shape (3, 3)
+            Jacobian of the electric field in the spherical basis.
+        """
         E = self.electric_field(R, t)
         k = self.kvec(R, t)
-        
+
         return -1j * jnp.outer(k, E)
 
 
@@ -883,11 +988,28 @@ class gaussianBeam(laserBeam):
         )
 
     def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
+        """Return the Gaussian intensity profile at position R and time t.
+
+        Evaluates ``s_max * exp(-2 * rho^2 / wb^2)`` where ``rho`` is the
+        transverse distance from the beam axis.
+
+        Parameters
+        ----------
+        R : jnp.Array, shape (3,), optional
+            Position at which to evaluate the intensity.  Default: origin.
+        t : float, optional
+            Time (unused for a static Gaussian beam).  Default: 0.
+
+        Returns
+        -------
+        s : float
+            Saturation parameter (intensity) at position R.
+        """
         # Rotate up to the z-axis where we can apply formulas:
         Rp = jnp.matmul(self.rmat, R)
-        
+
         rho_sq= Rp[0]**2 + Rp[1]**2
-        
+
         return self.s_max*jnp.exp(-2*rho_sq/self.wb**2)
 
 
@@ -939,9 +1061,27 @@ class clippedGaussianBeam(gaussianBeam):
         self.rs = rs # Save the radius of the stop.
 
     def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
+        """Return the clipped Gaussian intensity profile at position R and time t.
+
+        Evaluates the Gaussian profile ``s_max * exp(-2 * rho^2 / wb^2)`` and
+        hard-clips it to zero outside the aperture radius ``rs``.
+
+        Parameters
+        ----------
+        R : jnp.Array, shape (3,), optional
+            Position at which to evaluate the intensity.  Default: origin.
+        t : float, optional
+            Time (unused for a static beam).  Default: 0.
+
+        Returns
+        -------
+        s : float
+            Saturation parameter (intensity) at position R; zero when the
+            transverse distance from the beam axis exceeds ``rs``.
+        """
         Rp = jnp.matmul(self.rmat, R)
         rho_sq = Rp[0]**2 + Rp[1]**2
-        
+
         # standard gaussian
         s_gaussian = self.s_max * jnp.exp(-2 * rho_sq / self.wb**2)
         # hard clipping vectorized

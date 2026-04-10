@@ -7,14 +7,62 @@ jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 def wig3j(j1, j2, j3, m1, m2, m3):
+    """Return the Wigner 3-j symbol as a Python float.
+
+    Parameters
+    ----------
+    j1, j2, j3 : int or half-int
+        Angular momentum quantum numbers.
+    m1, m2, m3 : int or half-int
+        Magnetic quantum numbers.
+
+    Returns
+    -------
+    w3j : float
+        Value of the Wigner 3-j symbol.
+    """
     return float(wigner_3j(j1, j2, j3, m1, m2, m3))
 
 
 def wig6j(j1, j2, j3, m1, m2, m3):
+    """Return the Wigner 6-j symbol as a Python float.
+
+    Parameters
+    ----------
+    j1, j2, j3 : int or half-int
+        Angular momentum quantum numbers (first row).
+    m1, m2, m3 : int or half-int
+        Angular momentum quantum numbers (second row).
+
+    Returns
+    -------
+    w6j : float
+        Value of the Wigner 6-j symbol.
+    """
     return float(wigner_6j(j1, j2, j3, m1, m2, m3))
 
 
 def uncoupled_index(J, I, mJ, mI):
+    """Return the flat index for state ``|J, I, mJ, mI>`` in the uncoupled basis.
+
+    The basis is ordered with ``mI`` running fastest, then ``mJ``.
+
+    Parameters
+    ----------
+    J : int or float
+        Electronic angular momentum quantum number.
+    I : int or float
+        Nuclear spin quantum number.
+    mJ : int or float
+        Magnetic quantum number for J.
+    mI : int or float
+        Magnetic quantum number for I.
+
+    Returns
+    -------
+    index : int
+        Row/column index in the uncoupled basis matrix.
+    """
     return int((mI+I)+(2*I+1)*(mJ+J))
 
 
@@ -353,6 +401,30 @@ def hyperfine_uncoupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
 
 
 def coupled_index(F, mF, Fmin):
+    """Return the flat index for state ``|F, mF>`` in the coupled basis.
+
+    States are ordered in blocks of increasing F, starting from ``Fmin``,
+    with ``mF`` running from ``-F`` to ``+F`` within each block.
+
+    Parameters
+    ----------
+    F : int or float
+        Total angular momentum quantum number.
+    mF : int or float
+        Magnetic quantum number.
+    Fmin : int or float
+        Minimum F value in the manifold.
+
+    Returns
+    -------
+    index : int
+        Row/column index in the coupled basis matrix.
+
+    Raises
+    ------
+    ValueError
+        If ``|mF| > F``.
+    """
     if np.abs(mF) > F:
         raise ValueError("mF=%.1f not a good value for F=%.1f"%(mF, F))
     return int(np.sum((2*np.arange(Fmin, F, 1)+1))+(F+mF))
@@ -523,6 +595,21 @@ def singleF(F, gF=1, muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
 
 
 def dqij_norm(dqij):
+    """Normalize dipole matrix elements column-wise by excited-state column norms.
+
+    Each excited-state column is divided by its Frobenius norm across all ground
+    states and polarization components.  Columns with zero norm are left as zero.
+
+    Parameters
+    ----------
+    dqij : array_like, shape (3, n_g, n_e)
+        Dipole matrix element array before normalization.
+
+    Returns
+    -------
+    dqij_normalized : ndarray, shape (3, n_g, n_e)
+        Column-normalized dipole matrix elements.
+    """
     col_norms = np.linalg.norm(dqij, axis=(0, 1))  # (n_e,)
     safe_norms = np.where(col_norms > 0, col_norms, 1.)
     return np.where(col_norms > 0, dqij / safe_norms, 0.)
@@ -556,6 +643,7 @@ def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
         If return_basis is true, list of (:math:`F\'`, :math:`m_F\'`)
     """
     def matrix_element(J, F, m_F, Jp, Fp, m_Fp, I, q):
+        """Compute one dipole matrix element between hyperfine states."""
         return (-1)**(F-m_F+J+I+Fp+1)*np.sqrt((2*F+1)*(2*Fp+1))*\
             wig3j(F, 1, Fp, -m_F, q, m_Fp)*wig6j(J, F, I, Fp, Jp, 1)
 

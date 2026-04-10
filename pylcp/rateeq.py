@@ -22,6 +22,18 @@ from types import SimpleNamespace
 
 
 def abs2(x):
+    """Return the squared magnitude of a complex number or array.
+
+    Parameters
+    ----------
+    x : complex or array_like
+        Input value(s).
+
+    Returns
+    -------
+    abs2 : float or array_like
+        ``x.real**2 + x.imag**2``.
+    """
     return x.real**2 + x.imag**2
 
 
@@ -67,6 +79,26 @@ class force_profile(base_force_profile):
                 )
 
     def store_data(self, ind, Neq, F, F_laser, F_mag, Rijl):
+        """Store force-profile results at a single grid index.
+
+        Extends the base-class method by also storing the per-laser pumping
+        rates ``Rijl``.
+
+        Parameters
+        ----------
+        ind : tuple of int
+            Multi-dimensional index into the profile arrays.
+        Neq : array_like or None
+            Equilibrium population vector.
+        F : array_like, shape (3,)
+            Total force.
+        F_laser : dict of array_like
+            Per-laser force contributions.
+        F_mag : array_like, shape (3,)
+            Magnetic force contribution.
+        Rijl : dict of array_like
+            Per-laser pumping rates, keyed by transition label.
+        """
         super().store_data(ind, Neq, F, F_laser, F_mag)
 
         for key in Rijl:
@@ -557,6 +589,7 @@ class rateeq(governingeq):
         accel    = self.constant_accel
 
         def rhs(t, y, _args):
+            """JAX-traceable ODE RHS for populations + velocity + position."""
             N = y[:n_states]
             v = y[n_states:n_states+3]
             r = y[n_states+3:]
@@ -589,6 +622,7 @@ class rateeq(governingeq):
                 zeeman = Bmag * mu_diff
 
                 def beam_Rij(kvec, intensity, proj, delta):
+                    """Compute the pumping rate matrix for one laser beam."""
                     fijq = jnp.abs(
                         d_q[0]*proj[2] + d_q[1]*proj[1] + d_q[2]*proj[0])**2
                     return (gamma * intensity / 2 * fijq /
@@ -829,6 +863,7 @@ class rateeq(governingeq):
                            for k in pump_data}
 
         def random_force_func(t, y, dt, key):
+            """Apply stochastic absorption and emission recoil kicks per laser beam."""
             N = y[:n_states]
             v = y[n_states:n_states+3]
             r = y[n_states+3:]
@@ -859,6 +894,7 @@ class rateeq(governingeq):
                                   Bhat, R=r, t=t)
 
                 def _beam_Rij(kvec, intensity, proj, delta):
+                    """Compute pumping rate matrix for one beam (random force path)."""
                     fijq = jnp.abs(
                         d_q[0]*proj[2] + d_q[1]*proj[1] + d_q[2]*proj[0])**2
                     return (gamma * intensity / 2 * fijq /
@@ -908,6 +944,7 @@ class rateeq(governingeq):
                              for k in self.decay_rates}
 
         def random_recoil_func(t, y, dt, key):
+            """Apply stochastic spontaneous-emission recoil kicks from excited-state decay."""
             N = y[:n_states]
 
             total_n_excited = sum(n_excited_per_key[k]
@@ -974,6 +1011,7 @@ class rateeq(governingeq):
             Fs_rec = []
 
         def motion(t, y):
+            """ODE RHS for populations + velocity + position (CPU/scipy path)."""
             N = y[:-6]
             v = y[-6:-3]
             r = y[-3:]
@@ -1010,11 +1048,13 @@ class rateeq(governingeq):
             return dydt
 
         def _rand_unit(axes):
+            """Return a random unit vector restricted to the specified axes (CPU path)."""
             v = rng.standard_normal(3) * axes
             norm = _np.linalg.norm(v)
             return v / norm if norm > 0 else v
 
         def random_force_func_cpu(t, y, dt):
+            """Apply stochastic absorption + emission recoil kicks per beam (CPU path)."""
             total_P = 0
             num_scatters = 0
             for key in self.laserBeams:
@@ -1031,6 +1071,7 @@ class rateeq(governingeq):
             return (num_scatters, (max_scatter_probability / total_P) * dt)
 
         def random_recoil_func_cpu(t, y, dt):
+            """Apply stochastic spontaneous-emission recoil kicks (CPU path)."""
             num_scatters = 0
             total_P = 0.
             for key in self.decay_rates:
@@ -1172,6 +1213,7 @@ class rateeq(governingeq):
         # Single-point function (traced once, vmapped over all grid points)
         # ----------------------------------------------------------------
         def single_point(r, v):
+            """Compute equilibrium populations and force at a single (r, v) grid point."""
             B    = self.magField.Field(r, t)
             Bmag = jnp.linalg.norm(B)
             Bhat = jnp.where(Bmag > 1e-10, B / Bmag,
@@ -1200,6 +1242,7 @@ class rateeq(governingeq):
                 zeeman = Bmag * mu_diff
 
                 def beam_Rij(kvec, intensity, proj, delta):
+                    """Compute pumping rate matrix for one beam at this grid point."""
                     fijq = jnp.abs(
                         d_q[0]*proj[2] + d_q[1]*proj[1] + d_q[2]*proj[0])**2
                     return (gamma * intensity / 2 * fijq /

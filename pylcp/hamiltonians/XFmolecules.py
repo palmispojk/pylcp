@@ -136,12 +136,14 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
 
     # Brown and Carrington 9.89
     def spinrotation(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
+        """Return spin-rotation matrix element (Brown & Carrington 9.89)."""
         return gamma*(-1)**(NN + J + S)*__wig6j(S, NN, J, NN, S, 1)*\
             np.sqrt(S*(S + 1)*(2*S + 1)*NN*(NN + 1)*(2*NN + 1))*\
             (l==lp)*(NN == NNp)*(J == Jp)*(F == Fp)*(m == mp)*(P==Pp)
 
     # Brown and Carrington 9.90
     def hyperfine(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
+        """Return Fermi-contact hyperfine matrix element (Brown & Carrington 9.90)."""
         return (b + c/3)*(-1)**(Jp + F + I)*__wig6j(I, Jp, F, J, I, 1)*\
             (-1)**(NN+J+S+1)*__wig6j(S, Jp, NN, J, S, 1)*\
             np.sqrt((2*J+1)*(2*Jp+1)*I*(I+1)*(2*I+1)*S*(S+1)*(2*S+1))*\
@@ -150,6 +152,7 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
 
     # Brown and Carrington 9.91
     def dipoledipole(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
+        """Return dipole-dipole hyperfine matrix element (Brown & Carrington 9.91)."""
         return (1/3*c*np.sqrt(30))*(-1)**(Jp + F + I + 1 + NN)*\
             __wig6j(I, Jp, F, J, I, 1)*\
             np.sqrt(I*(I + 1)*(2*I + 1))*\
@@ -162,6 +165,7 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
 
     # Brown and Carrington pg. 458
     def nuclearspinrotation(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
+        """Return nuclear spin-rotation matrix element (Brown & Carrington p. 458)."""
         return CI*(-1)**(Jp + F + I)*\
             __wig6j(I, Jp, F, J, I, 1)*\
             (-1)**(Jp + NN + 1 + S)*np.sqrt((2*Jp + 1)*(2*J + 1))*\
@@ -172,12 +176,14 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
 
     #Brown and Carrington 9.88; rotattion
     def rotation(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
+        """Return rotational energy matrix element (Brown & Carrington 9.88)."""
         return B*NN*(NN + 1)*\
             (NN == NNp)*(J == Jp)*(F == Fp)*(m == mp)*(P == Pp)
 
     #Brown and Carrington 9.53, adapted to Hund's case b
     #see also Brown and Carrington 9.94 (Electronic quadrupole interaction)
     def electricquadrupole(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
+        """Return electric quadrupole matrix element (Brown & Carrington 9.53/9.94)."""
         return (-1)**(Jp + I + F)*__wig6j(I, J, F, Jp, I, 2)*\
             (-1)**(NNp + S + J)*__wig6j(J, NN, S, NN, Jp, 2)*\
             (-1)**(NN - l)*np.sqrt((2*J+1)*(2*Jp+1)*(2*NN + 1)*(2*NNp + 1))/\
@@ -189,6 +195,7 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
 
     # Brown and Carrington 8.183
     def electronspinzeeman(l, NN, J, F, MF, P, lp, NNp, Jp, Fp, MFp, Pp, p):
+        """Return electron-spin Zeeman matrix element (Brown & Carrington 8.183)."""
         return gS*muB*(-1)**(F - MF)*__wig3j(F, 1, Fp, -MF, p, MFp)*\
             (-1)**(Fp + J + 1 + I)*np.sqrt((2*Fp + 1)*(2*F + 1))*\
             __wig6j(F, J, I, Jp, Fp, 1)*\
@@ -199,6 +206,7 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
 
     # Brown and Carrington 8.185
     def nuclearspinzeeman(l, NN, J, F, MF, P, lp, NNp, Jp, Fp, MFp, Pp,p):
+        """Return nuclear-spin Zeeman matrix element (Brown & Carrington 8.185)."""
         return -gI*muN*(-1)**(F - MF)*__wig3j(F, 1, Fp, -MF, p, MFp)*\
             (-1)**(F + J + 1 + I)*np.sqrt((2*Fp + 1)*(2*F + 1))*\
             __wig6j(F, I, J, I, Fp, 1)*np.sqrt(I*(I + 1)*(2*I + 1))*\
@@ -371,22 +379,26 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
 
     # Brown and Carrington, 6.196:
     def rotation(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
+        """Return rotational energy matrix element (Brown & Carrington 6.196)."""
         return (B*J*(J+1) - D*J**2*(J+1)**2 + H*J**3*(J+1)**3)*(L==Lp)*(S==Sp)*(J==Jp)*(O==Op)*(I==Ip)*(F==Fp)*(mF==mFp)*(P==Pp)  #6.196
 
     # Only correct for $^2\Pi_{1/2}$ states, see table on page 531 of Brown
     # and Carrington. See 8.401 for full Lambda doubling Hamiltonian.
     def lambda_doubling(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
+        """Return Lambda-doubling matrix element (Brown & Carrington 8.401)."""
         return -P*(-1)**(J-1/2)*(p+2*q)*(J+1/2)/2*(L==Lp)*(S==Sp)*(J==Jp)*(O==Op)*(I==Ip)*\
             (F==Fp)*(mF==mFp)*(P==Pp)
 
     # Brown and Carrington 8.372
     def nuclearspinorbit(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
+        """Return nuclear spin-orbit matrix element (Brown & Carrington 8.372)."""
         return a*L*(-1)**(Jp+F+I)*__wig6j(I,Jp,F,J,I,1)*np.sqrt(I*(I+1)*(2*I+1))*(-1)**(J-O)*\
         __wig3j(J, 1, Jp, -O, 0, Op)*np.sqrt((2*J+1)*(2*Jp+1))*\
         (L==Lp)*(S==Sp)*(I==Ip)*(F==Fp)*(P==Pp)*(mF==mFp)
 
     # Brwon and Carrington 8.374, Using Omega = Lambda + Sigma, or Sigma = Omega-Labmda
     def fermicontact(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
+        """Return Fermi-contact hyperfine matrix element (Brown & Carrington 8.374)."""
         return (b+c/3)*(-1)**(Jp+F+I+J-O+S-(O-L))*__wig6j(I, Jp, F, J, I, 1)*np.sqrt(I*(I+1)*(2*I+1)*(2*J+1)*(2*Jp+1)*S*(S+1)*(2*S+1))*\
         (S==Sp)*(I==Ip)*(F==Fp)*(mF==mFp)*(P==Pp)*(-1)**(J+S-2*O+L)*\
         0.5*(
@@ -397,11 +409,13 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
 
     # Brown and Carrington 8.506.  This ignores eQq2, which couples states with \Delta\Omega = \pm 2, see Brown and Carrington 8.382
     def quadrupole(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
+        """Return electric quadrupole matrix element (Brown & Carrington 8.506)."""
         return -(-1)**(Jp+I+F)*__wig6j(I, J, F, Jp, I, 2)/__wig3j(I, 2, I, -I, 0, I)*(-1)**(J-O)*np.sqrt((2*J+1)*(2*Jp+1))*\
         (L==Lp)*(S==Sp)*(O==Op)*(I==Ip)*(F==Fp)*(mF==mFp)*(P==Pp)*\
         eQq0/4*__wig3j(J, 2, Jp, -O, 0, Op)
 
     def zeeman(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
+        """Return all Zeeman mu_q matrix elements (Brown & Carrington 9.57-9.71)."""
         reduced_matrix_elements = 0
 
         # 9.57, orbital Zeeman + rotational Zeeman term:

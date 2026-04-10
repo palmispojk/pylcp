@@ -180,6 +180,7 @@ class heuristiceq(governingeq):
         _jit_force = self._jit_force
 
         def dydt(t, y):
+            """ODE RHS for a single atom trajectory (scipy interface)."""
             v = y[:3]
             r = y[3:6]
             F, _ = _jit_force(
@@ -247,6 +248,7 @@ class heuristiceq(governingeq):
         constant_accel = self.constant_accel
 
         def dydt(t, y):
+            """ODE RHS for batched atom trajectories (JAX/diffrax interface)."""
             v = y[:3]
             r = y[3:6]
             F, _ = self.force(r, v, t)
@@ -254,6 +256,7 @@ class heuristiceq(governingeq):
             return jnp.concatenate([dvdt, v])
 
         def _random_unit_vector(key):
+            """Return a random unit vector restricted to the free axes."""
             key_phi, key_z = jax.random.split(key)
             phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
             z = 2.0 * jax.random.uniform(key_z) - 1.0
@@ -261,6 +264,7 @@ class heuristiceq(governingeq):
             return jnp.array([r_xy * jnp.cos(phi), r_xy * jnp.sin(phi), z]) * free_axes
 
         def random_recoil_fn(t, y, dt, key):
+            """Apply a stochastic photon recoil kick if a scattering event occurs."""
             v = y[:3]
             r = y[3:6]
             R_rates = self.scattering_rate(r, v, t)
@@ -281,6 +285,7 @@ class heuristiceq(governingeq):
             return y_jump, n_scatters, new_dt_max, key
 
         def dummy_recoil(t, y, dt, key):
+            """No-op recoil function used when random_recoil=False."""
             return y, jnp.int32(0), jnp.inf, key
 
         random_func = random_recoil_fn if random_recoil else dummy_recoil
