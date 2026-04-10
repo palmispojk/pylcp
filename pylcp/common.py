@@ -8,6 +8,7 @@ storage class used by all governing-equation solvers.
 from __future__ import annotations
 
 import time
+from collections.abc import Sequence
 from typing import Any
 
 import jax
@@ -232,7 +233,7 @@ class base_force_profile():
             
 
 
-def random_vector(key: jax.Array, free_axes: list[bool] = [True, True, True]) -> jax.Array:
+def random_vector(key: jax.Array, free_axes: Sequence[bool] = [True, True, True]) -> jax.Array:
     """
     This function returns a random vector in either 1D, 2D or 3D
 

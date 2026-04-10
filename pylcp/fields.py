@@ -150,6 +150,8 @@ def promote_to_lambda(
                                 'understood.'% (sig, var_name))
 
         return func, sig
+    else:
+        raise TypeError("kind must be 'Rt' or 't', got %r" % kind)
 
 
 class magField(object):
@@ -175,7 +177,7 @@ class magField(object):
     eps : float
         small epsilon used for computing derivatives
     """
-    def __init__(self, field: npt.ArrayLike | Callable[..., jax.Array], eps: float = 1e-5) -> None:
+    def __init__(self, field: npt.ArrayLike | Callable[..., Any], eps: float = 1e-5) -> None:
         self.eps = eps
 
         # Promote it to a lambda func:
@@ -769,7 +771,7 @@ class laserBeam(object):
         return (psi, chi)
 
 
-    def electric_field(self, R=jnp.array([0., 0., 0.,]), t=0):
+    def electric_field(self, R=jnp.array([0., 0., 0.,]), t=0.):
         """
         The electric field at position R and t
 
@@ -886,7 +888,7 @@ class infinitePlaneWaveBeam(laserBeam):
             **kwargs
         )
 
-    def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0):
+    def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0.):
         """Return the analytic Jacobian of the electric field for a plane wave.
 
         For an infinite plane wave the gradient is exact:
@@ -1517,7 +1519,7 @@ class conventional3DMOTBeams(laserBeams):
     **kwargs :
         other keyword arguments to pass to beam_type
     """
-    def __init__(self, k=1, pol=+1, rotation_angles=[0., 0., 0.],
+    def __init__(self, k=1., pol=+1, rotation_angles=[0., 0., 0.],
                  rotation_spec='ZYZ', beam_type=laserBeam, **kwargs):
         super().__init__()
 
