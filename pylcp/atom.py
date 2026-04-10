@@ -5,6 +5,8 @@ Provides the ``state``, ``transition``, and ``atom`` classes that encode
 energy levels, hyperfine constants, lifetimes, and derived quantities
 (saturation intensity, recoil velocity, etc.) for common alkali isotopes.
 """
+from __future__ import annotations
+
 import scipy.constants as cts
 import numpy as np
 from numpy import pi
@@ -57,8 +59,20 @@ class state():
 
     This construction of the state assumes L-S coupling.
     """
-    def __init__(self, n=None, S=None, L=None, J=None, lam=None, E=None,
-                 tau=np.inf, gJ=1, Ahfs=0, Bhfs=0, Chfs=0):
+    def __init__(
+        self,
+        n: int | None = None,
+        S: float | None = None,
+        L: float | None = None,
+        J: float | None = None,
+        lam: float | None = None,
+        E: float | None = None,
+        tau: float = np.inf,
+        gJ: float = 1,
+        Ahfs: float = 0,
+        Bhfs: float = 0,
+        Chfs: float = 0,
+    ) -> None:
         self.n = n
 
         self.L = L
@@ -117,7 +131,7 @@ class transition():
         t0 : float
             Time scale :math:`t_0 = v_0/a_0` in s.
     """
-    def __init__(self, state1, state2, mass):
+    def __init__(self, state1: state, state2: state, mass: float) -> None:
         self.k = state2.energy - state1.energy  # cm^{-1}
         self.lam = 0.01/self.k # m
         self.nu = cts.c/self.lam  # Hz
@@ -169,7 +183,7 @@ class atom():
             Transitions in the atom useful for laser cooling.  All transitions
             are from the ground state.
     """
-    def __init__(self, species):
+    def __init__(self, species: str) -> None:
         # Collect the electronic states relevant for laser cooling:
         self.state = []
 

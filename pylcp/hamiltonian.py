@@ -7,8 +7,12 @@ describe the field-independent energies and magnetic-field couplings within each
 manifold, while off-diagonal blocks store the dipole matrix elements that couple
 different manifolds via laser fields.
 """
+from __future__ import annotations
+
 import numpy as np
+import jax
 import jax.numpy as jnp
+import numpy.typing as npt
 from .common import spherical2cart
 
 
@@ -78,7 +82,7 @@ class hamiltonian():
         Off-diagonal blocks represent dipole matrix elements (d_q) that couple
         two different manifolds.
         """
-        def __init__(self, label, M):
+        def __init__(self, label: str, M: npt.ArrayLike) -> None:
             self.label = label
             self.matrix = jnp.asarray(M, dtype=jnp.complex128)
             self.diagonal = self.check_diagonality(self.matrix)
@@ -87,13 +91,13 @@ class hamiltonian():
             self.n = self.matrix.shape[0]
             self.m = self.matrix.shape[1]
 
-        def check_diagonality(self, M):
+        def check_diagonality(self, M: jax.Array) -> bool:
             if M.shape[0] == M.shape[1]:
                 return jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0
             else:
                 return False # Cannot be diagonal, cause not square.
 
-        def return_block_in_place(self, i, j, N):
+        def return_block_in_place(self, i: int, j: int, N: int) -> jax.Array:
             super_M = jnp.zeros((N, N), dtype=jnp.complex128)
             return super_M.at[i:i+self.n, j:j+self.m].set(self.matrix)
 
@@ -109,24 +113,31 @@ class hamiltonian():
         A spherical-basis vector block with a leading dimension of size 3
         for the q = -1, 0, +1 components.  Used for mu_q and d_q operators.
         """
-        def __init__(self, label, M):
+        def __init__(self, label: str, M: npt.ArrayLike) -> None:
             super().__init__(label, M)
 
             self.n = self.matrix.shape[1]
             self.m = self.matrix.shape[2]
 
-        def check_diagonality(self, M):
+        def check_diagonality(self, M: jax.Array) -> bool:
             if M.shape[1] == M.shape[2]:
                 return jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0
             else:
                 return False # Cannot be diagonal, cause not square.
 
-        def return_block_in_place(self, i, j, N):
+        def return_block_in_place(self, i: int, j: int, N: int) -> jax.Array:
             super_M = jnp.zeros((3, N, N), dtype=jnp.complex128)
             return super_M.at[:, i:i+self.n, j:j+self.m].set(self.matrix)
 
 
-    def __init__(self, *args, mass=1., muB=1, gamma=1., k=1):
+    def __init__(
+        self,
+        *args: npt.ArrayLike,
+        mass: float = 1.,
+        muB: float = 1.,
+        gamma: float = 1.,
+        k: float = 1,
+    ) -> None:
         self.blocks = np.empty((0, 0), dtype=object)
         self.state_labels = []
         self.ns = []
@@ -146,13 +157,13 @@ class hamiltonian():
             raise NotImplementedError('Not yet programmed for %d arguments.' %
                                       len(args))
 
-    def print_structure(self):
+    def print_structure(self) -> None:
         """
         Print structure of the Hamiltonian
         """
         print(self.blocks)
 
-    def set_mass(self, mass):
+    def set_mass(self, mass: float) -> None:
         """
         Sets the Hamiltonian's mass parameter
 
@@ -211,7 +222,7 @@ class hamiltonian():
             self.blocks = blocks
 
 
-    def add_H_0_block(self, state_label, H_0):
+    def add_H_0_block(self, state_label: str, H_0: npt.ArrayLike) -> None:
         """
         Adds a new H_0 block to the hamiltonian
 
@@ -248,7 +259,7 @@ class hamiltonian():
         self.__check_diagonal_submatrices_are_themselves_diagonal()
 
 
-    def add_mu_q_block(self, state_label, mu_q, muB=1):
+    def add_mu_q_block(self, state_label: str, mu_q: npt.ArrayLike, muB: float = 1) -> None:
         """
         Adds a new :math:`\\mu_q` block to the hamiltonian
 
@@ -287,7 +298,7 @@ class hamiltonian():
         self.__check_diagonal_submatrices_are_themselves_diagonal()
 
 
-    def add_d_q_block(self, label1, label2, d_q, k=1, gamma=1):
+    def add_d_q_block(self, label1: str, label2: str, d_q: npt.ArrayLike, k: float = 1, gamma: float = 1) -> None:
         """
         Adds a new :math:`d_q` block to the hamiltonian to connect two
         manifolds together.
@@ -368,7 +379,7 @@ class hamiltonian():
         self.laser_keys[label1 + '->' + label2] = ind
 
 
-    def make_full_matrices(self):
+    def make_full_matrices(self) -> tuple[jax.Array, jax.Array, dict[str, jax.Array], dict[str, jax.Array]]:
         """
         Returns the full matrices that define the Hamiltonian.
 
@@ -443,7 +454,7 @@ class hamiltonian():
         return self.H_0, self.mu_q, self.d_q_bare, self.d_q_star
 
 
-    def return_full_H(self, Eq, Bq):
+    def return_full_H(self, Eq: npt.ArrayLike | dict[str, npt.ArrayLike], Bq: npt.ArrayLike) -> jax.Array:
         """
         Assemble the block diagonal Hamiltonian into a single matrix
 
@@ -492,7 +503,7 @@ class hamiltonian():
                 self.diagonal[ii] = diag_block.diagonal
 
 
-    def diag_static_field(self, B):
+    def diag_static_field(self, B: float) -> hamiltonian:
         """
         Block diagonalize at a specified magnetic field
 

@@ -5,13 +5,20 @@ Defines the common interface (initial conditions, force profiles, equilibrium
 finding, trapping frequencies, damping coefficients) shared by the heuristic
 equation, rate equations, and optical Bloch equations.
 """
+from __future__ import annotations
+
 import copy
-import numpy as np
-from .fields import magField as magFieldObject
-from .fields import laserBeams as laserBeamsObject
-from scipy.optimize import root_scalar, root
-import jax.numpy as jnp
+from collections.abc import Sequence
+from typing import Any
+
 import jax
+import jax.numpy as jnp
+import numpy as np
+import numpy.typing as npt
+from scipy.optimize import root, root_scalar
+
+from .fields import laserBeams as laserBeamsObject
+from .fields import magField as magFieldObject
 
 
 class governingeq(object):
@@ -51,9 +58,15 @@ class governingeq(object):
         Initial velocity.  Default: [0.,0.,0.]
     """
 
-    def __init__(self, laserBeams, magField, hamiltonian=None,
-                 a=jnp.array([0., 0., 0.]), r0=jnp.array([0., 0., 0.]),
-                 v0=jnp.array([0., 0., 0.])):
+    def __init__(
+        self,
+        laserBeams: dict[str, laserBeamsObject] | laserBeamsObject | list[Any],
+        magField: magFieldObject | npt.ArrayLike,
+        hamiltonian: Any = None,
+        a: npt.ArrayLike = jnp.array([0., 0., 0.]),
+        r0: npt.ArrayLike = jnp.array([0., 0., 0.]),
+        v0: npt.ArrayLike = jnp.array([0., 0., 0.]),
+    ) -> None:
         
         a = jnp.asarray(a, dtype=jnp.float64) # cast to jax if not already given
         r0 = jnp.asarray(r0, dtype=jnp.float64)
@@ -120,7 +133,7 @@ class governingeq(object):
                                  'Hamiltonian d_q.')
 
 
-    def set_initial_position_and_velocity(self, r0, v0):
+    def set_initial_position_and_velocity(self, r0: npt.ArrayLike, v0: npt.ArrayLike) -> None:
         """
         Sets the initial position and velocity
 
@@ -134,7 +147,7 @@ class governingeq(object):
         self.set_initial_position(r0)
         self.set_initial_velocity(v0)
 
-    def set_initial_position(self, r0):
+    def set_initial_position(self, r0: npt.ArrayLike) -> None:
         """
         Sets the initial position
 
@@ -146,7 +159,7 @@ class governingeq(object):
         self.r0 = jnp.asarray(r0, dtype=jnp.float64)
         self.sol = None
 
-    def set_initial_velocity(self, v0):
+    def set_initial_velocity(self, v0: npt.ArrayLike) -> None:
         """
         Sets the initial velocity
 
@@ -211,7 +224,7 @@ class governingeq(object):
         """
         pass
 
-    def find_equilibrium_position(self, axes, **kwargs):
+    def find_equilibrium_position(self, axes: Sequence[int], **kwargs: Any) -> jax.Array:
         """
         Find the equilibrium position
 
@@ -266,7 +279,7 @@ class governingeq(object):
 
         return self.r_eq
 
-    def trapping_frequencies(self, axes, r=None, eps=0.01, **kwargs):
+    def trapping_frequencies(self, axes: Sequence[int], r: npt.ArrayLike | None = None, eps: float = 0.01, **kwargs: Any) -> jax.Array | float:
         """
         Find the trapping frequency
 
@@ -340,7 +353,7 @@ class governingeq(object):
             return float(result[0])
         return result
 
-    def damping_coeff(self, axes, r=None, eps=0.01, **kwargs):
+    def damping_coeff(self, axes: Sequence[int], r: npt.ArrayLike | None = None, eps: float = 0.01, **kwargs: Any) -> jax.Array | float:
         """
         Find the damping coefficent
 

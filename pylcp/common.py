@@ -5,9 +5,14 @@ Includes coordinate-basis conversions (Cartesian <-> spherical), a terminal
 progress bar, a random unit-vector generator, and the base force-profile
 storage class used by all governing-equation solvers.
 """
+from __future__ import annotations
+
 import time
-import jax.numpy as jnp
+from typing import Any
+
 import jax
+import jax.numpy as jnp
+import numpy.typing as npt
 
 
 class progressBar(object):
@@ -17,9 +22,16 @@ class progressBar(object):
     0 and 1 to refresh the display; it automatically prints a completion message
     when the fraction reaches 1.
     """
-    def __init__(self, decimals=1, fill='█', prefix='Progress:',
-                 suffix='', time_remaining_prefix=' time left', length=30,
-                 update_rate=0.5):
+    def __init__(
+        self,
+        decimals: int = 1,
+        fill: str = '█',
+        prefix: str = 'Progress:',
+        suffix: str = '',
+        time_remaining_prefix: str = ' time left',
+        length: int = 30,
+        update_rate: float = 0.5,
+    ) -> None:
         self.tic = time.time()
         self.decimals = decimals
         self.fill = fill
@@ -32,7 +44,7 @@ class progressBar(object):
         self.last_update = 0.
         self.update_rate = update_rate
 
-    def format_time(self, tic_toc):
+    def format_time(self, tic_toc: float) -> str:
         # Format a duration in seconds into a human-readable string
         # (H:MM:SS, M:SS, or X.XX s depending on magnitude).
         if tic_toc>3600:
@@ -47,13 +59,13 @@ class progressBar(object):
 
         return time_str
 
-    def print_string(self, string1):
+    def print_string(self, string1: str) -> None:
         # Update the maximum length of string written:
         self.max_written_length = max(self.max_written_length, len(string1))
         pad = ' ' * (self.max_written_length - len(string1))
         print(string1 + pad, end='\r')
 
-    def update(self, percentage):
+    def update(self, percentage: float) -> None:
         # Refresh the progress bar if enough wall-clock time has elapsed since
         # the last update (controlled by self.update_rate).  When percentage >= 1,
         # print the total elapsed time and mark the bar as finished.
@@ -80,19 +92,19 @@ class progressBar(object):
                 print()
 
 
-def cart2spherical(A):
+def cart2spherical(A: jax.Array) -> jax.Array:
     """Convert a 3-component Cartesian vector (x, y, z) to the spherical
     (circular) basis (e_{-1}, e_0, e_{+1}).  The convention follows the
     standard used in atomic physics for expressing polarisation components."""
     return jnp.array([(A[0]-1j*A[1])/jnp.sqrt(2), A[2], -(A[0]+1j*A[1])/jnp.sqrt(2)])
 
-def spherical2cart(A):
+def spherical2cart(A: jax.Array) -> jax.Array:
     """Convert a 3-component spherical (circular) basis vector (e_{-1}, e_0,
     e_{+1}) back to the Cartesian basis (x, y, z).  This is the inverse of
     :func:`cart2spherical`."""
     return jnp.array([1/jnp.sqrt(2)*(-A[2]+A[0]), 1j/jnp.sqrt(2)*(A[2]+A[0]), A[1]])
 
-def spherical_dot(A, B):
+def spherical_dot(A: jax.Array, B: jax.Array) -> jax.Array:
     """Compute the dot product of two vectors expressed in the spherical
     (circular) basis.  The metric tensor in this basis introduces alternating
     signs: A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}."""
@@ -124,7 +136,13 @@ class base_force_profile():
     Neq : jnp.Array
         Equilibrium population found.
     """
-    def __init__(self, R, V, laserBeams, hamiltonian):
+    def __init__(
+        self,
+        R: npt.ArrayLike,
+        V: npt.ArrayLike,
+        laserBeams: dict[str, Any],
+        hamiltonian: Any,
+    ) -> None:
         if not isinstance(R, jnp.ndarray):
             R = jnp.array(R)
         if not isinstance(V, jnp.ndarray):
@@ -149,7 +167,14 @@ class base_force_profile():
 
         self.F = jnp.zeros(R.shape)
 
-    def store_data(self, ind, Neq, F, F_laser, F_mag):
+    def store_data(
+        self,
+        ind: tuple[int, ...],
+        Neq: jax.Array | None,
+        F: jax.Array,
+        F_laser: dict[str, jax.Array],
+        F_mag: jax.Array,
+    ) -> None:
         if Neq is not None:
             self.Neq = self.Neq.at[ind].set(Neq)
 
@@ -162,7 +187,7 @@ class base_force_profile():
             
 
 
-def random_vector(key, free_axes=[True, True, True]):
+def random_vector(key: jax.Array, free_axes: list[bool] = [True, True, True]) -> jax.Array:
     """
     This function returns a random vector in either 1D, 2D or 3D
 

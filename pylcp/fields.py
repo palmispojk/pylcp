@@ -5,16 +5,22 @@ Provides classes for defining magnetic fields (constant, quadrupole,
 Ioffe-Pritchard) and laser beams (plane wave, Gaussian, clipped Gaussian)
 used in laser cooling and trapping simulations.
 """
+from __future__ import annotations
+
+from collections.abc import Callable
+from inspect import signature
+from typing import Any
 
 import jax
-import numpy as np
 import jax.numpy as jnp
-from inspect import signature
-from pylcp.common import cart2spherical, spherical2cart
+import numpy as np
+import numpy.typing as npt
 from scipy.spatial.transform import Rotation
 
+from pylcp.common import cart2spherical, spherical2cart
 
-def return_constant_val(R, t, val):
+
+def return_constant_val(R: npt.ArrayLike, t: float, val: Any) -> Any:
     """Return a constant scalar value, ignoring the position and time arguments.
 
     Used internally to promote constant parameters to callable ``(R, t)`` form.
@@ -35,16 +41,20 @@ def return_constant_val(R, t, val):
     """
     return val
 
-def return_constant_vector(R, t, vector):
+def return_constant_vector(R: npt.ArrayLike, t: float, vector: npt.ArrayLike) -> jax.Array:
     return jnp.array(vector)
 
-def return_constant_val_t(t, val):
+def return_constant_val_t(t: float | jax.Array, val: float) -> float | jax.Array:
     if isinstance(t, jnp.ndarray):
         return val*jnp.ones(t.shape)
     else:
         return val
 
-def promote_to_lambda(val, var_name='', kind='Rt'):
+def promote_to_lambda(
+    val: Any,
+    var_name: str = '',
+    kind: str = 'Rt',
+) -> tuple[Callable[..., Any], str]:
     """
     Promotes a constant or callable to a lambda function with proper arguments.
 
@@ -130,7 +140,7 @@ class magField(object):
     eps : float
         small epsilon used for computing derivatives
     """
-    def __init__(self, field, eps=1e-5):
+    def __init__(self, field: npt.ArrayLike | Callable[..., jax.Array], eps: float = 1e-5) -> None:
         self.eps = eps
 
         # Promote it to a lambda func:
@@ -201,7 +211,7 @@ class iPMagneticField(magField):
     It is currently missing extra terms that are required for it to fulfill
     Maxwell's equations at second order.
     """
-    def __init__(self, B0, B1, B2, eps = 1e-5):
+    def __init__(self, B0: float, B1: float, B2: float, eps: float = 1e-5) -> None:
         self.B0 = B0
         self.B1 = B1
         self.B2 = B2
@@ -227,7 +237,7 @@ class constantMagneticField(magField):
     val : array_like with shape (3,)
         The three-vector defintion of the constant magnetic field.
     """
-    def __init__(self, B0):
+    def __init__(self, B0: npt.ArrayLike) -> None:
         self.B0 = B0
         super().__init__(lambda R, t: B0)
 
@@ -246,7 +256,7 @@ class quadrupoleMagneticField(magField):
     alpha : float
         strength of the magnetic field gradient.
     """
-    def __init__(self, alpha, eps=1e-5):
+    def __init__(self, alpha: float, eps: float = 1e-5) -> None:
         self.alpha = alpha
 
         super().__init__(lambda R, t: alpha*jnp.array([
@@ -313,8 +323,16 @@ class laserBeam(object):
     phase : float
         Overall phase of the laser beam.
     """
-    def __init__(self, kvec=None, s=None, pol=None, delta=None,
-                 phase=0., pol_coord='spherical', eps=1e-5):
+    def __init__(
+        self,
+        kvec: npt.ArrayLike | None = None,
+        s: float | Callable[..., Any] | None = None,
+        pol: int | float | npt.ArrayLike | Callable[..., jax.Array] | None = None,
+        delta: float | Callable[[float], float] | None = None,
+        phase: float | Callable[[float], float] = 0.,
+        pol_coord: str = 'spherical',
+        eps: float = 1e-5,
+    ) -> None:
         self._kvec = jnp.array(kvec) if kvec is not None else jnp.array([0., 0., 1.])
         self._s = s if callable(s) else (float(jnp.real(s)) if s is not None else 1.0)
         self._delta = delta if callable(delta) else (float(jnp.real(delta)) if delta is not None else 0.0)
@@ -760,7 +778,7 @@ class infinitePlaneWaveBeam(laserBeam):
     This implementation is much faster, when it can be used, compared to the
     base laserBeam class.
     """
-    def __init__(self, kvec, pol, s, delta, **kwargs):
+    def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], **kwargs: Any) -> None:
         if callable(kvec):
             raise TypeError('kvec cannot be a function for an infinite plane wave.')
 
@@ -827,7 +845,7 @@ class gaussianBeam(laserBeam):
     **kwargs:
         Additional keyword arguments to pass to the laserBeam superclass.
     """
-    def __init__(self, kvec, pol, s, delta, wb, **kwargs):
+    def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], wb: float, **kwargs: Any) -> None:
         if callable(kvec):
             raise TypeError('kvec cannot be a function for a Gaussian beam.')
 
@@ -915,7 +933,7 @@ class clippedGaussianBeam(gaussianBeam):
     **kwargs:
         Additional keyword arguments to pass to the laserBeam superclass.
     """
-    def __init__(self, kvec, pol, s, delta, wb, rs, **kwargs):
+    def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], wb: float, rs: float, **kwargs: Any) -> None:
         super().__init__(kvec=kvec, pol=pol, s=s, delta=delta, wb=wb, **kwargs)
 
         self.rs = rs # Save the radius of the stop.
@@ -944,7 +962,7 @@ class laserBeams(object):
         Type of beam to use in the collection of laserBeams.  By default
         `beam_type=laserBeam`.
     """
-    def __init__(self, laserbeamparams=None, beam_type=laserBeam):
+    def __init__(self, laserbeamparams: list[laserBeam | dict[str, Any]] | None = None, beam_type: type[laserBeam] = laserBeam) -> None:
         self.beam_vector = []
         
         if laserbeamparams is not None:
@@ -973,7 +991,7 @@ class laserBeams(object):
     def __add__(self, other):
         return laserBeams(self.beam_vector + other.beam_vector)
 
-    def add_laser(self, new_laser):
+    def add_laser(self, new_laser: laserBeam | dict[str, Any]) -> None:
         """
         Add a laser to the collection
 
