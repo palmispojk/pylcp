@@ -133,8 +133,9 @@ def promote_to_lambda(
                 func = lambda R=jnp.array([0., 0., 0.]), t=0.: val(t)
                 sig = '(R, t)'
             else:
-                raise TypeError('Signature [%s] of function %s not'+
-                                'understood.'% (sig, var_name))
+                raise TypeError(
+                    f'Signature [{sig}] of function {var_name} not understood.'
+                )
 
         return func, sig
     elif kind == 't':
@@ -146,8 +147,9 @@ def promote_to_lambda(
             if '(t)' in sig:
                 func = lambda t=0.: val(t)
             else:
-                raise TypeError('Signature [%s] of function %s not '+
-                                'understood.'% (sig, var_name))
+                raise TypeError(
+                    f'Signature [{sig}] of function {var_name} not understood.'
+                )
 
         return func, sig
     else:

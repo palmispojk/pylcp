@@ -180,7 +180,7 @@ class parallelIntegrator(object):
             return self.y0
 
         # Second call, we will now establish a direction and create the solver:
-        elif self.tlast == None:
+        elif self.tlast is None:
             if t>self.t0:
                 self.direction = +1
             elif t<self.t0:

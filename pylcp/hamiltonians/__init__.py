@@ -1,12 +1,12 @@
 import jax
 import numpy as np
 import scipy.constants as cts
-from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
+from sympy.physics.wigner import wigner_3j, wigner_6j
 
-from . import XFmolecules
+from . import XFmolecules as XFmolecules  # re-exported
 
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
+import jax.numpy as jnp  # noqa: E402
 
 
 def wig3j(j1, j2, j3, m1, m2, m3):

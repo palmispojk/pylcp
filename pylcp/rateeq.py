@@ -204,7 +204,6 @@ class rateeq(governingeq):
             m = rotated_ham.ns[ind[1]]
 
             gamma = d_q_block.parameters['gamma']
-            k = d_q_block.parameters['k']
 
             self.decay_rates[key] = gamma*np.sum(abs2(
                 d_q_block.matrix[:, :, :]
@@ -874,7 +873,6 @@ class rateeq(governingeq):
 
         def random_force_func(t, y, dt, key):
             """Apply stochastic absorption and emission recoil kicks per laser beam."""
-            N = y[:n_states]
             v = y[n_states:n_states+3]
             r = y[n_states+3:]
 

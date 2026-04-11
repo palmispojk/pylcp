@@ -204,16 +204,18 @@ class hamiltonian():
     def __make_elem_label(self, type, state_label):
         if type == 'H_0' or type == 'mu_q':
             if not isinstance(state_label, str):
-                raise TypeError('For type %s, state label %s must be a' +
-                                ' string.' % (type,state_label))
-            return '<%s|%s|%s>' % (state_label, type, state_label)
+                raise TypeError(
+                    f'For type {type}, state label {state_label} must be a string.'
+                )
+            return f'<{state_label}|{type}|{state_label}>'
         elif type == 'd_q':
             if not isinstance(state_label, list):
-                raise TypeError('For type %s, state label %s must be a' +
-                                ' list of two strings.' % (type, state_label))
-            return '<%s|%s|%s>' % (state_label[0], type, state_label[1])
+                raise TypeError(
+                    f'For type {type}, state label {state_label} must be a list of two strings.'
+                )
+            return f'<{state_label[0]}|{type}|{state_label[1]}>'
         else:
-            raise ValueError('Matrix element type %s not understood' % type)
+            raise ValueError(f'Matrix element type {type} not understood')
 
 
     def __add_new_row_and_column(self):
@@ -658,9 +660,11 @@ if __name__ == '__main__':
     """
     A simple test of the Hamiltonian class.
     """
-    Hg, mugq = hamiltonians.singleF(F=1, muB=1)  # type: ignore[name-defined]
-    He, mueq = hamiltonians.singleF(F=2, muB=1)  # type: ignore[name-defined]
-    d_q = pylcp.hamiltonians.dqij_two_bare_hyperfine(1, 2)  # type: ignore[name-defined]
+    from . import hamiltonians
+
+    Hg, mugq = hamiltonians.singleF(F=1, muB=1)  # pyright: ignore[reportAssignmentType]
+    He, mueq = hamiltonians.singleF(F=2, muB=1)  # pyright: ignore[reportAssignmentType]
+    d_q = hamiltonians.dqij_two_bare_hyperfine(1, 2)
 
     ham1 = hamiltonian()
     ham1.add_H_0_block('g', Hg)
@@ -673,4 +677,4 @@ if __name__ == '__main__':
     print(ham1.blocks)
 
     ham1.make_full_matrices()
-    ham1.diag_static_field(np.array([0, 0.5, 0]))  # type: ignore[arg-type]
+    ham1.diag_static_field(0.5)
