@@ -13,7 +13,7 @@ import numpy as np
 from inspect import signature
 from scipy.integrate._ivp.bdf import BDF
 from scipy.integrate._ivp.radau import Radau
-from scipy.integrate._ivp.rk import RK23, RK45
+from scipy.integrate._ivp.rk import RK23, RK45, DOP853
 from scipy.integrate._ivp.lsoda import LSODA
 from scipy.optimize import OptimizeResult
 from scipy.integrate._ivp.common import EPS, OdeSolution
@@ -23,11 +23,13 @@ from scipy.integrate._ivp.ivp import (prepare_events, solve_event_equation,
 import time
 from .common import progressBar
 
-METHODS = {'RK23': RK23,
-           'RK45': RK45,
-           'Radau': Radau,
-           'BDF': BDF,
-           'LSODA': LSODA}
+METHODS: dict[str, type[OdeSolver]] = {
+    'RK23': RK23,
+    'RK45': RK45,
+    'Radau': Radau,
+    'BDF': BDF,
+    'LSODA': LSODA,
+}
 
 
 MESSAGES = {0: "The solver successfully reached the end of the integration interval.",
@@ -123,7 +125,7 @@ class parallelIntegrator(object):
         elif method == 'LSODA':
             self.intobj = LSODA
         else:
-            raise ValueError('Method %s not recognized'%self.method)
+            raise ValueError('Method %s not recognized'%method)
 
         self.y0 = np.array(y0)
         self.extra_kwargs = kwargs
@@ -201,7 +203,13 @@ class parallelIntegrator(object):
             self.interpolants.append(sol)
             self.ts.append(self.integrator.t)
 
-def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
+def _bind_event_args(event, args):
+    def wrapped(t, x):
+        return event(t, x, *args)
+    return wrapped
+
+
+def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver] = 'RK45', t_eval=None,
                      dense_output=False, events=None, vectorized=False,
                      args=None, **options):
     """Solve an initial value problem for a system of ODEs.
@@ -553,14 +561,16 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
             # This will be an upper bound for slices.
             t_eval_i = t_eval.shape[0]
 
-    if method in METHODS:
-        method = METHODS[method]
+    if isinstance(method, str):
+        solver_class: type[OdeSolver] = METHODS[method]
+    else:
+        solver_class = method
 
     max_step_initial = options.pop('initial_max_step', np.inf)
     max_step_global = options.pop('max_step', np.inf)
 
-    solver = method(fun, t0, y0, tf, vectorized=vectorized,
-                    max_step=max_step_initial, **options)
+    solver = solver_class(fun, t0, y0, tf, vectorized=vectorized,
+                          max_step=max_step_initial, **options)
 
     if t_eval is None:
         ts = [t0]
@@ -585,8 +595,7 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
             # The original event function is passed as a keyword argument to the
             # lambda to keep the original function in scope (i.e. avoid the
             # late binding closure "gotcha").
-            events = [lambda t, x, event=event: event(t, x, *args)
-                      for event in events]
+            events = [_bind_event_args(event, args) for event in events]
         g = [event(t0, y0) for event in events]
         t_events = [[] for _ in range(len(events))]
         y_events = [[] for _ in range(len(events))]
@@ -635,12 +644,12 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
                 if sol is None:
                     sol = solver.dense_output()
 
-                root_indices, roots, terminate = handle_events(
+                root_indices, roots, terminate = handle_events(  # type: ignore[call-arg]
                     sol, events, active_events, is_terminal, t_old, t)
 
                 for e, te in zip(root_indices, roots):
-                    t_events[e].append(te)
-                    y_events[e].append(sol(te))
+                    t_events[e].append(te)   # type: ignore[index]
+                    y_events[e].append(sol(te))  # type: ignore[index]
 
                 if terminate:
                     status = 1
@@ -667,7 +676,7 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
             if t_eval_step.size > 0:
                 if sol is None:
                     sol = solver.dense_output()
-                ts.append(t_eval_step)
+                ts.append(t_eval_step)  # type: ignore[arg-type]
                 ys.append(sol(t_eval_step))
                 t_eval_i = t_eval_i_new
 
@@ -678,6 +687,7 @@ def solve_ivp_random(fun, random_func, t_span, y0,  method='RK45', t_eval=None,
 
     if t_events is not None:
         t_events = [np.asarray(te) for te in t_events]
+        assert y_events is not None
         y_events = [np.asarray(ye) for ye in y_events]
 
     if t_eval is None:

@@ -260,6 +260,7 @@ class governingeq(object):
                 for i, ax in enumerate(axes):
                     r_vals[int(ax)] = float(r_changing[i])
                 F = _set_and_eval(r_vals)
+                assert F is not None
                 return np.array([float(F[int(ax)]) for ax in axes])
 
             result = root(multi_wrapper, **kwargs)
@@ -272,6 +273,7 @@ class governingeq(object):
                 r_vals = list(np.array(self.r_eq, dtype=float))
                 r_vals[ax0] = float(r_changing)
                 F = _set_and_eval(r_vals)
+                assert F is not None
                 return float(F[ax0])
 
             result = root_scalar(scalar_wrapper, **kwargs)
@@ -311,26 +313,25 @@ class governingeq(object):
         """
         self.omega = jnp.zeros(3,)
 
-        if isinstance(eps, float):
-            eps = jnp.array([eps]*3)
+        eps_arr: jax.Array = jnp.array([eps]*3) if isinstance(eps, float) else jnp.asarray(eps)
 
         if r is None and self.r_eq is None:
             r = jnp.array([0., 0., 0.])
         elif r is None:
-            r = self.r_eq
+            r = self.r_eq if self.r_eq is not None else jnp.array([0., 0., 0.])
 
-        if hasattr(self, 'mass'):
-            mass = self.mass
-        else:
-            mass = self.hamiltonian.mass
+        assert r is not None
+        r_arr: jax.Array = jnp.asarray(r)
+
+        mass = getattr(self, 'mass', None) or self.hamiltonian.mass
 
         for axis in axes:
-            if not jnp.isnan(r[axis]):
-                rpmdri = jnp.tile(r, (2,1)).T
-                # rpmdri[axis, 1] += eps[axis]
-                # rpmdri[axis, 0] -= eps[axis]
-                rpmdri = rpmdri.at[axis, 1].add(eps[axis])
-                rpmdri = rpmdri.at[axis, 0].subtract(eps[axis])
+            if not jnp.isnan(r_arr[axis]):
+                rpmdri = jnp.tile(r_arr, (2,1)).T
+                # rpmdri[axis, 1] += eps_arr[axis]
+                # rpmdri[axis, 0] -= eps_arr[axis]
+                rpmdri = rpmdri.at[axis, 1].add(eps_arr[axis])
+                rpmdri = rpmdri.at[axis, 0].subtract(eps_arr[axis])
 
                 F = np.zeros((2,))
                 for jj in range(2):
@@ -338,11 +339,12 @@ class governingeq(object):
                                                            jnp.zeros((3,)))
                     f = self.find_equilibrium_force(**kwargs)
 
+                    assert f is not None
                     F[jj] = f[axis]
-                
+
                 dF = jnp.diff(jnp.array(F))[0]
                 if dF < 0:
-                    self.omega = self.omega.at[axis].set(jnp.sqrt(-dF/(2*eps[axis]*mass)))
+                    self.omega = self.omega.at[axis].set(jnp.sqrt(-dF/(2*eps_arr[axis]*mass)))
                 else:
                     self.omega = self.omega.at[axis].set(0.0)
             else:
@@ -385,29 +387,32 @@ class governingeq(object):
         """
         self.beta = jnp.zeros(3,)
 
-        if isinstance(eps, float):
-            eps = jnp.array([eps]*3)
+        eps_arr: jax.Array = jnp.array([eps]*3) if isinstance(eps, float) else jnp.asarray(eps)
 
         if r is None and self.r_eq is None:
             r = jnp.array([0., 0., 0.])
         elif r is None:
-            r = self.r_eq
+            r = self.r_eq if self.r_eq is not None else jnp.array([0., 0., 0.])
+
+        assert r is not None
+        r_arr: jax.Array = jnp.asarray(r)
 
         for axis in axes:
-            if not jnp.isnan(r[axis]):
+            if not jnp.isnan(r_arr[axis]):
                 vpmdvi = jnp.zeros((3,2))
-                vpmdvi = vpmdvi.at[axis, 1].add(eps[axis])
-                vpmdvi = vpmdvi.at[axis, 0].subtract(eps[axis])
-                
+                vpmdvi = vpmdvi.at[axis, 1].add(eps_arr[axis])
+                vpmdvi = vpmdvi.at[axis, 0].subtract(eps_arr[axis])
+
                 F = np.zeros((2,))
                 for jj in range(2):
-                    self.set_initial_position_and_velocity(r, vpmdvi[:, jj])
+                    self.set_initial_position_and_velocity(r_arr, vpmdvi[:, jj])
                     f = self.find_equilibrium_force(**kwargs)
 
+                    assert f is not None
                     F[jj] = f[axis]
-                
+
                 dF = jnp.diff(jnp.asarray(F))[0]
-                self.beta = self.beta.at[axis].set(-dF/(2*eps[axis]))
+                self.beta = self.beta.at[axis].set(-dF/(2*eps_arr[axis]))
             else:
                 self.beta = self.beta.at[axis].set(0)
 

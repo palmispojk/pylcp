@@ -221,7 +221,7 @@ class base_force_profile():
         F_mag : jax.Array, shape (3,)
             Magnetic force contribution.
         """
-        if Neq is not None:
+        if Neq is not None and self.Neq is not None:
             self.Neq = self.Neq.at[ind].set(Neq)
 
         for jj in range(3):
@@ -303,6 +303,6 @@ if __name__ == '__main__':
     
     fig = plt.figure()
     ax = fig.add_subplot(111, projection='3d')
-    ax.scatter(vectors[:,0], vectors[:,1], vectors[:,2])
+    ax.scatter(vectors[:,0], vectors[:,1], vectors[:,2])  # type: ignore[arg-type]
     ax.view_init(elev=-90., azim=0.)
     plt.show()

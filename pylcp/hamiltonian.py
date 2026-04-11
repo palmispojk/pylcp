@@ -93,7 +93,7 @@ class hamiltonian():
 
         def check_diagonality(self, M: jax.Array) -> bool:
             if M.shape[0] == M.shape[1]:
-                return jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0
+                return bool(jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0)
             else:
                 return False # Cannot be diagonal, cause not square.
 
@@ -121,7 +121,7 @@ class hamiltonian():
 
         def check_diagonality(self, M: jax.Array) -> bool:
             if M.shape[1] == M.shape[2]:
-                return jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0
+                return bool(jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0)
             else:
                 return False # Cannot be diagonal, cause not square.
 
@@ -182,8 +182,8 @@ class hamiltonian():
             else:
                 self.n += block.n
 
-    def __search_elem_label(self, label):
-        ind = ()
+    def __search_elem_label(self, label) -> tuple[int, int] | None:
+        ind: tuple[int, int] | None = None
         for ii, row in enumerate(self.blocks):
             for jj, element in enumerate(row):
                 if isinstance(element, self.block):
@@ -323,12 +323,12 @@ class hamiltonian():
         ind_H_0 = self.__search_elem_label(self.__make_elem_label('H_0', label1))
         ind_mu_q = self.__search_elem_label(self.__make_elem_label('mu_q', label1))
 
-        if ind_H_0 == () and ind_mu_q == ():
+        if ind_H_0 is None and ind_mu_q is None:
             raise ValueError('Label %s not found.' % label1)
-        elif ind_H_0 == ():
+        elif ind_H_0 is None:
             ind1 = ind_mu_q[0]
             n = self.blocks[ind_mu_q].n
-        elif ind_mu_q == ():
+        elif ind_mu_q is None:
             ind1 = ind_H_0[0]
             n = self.blocks[ind_H_0].n
         else:
@@ -338,12 +338,12 @@ class hamiltonian():
         ind_H_0 = self.__search_elem_label(self.__make_elem_label('H_0', label2))
         ind_mu_q = self.__search_elem_label(self.__make_elem_label('mu_q', label2))
 
-        if ind_H_0 == () and ind_mu_q == ():
+        if ind_H_0 is None and ind_mu_q is None:
             raise ValueError('Label %s not found.' % label2)
-        elif ind_H_0 == ():
+        elif ind_H_0 is None:
             ind2 = ind_mu_q[0]
             m = self.blocks[ind_mu_q].n
-        elif ind_mu_q == ():
+        elif ind_mu_q is None:
             ind2 = ind_H_0[0]
             m = self.blocks[ind_H_0].n
         else:
@@ -454,7 +454,7 @@ class hamiltonian():
         return self.H_0, self.mu_q, self.d_q_bare, self.d_q_star
 
 
-    def return_full_H(self, Eq: npt.ArrayLike | dict[str, npt.ArrayLike], Bq: npt.ArrayLike) -> jax.Array:
+    def return_full_H(self, Eq: np.ndarray | jax.Array | list | dict[str, np.ndarray | jax.Array | list], Bq: npt.ArrayLike) -> jax.Array:
         """
         Assemble the block diagonal Hamiltonian into a single matrix
 
@@ -480,15 +480,18 @@ class hamiltonian():
         if not hasattr(self, 'H_0'):
             self.make_full_matrices()
 
-        H = self.H_0 - jnp.tensordot(self.mu_q, jnp.conjugate(Bq), axes=(0, 0))
+        H = self.H_0 - jnp.tensordot(self.mu_q, jnp.conjugate(jnp.asarray(Bq, dtype=jnp.complex128)), axes=(0, 0))
 
+        eq_dict: dict[str, np.ndarray | jax.Array | list]
         if isinstance(Eq, list) or isinstance(Eq, (np.ndarray, jnp.ndarray)):
-            Eq = {'g->e':Eq} # Promote to a dictionary.
+            eq_dict = {'g->e': Eq}  # Promote to a dictionary.
+        else:
+            eq_dict = Eq
 
-        for key in Eq.keys():
+        for key in eq_dict.keys():
             for ii, q in enumerate(np.arange(-1., 2., 1.)):
-                H -= (0.5*(-1.)**q*self.d_q_bare[key][ii]*Eq[key][2-ii] +
-                      0.5*(-1.)**q*self.d_q_star[key][ii]*jnp.conjugate(Eq[key][2-ii]))
+                H -= (0.5*(-1.)**q*self.d_q_bare[key][ii]*eq_dict[key][2-ii] +
+                      0.5*(-1.)**q*self.d_q_star[key][ii]*jnp.conjugate(eq_dict[key][2-ii]))
 
         return H
 
@@ -639,9 +642,9 @@ if __name__ == '__main__':
     """
     A simple test of the Hamiltonian class.
     """
-    Hg, mugq = hamiltonians.singleF(F=1, muB=1)
-    He, mueq = hamiltonians.singleF(F=2, muB=1)
-    d_q = pylcp.hamiltonians.dqij_two_bare_hyperfine(1, 2)
+    Hg, mugq = hamiltonians.singleF(F=1, muB=1)  # type: ignore[name-defined]
+    He, mueq = hamiltonians.singleF(F=2, muB=1)  # type: ignore[name-defined]
+    d_q = pylcp.hamiltonians.dqij_two_bare_hyperfine(1, 2)  # type: ignore[name-defined]
 
     ham1 = hamiltonian()
     ham1.add_H_0_block('g', Hg)
@@ -654,4 +657,4 @@ if __name__ == '__main__':
     print(ham1.blocks)
 
     ham1.make_full_matrices()
-    ham1.diag_static_field(np.array([0, 0.5, 0]))
+    ham1.diag_static_field(np.array([0, 0.5, 0]))  # type: ignore[arg-type]

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from inspect import signature
-from typing import Any
+from typing import Any, cast
 
 import jax
 import jax.numpy as jnp
@@ -397,7 +397,8 @@ class laserBeam(object):
                 base_pol = jnp.array([0., 0., 1.], dtype=jnp.complex64)
 
             k_norm = jnp.linalg.norm(self._kvec)
-            k_dir = self._kvec / jnp.where(k_norm == 0, 1.0, k_norm)
+            # jnp.where with 3 args always returns Array; cast avoids stub ambiguity
+            k_dir = self._kvec / cast(jax.Array, jnp.where(k_norm == 0, 1.0, k_norm))
             
             parsed_pol = self.project_pol(k_dir, pol=base_pol, invert=True)
 
@@ -410,7 +411,7 @@ class laserBeam(object):
             # cartesian coordinates:
             if pol_coord=='cartesian':
                 # Check for transverseness:
-                if jnp.abs(jnp.dot(self.kvec(), pol)) > 1e-9:
+                if jnp.abs(jnp.dot(self.kvec(), pol_arr)) > 1e-9:
                     raise ValueError("I'm sorry; light is a transverse wave")
 
                 parsed_pol = cart2spherical(pol_arr)
@@ -566,7 +567,7 @@ class laserBeam(object):
         return self._delta * t
 
     # TODO: add testing of kvec/pol orthogonality.
-    def project_pol(self, quant_axis, R=jnp.array([0., 0., 0.]), t=0,
+    def project_pol(self, quant_axis, R=jnp.array([0., 0., 0.]), t=0.,
                     treat_nans=False, calculate_norm=False, invert=False, pol=None, **kwargs):
         """
         Project the polarization onto a quantization axis.
@@ -800,7 +801,7 @@ class laserBeam(object):
         
         return pol * amp * jnp.exp(phi)
     
-    def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0):
+    def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0.):
         """Return the Jacobian of the electric field with respect to position.
 
         Computes the gradient numerically via forward-mode automatic
@@ -1217,7 +1218,7 @@ class laserBeams(object):
             return jnp.zeros((0, 3), dtype=jnp.float32)
         return jnp.stack([beam.kvec(R, t) for beam in self.beam_vector])
 
-    def delta(self, t=0):
+    def delta(self, t=0.):
         """
         Returns the detuning of each of the laser beams at time t
 
@@ -1326,7 +1327,7 @@ class laserBeams(object):
         return jnp.sum(self.electric_field_gradient(R, t), axis=0)
 
 
-    def project_pol(self, quant_axis, R=jnp.array([0., 0., 0.]), t=0, **kwargs):
+    def project_pol(self, quant_axis, R=jnp.array([0., 0., 0.]), t=0., **kwargs):
         """
         Project the polarization onto a quantization axis.
 
@@ -1572,7 +1573,8 @@ if __name__ == '__main__':
     R_batch = jnp.array(np.random.rand(101, 3)) 
     t_batch = jnp.linspace(0, 10, 101)
 
-    vmapped_gradient = jax.vmap(example_beam_plane.electric_field_gradient)(R_batch, t_batch)
+    # jax.vmap passes Array scalars; t: float annotation is correct for normal use
+    vmapped_gradient = jax.vmap(example_beam_plane.electric_field_gradient)(R_batch, t_batch)  # type: ignore[arg-type]
     print("Batch Gradient shape (Atoms, 3, 3):\n", vmapped_gradient.shape)
 
     # 7. MOT Beams Initialization
