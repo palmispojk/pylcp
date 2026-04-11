@@ -525,7 +525,7 @@ class rateeq(governingeq):
                         np.real(np.diag(blk[1].matrix[1])), dtype=jnp.float64)
                 elif isinstance(blk, self.hamiltonian.vector_block):
                     return jnp.array(
-                        np.real(np.diag(blk.matrix[1])), dtype=jnp.float64)
+                        np.real(np.diag(blk.matrix[1])), dtype=jnp.float64)  # type: ignore[attr-defined]
                 return jnp.zeros(size, dtype=jnp.float64)
 
             mu_z_1 = _mu_z_diag(ind[0], n)
@@ -720,10 +720,11 @@ class rateeq(governingeq):
         return self.sol
 
 
-    def evolve_motion(self, t_span, freeze_axis=[False, False, False],
+    def evolve_motion(self, t_span, n_points,
+                      freeze_axis=[False, False, False],
                       random_recoil=False, random_force=False,
                       max_scatter_probability=0.1, progress_bar=False,
-                      record_force=False, key=None, n_points=1001,
+                      record_force=False, key=None,
                       rtol=1e-5, atol=1e-5, solver_type='Dopri5',
                       max_steps=100000, **kwargs):
         """
@@ -753,8 +754,8 @@ class rateeq(governingeq):
         key : jax.random.PRNGKey, optional
             JAX PRNG key required when random_recoil or random_force is True
             and using the JAX path.
-        n_points : int, optional
-            Output time points for non-random JAX path.  Default: 1001.
+        n_points : int
+            Number of evenly-spaced output time points.
         rtol, atol : float, optional
             ODE solver tolerances.  Default: 1e-5.
         solver_type : str, optional
@@ -834,10 +835,12 @@ class rateeq(governingeq):
         results = solve_ivp_random(
             rhs, random_func, t_span,
             y0[None, :], keys_batch,
+            n_points=n_points,
             solver_type=solver_type,
             max_steps=max_steps,
             max_step=max_scatter_probability,
             rtol=rtol, atol=atol,
+            **kwargs,
         )
 
         raw = results[0]
@@ -1328,9 +1331,11 @@ class rateeq(governingeq):
     def _generate_force_profile_cpu(self, R, V, name, progress_bar=False,
                                     **kwargs):
         """Sequential CPU fallback for non-diagonal hamiltonians."""
-        it = np.nditer([R[0], R[1], R[2], V[0], V[1], V[2]],
-                       flags=['refs_ok', 'multi_index'],
-                       op_flags=[['readonly']] * 6)
+        it = np.nditer(  # type: ignore[call-overload]
+            [R[0], R[1], R[2], V[0], V[1], V[2]],
+            flags=['refs_ok', 'multi_index'],
+            op_flags=[['readonly']] * 6  # type: ignore[arg-type]
+        )
 
         if progress_bar:
             progress = progressBar()

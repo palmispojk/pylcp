@@ -84,11 +84,11 @@ def harmonic(t, y, args):
     return jnp.array([-y[1], y[0]])
 
 
-def dummy_random(t, y, dt, key):
+def dummy_random(t, y, dt, key, args=None):
     return y, jnp.int32(0), jnp.float64(dt), key
 
 
-def always_scatter(t, y, dt, key):
+def always_scatter(t, y, dt, key, args=None):
     key, _ = jax.random.split(key)
     return y, jnp.int32(1), jnp.float64(dt), key
 
@@ -239,7 +239,7 @@ class TestMultiDeviceRandom:
         y0 = jnp.ones((N, 1)) * 2.0
         keys = self._keys(N)
         sols = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                y0, keys,
+                                y0, keys, n_points=20,
                                 max_steps=10000, rtol=1e-6, atol=1e-6)
         for i in range(N):
             y_final = float(sols[i].y[0, -1])
@@ -257,11 +257,11 @@ class TestMultiDeviceRandom:
         # Single-device reference (bypass multi-device by patching back).
         with mock.patch.object(itg, '_gpu_devices', return_value=[]):
             sols_ref = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                        y0, keys, max_steps=5000)
+                                        y0, keys, n_points=20, max_steps=5000)
 
         # Multi-device (autouse fixture active).
         sols_shard = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                      y0, keys, max_steps=5000)
+                                      y0, keys, n_points=20, max_steps=5000)
 
         for i in range(N):
             np.testing.assert_allclose(
@@ -276,7 +276,7 @@ class TestMultiDeviceRandom:
         y0 = jnp.ones((N, 1))
         keys = self._keys(N)
         sols = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                y0, keys, max_steps=5000)
+                                y0, keys, n_points=20, max_steps=5000)
         for i in range(N):
             assert sols[i].success, f"Atom {i} did not succeed"
 
@@ -286,7 +286,7 @@ class TestMultiDeviceRandom:
         y0 = jnp.ones((N, 1))
         keys = self._keys(N)
         sols = solve_ivp_random(exp_decay, always_scatter, [0., 0.5],
-                                y0, keys, max_steps=2000)
+                                y0, keys, n_points=20, max_steps=2000)
         for i in range(N):
             assert len(sols[i].t_random) > 0, \
                 f"Atom {i} had no scatter events"
@@ -300,7 +300,7 @@ class TestMultiDeviceRandom:
 
         # Force batch_size smaller than N to trigger chunking.
         sols = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                y0, keys,
+                                y0, keys, n_points=20,
                                 max_steps=10000, batch_size=N_DEVICES * 2)
         assert len(sols) == N
         for i in range(N):

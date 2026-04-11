@@ -148,7 +148,17 @@ class RandomOdeResult:
     Supports eager (all arrays passed in) or lazy construction from a
     batched state dict.  Lazy mode defers GPU→host transfer until first
     attribute access.
+
+    Callers may attach additional per-trajectory arrays after construction:
+
+    * ``v`` : velocity, shape ``(3, n_steps)``
+    * ``r`` : position, shape ``(3, n_steps)``
+    * ``rho`` : density matrix, shape ``(n, n, n_steps)`` (OBE only)
     """
+
+    v: np.ndarray | None
+    r: np.ndarray | None
+    rho: np.ndarray | None
 
     def __init__(self, t=None, y=None, t_random=None, n_random=None,
                  inds_random=None, success=None, status=0, message="",
@@ -178,6 +188,8 @@ class RandomOdeResult:
             return
         i = self._index
         bs = self._batched_state
+        assert bs is not None  # only called in lazy mode
+        assert i is not None
         n_saved = int(bs['save_idx'][i])
 
         # Initial state is already in slot 0 of ts/ys (written by the
@@ -192,6 +204,7 @@ class RandomOdeResult:
         self._cache['t_random'] = t_rand_raw[scatter_mask]
         self._cache['n_random'] = n_rand_raw[scatter_mask]
         self._cache['inds_random'] = scatter_mask
+        assert self._tf is not None
         self._cache['success'] = bool(bs['t'][i] >= self._tf)
         self._cache['status'] = 0 if self._cache['success'] else -1
         self._cache['message'] = ("Success" if self._cache['success']
@@ -212,31 +225,13 @@ class RandomOdeResult:
         return val
 
 
-def _batched_random_trajectories(
-    func,
-    random_func,
-    t0,
-    tf,
-    y0_batch,
-    keys_batch,
-    max_step_global,
-    rtol,
-    atol,
-    dt0,
-    solver_type="Dopri5",
-    args=None,
-    n_output=5000,
-    progress=False,
-    output_dir=None,
-    ):
-    """
-    Batched stochastic trajectory solver with disk-backed output.
+@functools.lru_cache(maxsize=None)
+def _make_run_group(func, random_func, solver_type):
+    """Return a JIT-compiled, vmapped single-step kernel.
 
-    Saves state at ``n_output`` evenly-spaced times.  For each save slot
-    a JIT-compiled kernel (vmapped across atoms) advances every atom to
-    the next save time using adaptive recoil-limited steps inside a
-    ``jax.lax.while_loop``.  Output is written to memory-mapped files;
-    only the small per-atom carry resides on GPU.
+    Keyed on (func, random_func, solver_type) so JAX reuses the compiled
+    XLA program across calls with the same physics functions — including
+    repeated evolve_motion calls on the same OBE instance.
     """
     if solver_type == "Dopri5":
         solver = Dopri5()
@@ -249,73 +244,97 @@ def _batched_random_trajectories(
                          f"solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
 
     term = ODETerm(_ensure_3arg(func))
+
+    @functools.partial(jax.jit, static_argnames=('rtol', 'atol', 'max_step_global'))
+    def _run_group(carry_batch, max_step_global, rtol, atol, args):
+        def _single_group(carry):
+            def cond_fn(s):
+                return s['t'] < s['t_save_next']
+
+            def body_fn(s):
+                t_curr = s['t']
+                dt_curr = s['dt']
+                t_next = jnp.minimum(t_curr + dt_curr, s['t_save_next'])
+                actual_dt = t_next - t_curr
+
+                sol = diffeqsolve(
+                    term, solver,
+                    t0=t_curr, t1=t_next, dt0=dt_curr,
+                    y0=s['y'], args=args,
+                    stepsize_controller=PIDController(rtol=rtol, atol=atol),
+                    saveat=SaveAt(t1=True),
+                    max_steps=None,
+                )
+                y_next = sol.ys[-1]  # type: ignore[index]
+                nfev_add = sol.stats['num_steps']
+
+                y_jump, n_scatters, dt_max_suggested, key_new = random_func(
+                    t_next, y_next, actual_dt, s['key'], args
+                )
+                # If the step was clipped to t_save_next, dt_max_suggested
+                # collapses to ~0 and would freeze the next save group;
+                # reuse dt_curr (already a recoil-safe step) instead.
+                dt_next = jnp.where(
+                    actual_dt < dt_curr,
+                    jnp.minimum(dt_curr, max_step_global),
+                    jnp.minimum(dt_max_suggested, max_step_global),
+                )
+
+                return {
+                    't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
+                    'step_idx': s['step_idx'] + 1,
+                    'nfev': s['nfev'] + nfev_add,
+                    'last_t_random': jnp.where(
+                        n_scatters > 0, t_next, s['last_t_random']),
+                    'last_n_random': jnp.where(
+                        n_scatters > 0, jnp.int32(n_scatters),
+                        s['last_n_random']),
+                    't_save_next': s['t_save_next'],
+                }
+
+            return jax.lax.while_loop(cond_fn, body_fn, carry)
+
+        return jax.vmap(_single_group)(carry_batch)
+
+    return _run_group
+
+
+def _batched_random_trajectories(
+    func,
+    random_func,
+    t0,
+    tf,
+    y0_batch,
+    keys_batch,
+    max_step_global,
+    rtol,
+    atol,
+    dt0,
+    n_points,
+    solver_type="Dopri5",
+    args=None,
+    progress=False,
+    output_dir=None,
+    ):
+    """
+    Batched stochastic trajectory solver with disk-backed output.
+
+    Saves state at ``n_points`` evenly-spaced times.  For each save slot
+    a JIT-compiled kernel (vmapped across atoms) advances every atom to
+    the next save time using adaptive recoil-limited steps inside a
+    ``jax.lax.while_loop``.  Output is written to memory-mapped files;
+    only the small per-atom carry resides on GPU.
+    """
+    _run_group = _make_run_group(func, random_func, solver_type)
+
     N = y0_batch.shape[0]
     state_dim = y0_batch.shape[1]
 
     # -- Time-based save grid ----------------------------------------------
-    # n_output evenly-spaced save boundaries from t0 to tf.
+    # n_points evenly-spaced save boundaries from t0 to tf.
     # The host loop drives one group per save slot; the inner kernel
     # takes as many adaptive steps as needed to reach t_save_next.
-    t_save_grid = np.linspace(float(t0), float(tf), n_output + 1)
-
-    # -- JIT kernel: advance to a target time ------------------------------
-    # t_save_next is a dynamic field in the carry, so the same compiled
-    # kernel is reused for every save slot.
-
-    def _single_group(carry):
-        """Run adaptive steps for one atom until t >= t_save_next."""
-        t_save_next = carry['t_save_next']
-
-        def cond_fn(s):
-            return (s['t'] < t_save_next)
-
-        def body_fn(s):
-            t_curr = s['t']
-            dt_curr = s['dt']
-            t_next = jnp.minimum(t_curr + dt_curr, s['t_save_next'])
-            actual_dt = t_next - t_curr
-
-            sol = diffeqsolve(
-                term, solver,
-                t0=t_curr, t1=t_next, dt0=dt_curr,
-                y0=s['y'], args=args,
-                stepsize_controller=PIDController(rtol=rtol, atol=atol),
-                saveat=SaveAt(t1=True),
-                max_steps=None,
-            )
-            y_next = sol.ys[-1]
-            nfev_add = sol.stats['num_steps']
-
-            y_jump, n_scatters, dt_max_suggested, key_new = random_func(
-                t_next, y_next, actual_dt, s['key'], args
-            )
-            # If the step was clipped to t_save_next, dt_max_suggested
-            # collapses to ~0 and would freeze the next save group;
-            # reuse dt_curr (already a recoil-safe step) instead.
-            dt_next = jnp.where(
-                actual_dt < dt_curr,
-                jnp.minimum(dt_curr, max_step_global),
-                jnp.minimum(dt_max_suggested, max_step_global),
-            )
-
-            return {
-                't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
-                'step_idx': s['step_idx'] + 1,
-                'nfev': s['nfev'] + nfev_add,
-                'last_t_random': jnp.where(
-                    n_scatters > 0, t_next, s['last_t_random']),
-                'last_n_random': jnp.where(
-                    n_scatters > 0, jnp.int32(n_scatters),
-                    s['last_n_random']),
-                't_save_next': s['t_save_next'],
-            }
-
-        final = jax.lax.while_loop(cond_fn, body_fn, carry)
-        return final
-
-    @jax.jit
-    def _run_group(carry_batch):
-        return jax.vmap(_single_group)(carry_batch)
+    t_save_grid = np.linspace(float(t0), float(tf), n_points + 1)
 
     # -- Initialise carry (tiny, on GPU) -----------------------------------
     carry = {
@@ -331,7 +350,7 @@ def _batched_random_trajectories(
     }
 
     # -- Pre-allocate disk-backed output arrays (memmap) --------------------
-    n_total = n_output + 1  # +1 for initial state in slot 0
+    n_total = n_points + 1  # +1 for initial state in slot 0
     _tmpdir = output_dir or tempfile.gettempdir()
 
     def _make_mmap(name, shape, dtype):
@@ -354,23 +373,23 @@ def _batched_random_trajectories(
     ys_cpu[:, 0, :] = np.asarray(carry['y'])
 
     # -- Host loop: one group per save slot --------------------------------
-    _log_interval = max(1, n_output // 20)  # ~5 % increments
+    _log_interval = max(1, n_points // 20)  # ~5 % increments
     _t_first_group = None
 
-    for _gi in range(n_output):
-        carry = _run_group(carry)
+    for _gi in range(n_points):
+        carry = _run_group(carry, max_step_global, rtol, atol, args)
 
         # Start timer after first group (which includes JIT compilation).
         if _gi == 0:
             _t_first_group = time.monotonic()
 
         if progress and _gi > 0 and _gi % _log_interval == 0:
-            elapsed = time.monotonic() - _t_first_group
+            elapsed = time.monotonic() - _t_first_group  # type: ignore[operator]
             rate = _gi / elapsed
-            eta = (n_output - _gi) / rate if rate > 0 else 0
+            eta = (n_points - _gi) / rate if rate > 0 else 0
             m, s = divmod(int(eta), 60)
             h, m = divmod(m, 60)
-            print(f"\r  [{_gi}/{n_output}] {100*_gi/n_output:.0f}%  "
+            print(f"\r  [{_gi}/{n_points}] {100*_gi/n_points:.0f}%  "
                   f"ETA {h}h{m:02d}m{s:02d}s", end="", flush=True)
 
         # Tiny transfer: scalars + one state vector per atom.
@@ -381,7 +400,7 @@ def _batched_random_trajectories(
         n_random_cpu[:, save_idx] = np.asarray(carry['last_n_random'])
 
         # Reset scatter accumulators and advance save target for next group.
-        if _gi < n_output - 1:
+        if _gi < n_points - 1:
             carry = {
                 **carry,
                 'last_t_random': jnp.zeros(N, dtype=jnp.float64),
@@ -391,10 +410,10 @@ def _batched_random_trajectories(
             }
 
     if progress:
-        print(f"\r  [{n_output}/{n_output}] 100%  done.          ")
+        print(f"\r  [{n_points}/{n_points}] 100%  done.          ")
 
-    # All atoms save exactly n_output + 1 points (including initial state).
-    save_idx_arr = np.full(N, n_output + 1, dtype=np.int32)
+    # All atoms save exactly n_points + 1 points (including initial state).
+    save_idx_arr = np.full(N, n_points + 1, dtype=np.int32)
 
     return {
         't': np.asarray(carry['t']),
@@ -455,7 +474,7 @@ def _probe_bytes_per_atom(state_dim):
                 saveat=SaveAt(t1=True),
                 max_steps=None,
             )
-            return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],
+            return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],  # type: ignore[index]
                     'count': s['count'] + 1}
         init = {**carry, 'count': jnp.int32(0)}
         final = jax.lax.while_loop(cond_fn, body_fn, init)
@@ -560,7 +579,7 @@ def _probe_throughput_cap(state_dim, threshold=1.15,
                 saveat=SaveAt(t1=True),
                 max_steps=None,
             )
-            return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],
+            return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],  # type: ignore[index]
                     'count': s['count'] + 1}
         init = {**carry, 'count': jnp.int32(0)}
         final = jax.lax.while_loop(cond_fn, body_fn, init)
@@ -743,13 +762,13 @@ def solve_ivp_random(
     t_span,
     y0_batch,
     keys_batch,
+    n_points,
     solver_type="Dopri5",
     max_step=float('inf'),
     rtol=1e-5,
     atol=1e-6,
     batch_size=None,
     args=None,
-    n_output=5000,
     progress=False,
     output_dir=None,
     **options
@@ -758,7 +777,7 @@ def solve_ivp_random(
     GPU-batched ODE solver with stochastic jumps.
 
     Parallel replacement for ``scipy.integrate.solve_ivp``.  Saves at
-    ``n_output`` evenly-spaced times (like ``solve_ivp(t_eval=...)``).
+    ``n_points`` evenly-spaced times (like ``solve_ivp(t_eval=...)``).
 
     Args:
         fun: RHS of the ODE, signature ``fun(t, y)`` or ``fun(t, y, args)``.
@@ -772,7 +791,7 @@ def solve_ivp_random(
             Set to reduce GPU warp divergence on large batches.
         rtol, atol: Tolerances for the adaptive step controller.
         batch_size: Max atoms per chunk.  Default: ``None`` (all at once).
-        n_output: Number of evenly-spaced output points.  Default: 5000.
+        n_points: Number of evenly-spaced output points.
         output_dir: Directory for temporary memmap files.
 
     Returns:
@@ -800,7 +819,7 @@ def solve_ivp_random(
         _log.info(
             f"[GPU DEBUG: solve_ivp_random] N={N}, batch_size={batch_size}, "
             f"n_gpus={n_gpus}, state_dim={y0_batch.shape[-1]}, "
-            f"n_output={n_output}"
+            f"n_points={n_points}"
         )
 
     def _run_chunk(y0_chunk, keys_chunk, chunk_N):
@@ -812,8 +831,9 @@ def solve_ivp_random(
             fun, random_func, t0, tf,
             y0_chunk, keys_chunk,
             max_step, rtol, atol, dt0,
-            solver_type, args,
-            n_output=n_output,
+            n_points=n_points,
+            solver_type=solver_type,
+            args=args,
             progress=progress,
             output_dir=output_dir,
         )
@@ -910,7 +930,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         if jnp.ndim(t1) == 0:
             t1 = jnp.broadcast_to(t1, t0.shape)
 
-        def solve_one(y0, t0_i, t1_i):
+        def solve_one_per_atom(y0, t0_i, t1_i):
             ts_grid_i = jnp.linspace(t0_i, t1_i, n_points)
             sol = diffeqsolve(
                 term,
@@ -926,7 +946,7 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
             )
             return sol.ys, ts_grid_i
 
-        ys, ts_batch = jax.vmap(solve_one)(y0_batch, t0, t1)
+        ys, ts_batch = jax.vmap(solve_one_per_atom)(y0_batch, t0, t1)
         return ys, ts_batch  # (N, n_points)
 
 
@@ -1021,16 +1041,16 @@ if __name__ == '__main__':
     keys_batch = jax.random.split(initial_key, 3)
 
     # Runs the batched solver on 3 atoms
-    sols = solve_ivp_random(dydt, func2, [0., 10 * jnp.pi], y0_batch, keys_batch, max_step=0.1, solver_type='Dopri5')
+    sols = solve_ivp_random(dydt, func2, [0., 10 * jnp.pi], y0_batch, keys_batch, max_step=0.1, solver_type='Dopri5', n_points=500)
 
     # only plot one atom instead of all 3
     sol = sols[0] 
     
     plt.figure()
-    plt.plot(sol.t, sol.y.T)
-    
-    if len(sol.t_random) > 0:
-        plt.plot(sol.t_random, sol.y[:, sol.inds_random].T, 'o', color='black', label='Random Kicks')
+    plt.plot(sol.t, sol.y.T)  # type: ignore[attr-defined]
+
+    if len(sol.t_random) > 0:  # type: ignore[arg-type]
+        plt.plot(sol.t_random, sol.y[:, sol.inds_random].T, 'o', color='black', label='Random Kicks')  # type: ignore[attr-defined]
         plt.legend()
         
     plt.xlabel('Time')

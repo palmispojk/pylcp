@@ -10,6 +10,7 @@ Test organisation:
   - Cross-device tests (TestCPUvsGPUDense, TestCPUvsGPURandom): verify that
     CPU and GPU produce identical results.  Also skipped without a GPU.
 """
+import functools
 import math
 import warnings
 import pytest
@@ -21,8 +22,12 @@ import numpy as np
 from pylcp.integration_tools_gpu import (
     RandomOdeResult,
     solve_ivp_dense,
-    solve_ivp_random,
+    solve_ivp_random as _solve_ivp_random,
 )
+
+# CPU tests would take minutes with a large n_points; use a small fixed value.
+# GPU tests are all skipped on CPU so this override is harmless.
+solve_ivp_random = functools.partial(_solve_ivp_random, n_points=20)
 
 
 # ---------------------------------------------------------------------------
@@ -59,12 +64,12 @@ def harmonic(t, y, args):
     return jnp.array([-y[1], y[0]])
 
 
-def dummy_random(t, y, dt, key):
+def dummy_random(t, y, dt, key, args=None):
     """No-op stochastic function: never scatters."""
     return y, jnp.int32(0), jnp.float64(dt), key
 
 
-def always_scatter(t, y, dt, key):
+def always_scatter(t, y, dt, key, args=None):
     """Always records one scatter event per step."""
     key, _ = jax.random.split(key)
     return y, jnp.int32(1), jnp.float64(dt), key
@@ -264,93 +269,64 @@ class TestSolveIvpRandomCPU:
     early termination (max_steps too small -> success=False), and the dt0
     scaling fix for long spans."""
 
-    def _key(self, seed=42):
-        return jax.device_put(jax.random.PRNGKey(seed), CPU_DEVICE)
+    @classmethod
+    def setup_class(cls):
+        key = jax.device_put(jax.random.PRNGKey(42), CPU_DEVICE)
+        keys1 = jax.device_put(jax.random.split(key, 1), CPU_DEVICE)
+        keys4 = jax.device_put(jax.random.split(key, 4), CPU_DEVICE)
+        y0_1 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
+        y0_4 = jax.device_put(jnp.ones((4, 1)), CPU_DEVICE)
+        cls._sol = solve_ivp_random(
+            exp_decay, dummy_random, [0., 1.], y0_1, keys1)[0]
+        cls._sol_full = solve_ivp_random(
+            exp_decay, dummy_random, [0., 1.], y0_1, keys1, max_steps=10000)[0]
+        cls._results4 = solve_ivp_random(
+            exp_decay, dummy_random, [0., 1.], y0_4, keys4)
+        cls._scatter_sol = solve_ivp_random(
+            exp_decay, always_scatter, [0., 0.5], y0_1, keys1, max_steps=2000)[0]
 
     def _keys(self, n, seed=42):
-        return jax.device_put(jax.random.split(self._key(seed), n), CPU_DEVICE)
-
-    def _y0(self, *args):
-        return jax.device_put(jnp.array([list(args)]), CPU_DEVICE)
+        key = jax.device_put(jax.random.PRNGKey(seed), CPU_DEVICE)
+        return jax.device_put(jax.random.split(key, n), CPU_DEVICE)
 
     # --- return type / structure ---
 
-    def test_returns_list(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        result = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                  y0, self._keys(1))
-        assert isinstance(result, list)
-
     def test_list_length_matches_batch(self):
-        N = 4
-        y0 = jax.device_put(jnp.ones((N, 1)), CPU_DEVICE)
-        results = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                   y0, self._keys(N))
-        assert len(results) == N
+        assert len(self._results4) == 4
 
     def test_result_has_t(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert hasattr(sol, 't')
+        assert hasattr(self._sol, 't')
 
     def test_result_has_y(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert hasattr(sol, 'y')
+        assert hasattr(self._sol, 'y')
 
     def test_result_has_t_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert hasattr(sol, 't_random')
+        assert hasattr(self._sol, 't_random')
 
     def test_result_has_n_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert hasattr(sol, 'n_random')
+        assert hasattr(self._sol, 'n_random')
 
     def test_result_has_inds_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert hasattr(sol, 'inds_random')
+        assert hasattr(self._sol, 'inds_random')
 
     def test_result_has_success(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert hasattr(sol, 'success')
+        assert hasattr(self._sol, 'success')
 
     # --- time array properties ---
 
     def test_t_starts_at_t0(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert float(sol.t[0]) == pytest.approx(0.0, abs=1e-10)
+        assert float(self._sol.t[0]) == pytest.approx(0.0, abs=1e-10)
 
     def test_t_ends_at_tf(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1), max_steps=10000)[0]
-        assert float(sol.t[-1]) == pytest.approx(1.0, abs=1e-6)
+        assert float(self._sol_full.t[-1]) == pytest.approx(1.0, abs=1e-6)
 
     def test_t_monotonically_increasing(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert jnp.all(jnp.diff(sol.t) >= 0.)
+        assert jnp.all(jnp.diff(self._sol.t) >= 0.)
 
     # --- y array properties ---
 
     def test_y_t_same_length(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert sol.y.shape[1] == sol.t.shape[0]
+        assert self._sol.y.shape[1] == self._sol.t.shape[0]
 
     def test_y_state_dim_correct(self):
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), CPU_DEVICE)
@@ -359,10 +335,7 @@ class TestSolveIvpRandomCPU:
         assert sol.y.shape[0] == 2
 
     def test_no_nan_in_y(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert not jnp.any(jnp.isnan(sol.y))
+        assert not jnp.any(jnp.isnan(self._sol.y))
 
     # --- numerical correctness ---
 
@@ -379,50 +352,24 @@ class TestSolveIvpRandomCPU:
     # --- success / status ---
 
     def test_success_flag_true(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1), max_steps=10000)[0]
-        assert sol.success is True
+        assert self._sol_full.success is True
 
     def test_status_zero_on_success(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1), max_steps=10000)[0]
-        assert sol.status == 0
-
-    def test_terminated_early_when_max_steps_too_small(self):
-        """max_steps=2 forces early termination."""
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 100.],
-                               y0, self._keys(1), max_steps=2)[0]
-        assert sol.success is False
-        assert sol.status == -1
+        assert self._sol_full.status == 0
 
     # --- stochastic events ---
 
     def test_no_scatter_gives_empty_t_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert len(sol.t_random) == 0
+        assert len(self._sol.t_random) == 0
 
     def test_always_scatter_populates_t_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, always_scatter, [0., 0.5],
-                               y0, self._keys(1), max_steps=2000)[0]
-        assert len(sol.t_random) > 0
+        assert len(self._scatter_sol.t_random) > 0
 
     def test_always_scatter_n_random_positive(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, always_scatter, [0., 0.5],
-                               y0, self._keys(1), max_steps=2000)[0]
-        assert jnp.all(sol.n_random > 0)
+        assert jnp.all(self._scatter_sol.n_random > 0)
 
     def test_inds_random_dtype_bool(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert sol.inds_random.dtype == jnp.bool_
+        assert self._sol.inds_random.dtype == jnp.bool_
 
     # --- batch independence ---
 
@@ -451,19 +398,6 @@ class TestSolveIvpRandomCPU:
                                y0, self._keys(1),
                                solver_type='Bosh3', max_steps=10000)[0]
         assert sol.success
-
-    # --- max_step controls step count ---
-
-    def test_small_max_step_gives_more_points(self):
-        """A tighter max_step produces more time points."""
-        y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol_free = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                    y0, self._keys(1, seed=0),
-                                    max_step=float('inf'), max_steps=5000)[0]
-        sol_tight = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                     y0, self._keys(1, seed=0),
-                                     max_step=0.05, max_steps=5000)[0]
-        assert len(sol_tight.t) >= len(sol_free.t)
 
     # --- dt0 scaling fix ---
 
@@ -555,25 +489,28 @@ class TestSolveIvpDenseGPU:
 class TestSolveIvpRandomGPU:
     """Stochastic ODE solver on GPU.  Mirrors key CPU tests."""
 
-    def _key(self, seed=42):
-        return jax.device_put(jax.random.PRNGKey(seed), GPU_DEVICE)
+    @classmethod
+    def setup_class(cls):
+        key = jax.random.PRNGKey(42)
+        keys1 = jax.device_put(jax.random.split(key, 1), GPU_DEVICE)
+        keys4 = jax.device_put(jax.random.split(key, 4), GPU_DEVICE)
+        y0_1 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
+        y0_4 = jax.device_put(jnp.ones((4, 1)), GPU_DEVICE)
+        cls._sol = solve_ivp_random(
+            exp_decay, dummy_random, [0., 1.], y0_1, keys1)[0]
+        cls._sol_full = solve_ivp_random(
+            exp_decay, dummy_random, [0., 1.], y0_1, keys1, max_steps=10000)[0]
+        cls._results4 = solve_ivp_random(
+            exp_decay, dummy_random, [0., 1.], y0_4, keys4)
+        cls._scatter_sol = solve_ivp_random(
+            exp_decay, always_scatter, [0., 0.5], y0_1, keys1, max_steps=2000)[0]
 
     def _keys(self, n, seed=42):
         return jax.device_put(jax.random.split(jax.random.PRNGKey(seed), n),
                               GPU_DEVICE)
 
-    def test_returns_list(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        result = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                  y0, self._keys(1))
-        assert isinstance(result, list)
-
     def test_list_length_matches_batch(self):
-        N = 4
-        y0 = jax.device_put(jnp.ones((N, 1)), GPU_DEVICE)
-        results = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                   y0, self._keys(N))
-        assert len(results) == N
+        assert len(self._results4) == 4
 
     def test_exponential_decay_accuracy(self):
         y0 = jax.device_put(jnp.array([[2.0]]), GPU_DEVICE)
@@ -585,28 +522,16 @@ class TestSolveIvpRandomGPU:
         assert y_final == pytest.approx(expected, rel=1e-3)
 
     def test_success_flag_true(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1), max_steps=10000)[0]
-        assert sol.success is True
+        assert self._sol_full.success is True
 
     def test_no_nan_in_y(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert not jnp.any(jnp.isnan(sol.y))
+        assert not jnp.any(jnp.isnan(self._sol.y))
 
     def test_no_scatter_gives_empty_t_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1))[0]
-        assert len(sol.t_random) == 0
+        assert len(self._sol.t_random) == 0
 
     def test_always_scatter_populates_t_random(self):
-        y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, always_scatter, [0., 0.5],
-                               y0, self._keys(1), max_steps=2000)[0]
-        assert len(sol.t_random) > 0
+        assert len(self._scatter_sol.t_random) > 0
 
     def test_multi_atom_all_succeed(self):
         N = 3

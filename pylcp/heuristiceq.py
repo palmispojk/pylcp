@@ -230,7 +230,7 @@ class heuristiceq(governingeq):
             Maximum scattering probability per step. Default: 0.1
         **kwargs
             Passed to :func:`solve_ivp_random` (e.g. ``rtol``, ``atol``,
-            ``max_steps``, ``solver_type``).
+            ``max_steps``, ``solver_type``, ``n_points``).
 
         Returns
         -------
@@ -268,7 +268,7 @@ class heuristiceq(governingeq):
             v = y[:3]
             r = y[3:6]
             R_rates = self.scattering_rate(r, v, t)
-            total_P = jnp.sum(R_rates) * dt
+            total_P = jnp.sum(R_rates) * dt  # type: ignore[arg-type]
 
             key, key_dice, key_v1, key_v2 = jax.random.split(key, 4)
             did_scatter = jax.random.uniform(key_dice) < total_P

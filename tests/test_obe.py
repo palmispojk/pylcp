@@ -1053,7 +1053,7 @@ class TestEvolveMotion:
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
         # Should not raise
-        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+        o.evolve_motion([0, 10], n_points=51, freeze_axis=[True, True, False],
                         random_recoil=False, backend='cpu')
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
@@ -1091,7 +1091,7 @@ class TestEvolveMotion:
         o.set_initial_position(jnp.zeros(3))
         o.set_initial_velocity(jnp.zeros(3))
         o.set_initial_rho_from_rateeq()
-        o.evolve_motion([0, 10], freeze_axis=[True, True, False],
+        o.evolve_motion([0, 10], n_points=51, freeze_axis=[True, True, False],
                         random_recoil=False, backend='cpu')
         assert len(o.sols) == 1
         assert not jnp.any(jnp.isnan(o.sols[0].r))
@@ -1135,13 +1135,15 @@ class TestBatchSize:
         N = y0_batch.shape[0]
 
         # Run without chunking
-        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 10], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
                         backend='cpu')
         sols_full = o.sols
 
         # Run with batch_size=2 (3 chunks of 2 for 6 atoms)
-        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 10], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
                         batch_size=2, backend='cpu')
         sols_chunked = o.sols
@@ -1164,7 +1166,8 @@ class TestBatchSize:
     def test_batch_size_one(self, multi_atom_obe):
         """batch_size=1 (fully sequential) should still produce valid results."""
         o, y0_batch, keys_batch = multi_atom_obe
-        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 10], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
                         batch_size=1, backend='cpu')
         for sol in o.sols:
@@ -1176,12 +1179,14 @@ class TestBatchSize:
         o, y0_batch, keys_batch = multi_atom_obe
         N = y0_batch.shape[0]
 
-        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 10], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
                         backend='cpu')
         sols_full = o.sols
 
-        o.evolve_motion([0, 10], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 10], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[True, True, False], random_recoil=False,
                         batch_size=1000, backend='cpu')
         sols_large = o.sols
@@ -1704,7 +1709,8 @@ class TestRandomRecoilCPU:
         o.set_initial_rho_from_rateeq()
         y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
         keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
-        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0, keys_batch=keys_batch,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         assert len(o.sols) == 1
@@ -1724,7 +1730,8 @@ class TestRandomRecoilCPU:
         o.set_initial_rho_from_rateeq()
         y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
         keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
-        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0, keys_batch=keys_batch,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         v_final = np.array(o.sols[0].v[:, -1])
@@ -1744,7 +1751,8 @@ class TestRandomRecoilCPU:
         o.set_initial_rho_from_rateeq()
         y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[jnp.newaxis, :]
         keys_batch = jax.random.split(jax.random.PRNGKey(42), 1)
-        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=keys_batch,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0, keys_batch=keys_batch,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         sol = o.sols[0]
@@ -1764,7 +1772,8 @@ class TestRandomRecoilCPU:
 
         y0_batch = jnp.stack(rho0_list)
         keys_batch = jax.random.split(jax.random.PRNGKey(0), N)
-        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         assert len(o.sols) == N
@@ -1786,7 +1795,8 @@ class TestRandomRecoilCPU:
 
         y0_batch = jnp.stack(rho0_list)
         keys_batch = jax.random.split(jax.random.PRNGKey(0), N)
-        o.evolve_motion([0, 5], y0_batch=y0_batch, keys_batch=keys_batch,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0_batch, keys_batch=keys_batch,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         v0_final = np.array(o.sols[0].v[:, -1])
@@ -1803,13 +1813,15 @@ class TestRandomRecoilCPU:
         y0 = jnp.concatenate([o.rho0, o.v0, o.r0])[None, :]
         key = jax.random.split(jax.random.PRNGKey(7), 1)
 
-        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0, keys_batch=key,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         r1 = np.array(o.sols[0].r)
         v1 = np.array(o.sols[0].v)
 
-        o.evolve_motion([0, 5], y0_batch=y0, keys_batch=key,
+        o.evolve_motion([0, 5], n_points=51,
+                        y0_batch=y0, keys_batch=key,
                         freeze_axis=[False, False, False],
                         random_recoil=True, backend='cpu')
         r2 = np.array(o.sols[0].r)

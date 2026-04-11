@@ -12,6 +12,7 @@ import gc
 import numpy as np
 import jax
 import jax.numpy as jnp
+from typing import Any
 from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense, optimal_batch_size
 
 from .rateeq import rateeq
@@ -149,7 +150,7 @@ class obe(governingeq):
         self.profile = {}
 
         # Reset the current solution to None
-        self.sol = None
+        self.sol: Any = None
 
         # Pre-build Liouvillian sub-matrices (decay, H0, B, d_q) so the RHS
         # at each time step is just matrix-vector products:
@@ -254,7 +255,8 @@ class obe(governingeq):
             np.array(self.hamiltonian.H_0)
         )
 
-        self.ev_mat['B'] = [None]*3
+        b_list: list[Any] = [None]*3
+        self.ev_mat['B'] = b_list
         for q in range(3):
             self.ev_mat['B'][q] = self.__build_coherent_ev_submatrix(
                 np.array(self.hamiltonian.mu_q[q])
@@ -838,7 +840,9 @@ class obe(governingeq):
 
         class Bunch:
             """Simple namespace for OBE solution arrays (t, rho, y)."""
-            pass
+            t: Any
+            y: Any
+            rho: Any
         self.sol = Bunch()
         self.sol.t = ts_grid
         self.sol.y = batched_ys
@@ -850,6 +854,7 @@ class obe(governingeq):
 
     def evolve_motion(self,
                       t_span,
+                      n_points,
                       y0_batch=None,
                       keys_batch=None,
                       freeze_axis=[False, False, False],
@@ -870,6 +875,10 @@ class obe(governingeq):
         t_span : list or array_like
             A two element list or array that specify the initial and final time
             of integration.
+        n_points : int
+            Number of evenly-spaced output time points.  The solver takes
+            as many internal adaptive steps as needed and saves the state
+            at each output time.
         freeze_axis : list of boolean
             Freeze atomic motion along the specified axis.
             Default: [False, False, False]
@@ -893,20 +902,6 @@ class obe(governingeq):
         **kwargs :
             Additional keyword arguments passed to ``solve_ivp_random``.
             Important options include:
-
-            n_output : int, optional
-                Number of evenly-spaced output time points.  The solver
-                takes as many internal adaptive steps as needed and saves
-                the state at each output time.  Default: 5000.
-
-                Examples::
-
-                    # Default: 5000 output points
-                    obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False])
-
-                    # Coarser output (faster host loop, fewer mmap writes)
-                    obe.evolve_motion([0, 5e4], freeze_axis=[True, True, False],
-                                      n_output=500)
 
             max_step : float, optional
                 Ceiling on the recoil-limited step size.  When
@@ -947,8 +942,8 @@ class obe(governingeq):
         # Auto-compute max_step from on-resonance scattering rate to
         # reduce GPU warp divergence when random_recoil is enabled.
         if random_recoil and 'max_step' not in kwargs:
-            total_s = sum(
-                beam._s if not callable(beam._s) else beam._s(np.zeros(3), 0.)
+            total_s: float = sum(
+                beam._s if not callable(beam._s) else beam._s(np.zeros(3), 0.)  # type: ignore[arg-type]
                 for beams in self.laserBeams.values()
                 for beam in beams.beam_vector
             )
@@ -984,6 +979,7 @@ class obe(governingeq):
                 t_span=t_span,
                 y0_batch=y0_batch,
                 keys_batch=keys_batch,
+                n_points=n_points,
                 args=args,
                 **kwargs
             )
@@ -997,6 +993,7 @@ class obe(governingeq):
                     t_span=t_span,
                     y0_batch=y0_batch[i:i+1],
                     keys_batch=keys_batch[i:i+1],
+                    n_points=n_points,
                     args=args,
                     **kwargs
                 )
@@ -1540,7 +1537,7 @@ class obe(governingeq):
                     lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=False)
                 )(r_all, rho_flat_all)
 
-                f_chunk   = jnp.sum(f_all,        axis=2) / n_pts  # (Ng, 3)
+                f_chunk   = jnp.sum(f_all,        axis=2) / n_pts  # type: ignore[arg-type]  # (Ng, 3)
                 rho_chunk = jnp.sum(rho_flat_all, axis=2) / n_pts  # (Ng, n_rho)
 
                 f_sq    = jnp.sum(f_chunk ** 2, axis=1)
@@ -1559,8 +1556,8 @@ class obe(governingeq):
                         | (~was_decreasing & (diff_sq < abs_tol))
                     )
                 )
-                converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)
-                converged_rho = jnp.where(newly[:, None], rho_chunk, converged_rho)
+                converged_f   = jnp.where(newly[:, None], f_chunk,   converged_f)    # type: ignore[arg-type]
+                converged_rho = jnp.where(newly[:, None], rho_chunk, converged_rho)  # type: ignore[arg-type]
                 atom_converged = atom_converged | newly
 
                 if bool(jnp.all(atom_converged)) or ii >= itermax - 1:
@@ -1612,8 +1609,8 @@ class obe(governingeq):
                 final_f_laser_q_avg = {k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_q_group.items()}
             for k in f_laser_group:
                 for local_idx, global_idx in enumerate(group_indices):
-                    final_f_laser_avg[k][global_idx]   = f_laser_group[k][local_idx]
-                    final_f_laser_q_avg[k][global_idx]  = f_laser_q_group[k][local_idx]
+                    final_f_laser_avg[k][global_idx]   = f_laser_group[k][local_idx]     # type: ignore[index]
+                    final_f_laser_q_avg[k][global_idx]  = f_laser_q_group[k][local_idx]  # type: ignore[index]
 
             # Free large JAX arrays to keep memory bounded across groups.
             del rho_flat_all, r_all, f_all, f_laser_all, f_laser_q_all, f_mag_all
@@ -1628,6 +1625,8 @@ class obe(governingeq):
 
         # Convert final arrays back to jnp for downstream compatibility
         f_avg         = jnp.array(final_f_avg)
+        assert final_f_laser_avg is not None
+        assert final_f_laser_q_avg is not None
         f_laser_avg   = {k: jnp.array(v) for k, v in final_f_laser_avg.items()}
         f_laser_avg_q = {k: jnp.array(v) for k, v in final_f_laser_q_avg.items()}
         f_mag_avg     = jnp.array(final_f_mag_avg)
@@ -1643,7 +1642,7 @@ class obe(governingeq):
         it = np.nditer(
             [R[0], R[1], R[2], V[0], V[1], V[2]],
             flags=['refs_ok', 'multi_index'],
-            op_flags=[['readonly']] * 6
+            op_flags=[['readonly']] * 6  # type: ignore[arg-type]
         )
         for atom_idx, _ in enumerate(it):
             mi = it.multi_index
