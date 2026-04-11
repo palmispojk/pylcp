@@ -538,48 +538,48 @@ class TestXstate:
     eigenstate basis and must satisfy U†U = 1."""
 
     def test_shape_N0_I_half(self):
-        H0, mu_p, U = XFmolecules.Xstate(N=0, I=0.5)
+        H0, mu_p, U, _ = XFmolecules.Xstate(N=0, I=0.5)
         # N=0, S=1/2 → J=1/2 → F=0,1 → 4 states
         assert H0.shape == (4, 4)
         assert mu_p.shape == (3, 4, 4)
         assert U.shape == (4, 4)
 
     def test_shape_N1_I_half(self):
-        H0, mu_p, U = XFmolecules.Xstate(N=1, I=0.5)
+        H0, mu_p, U, _ = XFmolecules.Xstate(N=1, I=0.5)
         # N=1, S=1/2 → J=1/2,3/2 → 4+8 = 12 states
         assert H0.shape == (12, 12)
         assert mu_p.shape == (3, 12, 12)
 
     def test_H0_hermitian(self):
-        H0, _, _ = XFmolecules.Xstate(N=1, I=0.5, b=100., c=30.)
+        H0, _, _, _ = XFmolecules.Xstate(N=1, I=0.5, b=100., c=30.)
         assert is_hermitian(H0)
 
     def test_mu_p_hermitian(self):
-        _, mu_p, _ = XFmolecules.Xstate(N=1, I=0.5)
+        _, mu_p, _, _ = XFmolecules.Xstate(N=1, I=0.5)
         assert is_spherical_rank1_mu(mu_p)
 
     def test_U_unitary(self):
-        _, _, U = XFmolecules.Xstate(N=1, I=0.5, b=100., c=30.)
+        _, _, U, _ = XFmolecules.Xstate(N=1, I=0.5, b=100., c=30.)
         assert is_unitary(U)
 
     def test_no_nan(self):
-        H0, mu_p, U = XFmolecules.Xstate(
+        H0, mu_p, _, _ = XFmolecules.Xstate(
             N=1, I=0.5, B=10000., b=100., c=30., gamma=40.
         )
         assert not jnp.any(jnp.isnan(H0))
         assert not jnp.any(jnp.isnan(mu_p))
 
     def test_return_basis_length(self):
-        _, _, _, basis = XFmolecules.Xstate(N=1, I=0.5, return_basis=True)
+        _, _, _, basis = XFmolecules.Xstate(N=1, I=0.5)
         assert len(basis) == 12
 
     def test_diagonal_without_hyperfine(self):
         """All coupling constants zero → H0 should be all zeros (no splitting)."""
-        H0, _, _ = XFmolecules.Xstate(N=0, I=0.5)
+        H0, _, _, _ = XFmolecules.Xstate(N=0, I=0.5)
         assert jnp.allclose(jnp.real(H0), jnp.zeros_like(jnp.real(H0)), atol=1e-12)
 
     def test_multi_N(self):
-        H0, mu_p, U = XFmolecules.Xstate(N=[0, 1], I=0.5, B=10000.)
+        H0, mu_p, _, _ = XFmolecules.Xstate(N=[0, 1], I=0.5, B=10000.)
         # N=0: 4 states, N=1: 12 states → 16 total
         assert H0.shape == (16, 16)
 
@@ -598,35 +598,35 @@ class TestAstate:
     a single block-diagonal Hamiltonian."""
 
     def test_shape_J_half_I_half_single_P(self):
-        H0, mu_p = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
+        H0, mu_p, _ = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
         # J=1/2, I=1/2 → F=0,1 → 4 states
         assert H0.shape == (4, 4)
         assert mu_p.shape == (3, 4, 4)
 
     def test_H0_hermitian(self):
-        H0, _ = XFmolecules.Astate(J=0.5, I=0.5, P=+1, b=5., c=2., a=3.)
+        H0, _, _ = XFmolecules.Astate(J=0.5, I=0.5, P=+1, b=5., c=2., a=3.)
         assert is_hermitian(H0)
 
     def test_mu_p_hermitian(self):
-        _, mu_p = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
+        _, mu_p, _ = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
         assert is_spherical_rank1_mu(mu_p)
 
     def test_no_nan(self):
-        H0, mu_p = XFmolecules.Astate(J=0.5, I=0.5, P=+1, a=3., b=5., c=2.)
+        H0, mu_p, _ = XFmolecules.Astate(J=0.5, I=0.5, P=+1, a=3., b=5., c=2.)
         assert not jnp.any(jnp.isnan(H0))
         assert not jnp.any(jnp.isnan(mu_p))
 
     def test_return_basis(self):
-        _, _, basis = XFmolecules.Astate(J=0.5, I=0.5, P=+1, return_basis=True)
+        _, _, basis = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
         assert len(basis) == 4
 
     def test_two_J_values(self):
-        H0, mu_p = XFmolecules.Astate(J=[0.5, 1.5], I=0.5, P=+1)
+        H0, mu_p, _ = XFmolecules.Astate(J=[0.5, 1.5], I=0.5, P=+1)
         # J=1/2 → 4 states, J=3/2 → 8 states → 12 total
         assert H0.shape == (12, 12)
 
     def test_two_P_values(self):
-        H0, mu_p = XFmolecules.Astate(J=0.5, I=0.5, P=[+1, -1])
+        H0, mu_p, _ = XFmolecules.Astate(J=0.5, I=0.5, P=[+1, -1])
         # Two parities × 4 states = 8 states
         assert H0.shape == (8, 8)
 
@@ -646,8 +646,8 @@ class TestDipoleXandAstates:
 
     @pytest.fixture(scope='class')
     def bases(self):
-        _, _, U_X, Xbasis = XFmolecules.Xstate(N=1, I=0.5, return_basis=True)
-        _, _, Abasis = XFmolecules.Astate(J=0.5, I=0.5, P=+1, return_basis=True)
+        _, _, U_X, Xbasis = XFmolecules.Xstate(N=1, I=0.5)
+        _, _, Abasis = XFmolecules.Astate(J=0.5, I=0.5, P=+1)
         return Xbasis, Abasis, np.array(U_X)
 
     def test_output_shape(self, bases):

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
 import scipy.constants as cts
@@ -44,8 +46,7 @@ def __isunitary(A):
 def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
            gS=-cts.value('electron g factor'), gI=cts.value('proton g factor'),
            muB=cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
-           muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
-           return_basis=False):
+           muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6) -> tuple[jax.Array, jax.Array, jax.Array, np.ndarray]:
 
     """
     Defines the field-free and magnetic field-dependent components of the
@@ -229,9 +230,17 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
     for ll, q_i in enumerate(qs):
         for ii, basis_i in enumerate(basis):
             for jj, basis_j in enumerate(basis):
-                args = tuple(basis_i) + tuple(basis_j) + (q_i,)
-                mu_p[ll, ii, jj] = electronspinzeeman(*args) + \
-                    nuclearspinzeeman(*args)
+                mu_p[ll, ii, jj] = (
+                    electronspinzeeman(
+                        basis_i['Lambda'], basis_i['N'], basis_i['J'],
+                        basis_i['F'], basis_i['mF'], basis_i['P'],
+                        basis_j['Lambda'], basis_j['N'], basis_j['J'],
+                        basis_j['F'], basis_j['mF'], basis_j['P'], q_i) +
+                    nuclearspinzeeman(
+                        basis_i['Lambda'], basis_i['N'], basis_i['J'],
+                        basis_i['F'], basis_i['mF'], basis_i['P'],
+                        basis_j['Lambda'], basis_j['N'], basis_j['J'],
+                        basis_j['F'], basis_j['mF'], basis_j['P'], q_i))
 
 
     # Check to see if H0 is diagonal.  If not, diagonalize it:
@@ -269,17 +278,13 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
     mu_p_jax = jnp.asarray(mu_p, dtype=jnp.complex128)
     U_jax = jnp.asarray(U, dtype=jnp.complex128)
 
-    if return_basis:
-        return H0_jax, mu_p_jax, U_jax, basis
-    else:
-        return H0_jax, mu_p_jax, U_jax
+    return H0_jax, mu_p_jax, U_jax, basis
 
 
 def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
-           gS=-cts.value('electron g factor'), gL=1, gl=0, glprime=0, gr=0, greprime=0, gN=0,
+           gS=-cts.value('electron g factor'), gL=1, gl=0, glprime=0., gr=0, greprime=0, gN=0,
            muB=cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
-           muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
-           return_basis=False):
+           muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6) -> tuple[jax.Array, jax.Array, np.ndarray]:
     """
     Defines the field-free and magnetic field-dependent components of the excited
     :math:`A^2\\Pi_{1/2}` state Hamiltonian.
@@ -472,10 +477,7 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
     H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
     mu_p_jax = jnp.asarray(mu_p, dtype=jnp.complex128)
 
-    if return_basis:
-        return H_0_jax, mu_p_jax, basis
-    else:
-        return H_0_jax, mu_p_jax
+    return H_0_jax, mu_p_jax, basis
 
 
 def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
@@ -581,8 +583,8 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
         for F in np.arange(np.abs(J-I), np.abs(J+I)+1, 1):
             for mF in np.arange(-F, F+1, 1):
                 intbasis_ap = np.append(intbasis_ap, np.array(
-                    [(LambdaA, Sigma, Omega, J, F, mF),
-                     (-LambdaA, -Sigma, -Omega, J, F, mF)],
+                    [(LambdaA, Sigma, S, J, F, mF),
+                     (-LambdaA, -Sigma, -S, J, F, mF)],
                     dtype=intbasis_ap.dtype))
 
     # Now make the transfer matrix:
@@ -600,8 +602,10 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
         for jj, intbasis_ba_i in enumerate(intbasis_ba):
             for kk, intbasis_ap_i in enumerate(intbasis_ap):
                 intdijq[ii, jj, kk] = dipole_matrix_element(
-                    *(tuple(intbasis_ba_i) + tuple(intbasis_ap_i) + (q,))
-                    )
+                    intbasis_ba_i['Lambda'], intbasis_ba_i['Sigma'], intbasis_ba_i['Omega'],
+                    intbasis_ba_i['J'], intbasis_ba_i['F'], intbasis_ba_i['mF'],
+                    intbasis_ap_i['Lambda'], intbasis_ap_i['Sigma'], intbasis_ap_i['Omega'],
+                    intbasis_ap_i['J'], intbasis_ap_i['F'], intbasis_ap_i['mF'], q)
 
     # Finally, did the user pass to us a rotation matrix for case (b) into the
     # eignebasis:
@@ -642,7 +646,7 @@ if __name__ == '__main__':
     # TODO: bug in original code that hardcodes lambda and s in `__init__`
     
     H0_X, Bq_X, U_X, Xbasis = Xstate(
-        N=1, I=1/2, return_basis=True, B=10303.98670, b=109.1893, c=40.1190,
+        N=1, I=1/2, B=10303.98670, b=109.1893, c=40.1190,
         CI=2.876e-2, gamma=39.65891        ) 
     B = np.linspace(0, 20, 101)
     Es_X = np.zeros((B.size, H0_X.shape[0]))
@@ -667,7 +671,7 @@ if __name__ == '__main__':
     """
     What does the excited state look like?
     """
-    H0_A, Bq_A, Abasis = Astate(J=1/2,I=1/2,P=+1, a=3/2*4.8,  p=-1313.091, B= 10456.19, glprime=-3*.0211, return_basis=True)
+    H0_A, Bq_A, Abasis = Astate(J=1/2,I=1/2,P=+1, a=3/2*4.8,  p=-1313.091, B= 10456.19, glprime=-3*.0211)
     #for CaF, Lambda-doubling parameter  p=-1313.091
     print(H0_A, Bq_A)
 
