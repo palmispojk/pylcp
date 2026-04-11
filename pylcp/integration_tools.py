@@ -7,21 +7,24 @@ adaptive time steps.  Also includes a :class:`parallelIntegrator` for
 on-the-fly integration as data arrives, and :class:`RandomOdeResult` for
 storing trajectories with scatter-event metadata.
 """
-from __future__ import division, print_function, absolute_import
+from __future__ import absolute_import, division, print_function
+
 import inspect
-import numpy as np
 from inspect import signature
-from scipy.integrate._ivp.bdf import BDF
-from scipy.integrate._ivp.radau import Radau
-from scipy.integrate._ivp.rk import RK23, RK45, DOP853
-from scipy.integrate._ivp.lsoda import LSODA
-from scipy.optimize import OptimizeResult
-from scipy.integrate._ivp.common import EPS, OdeSolution
+
+import numpy as np
 from scipy.integrate._ivp.base import OdeSolver
-from scipy.integrate._ivp.ivp import (prepare_events, solve_event_equation,
-                                      handle_events, find_active_events)
-import time
-from .common import progressBar
+from scipy.integrate._ivp.bdf import BDF
+from scipy.integrate._ivp.common import OdeSolution
+from scipy.integrate._ivp.ivp import (
+    find_active_events,
+    handle_events,
+    prepare_events,
+)
+from scipy.integrate._ivp.lsoda import LSODA
+from scipy.integrate._ivp.radau import Radau
+from scipy.integrate._ivp.rk import DOP853, RK23, RK45
+from scipy.optimize import OptimizeResult
 
 METHODS: dict[str, type[OdeSolver]] = {
     'RK23': RK23,
@@ -40,6 +43,7 @@ class RandomOdeResult(OptimizeResult):
     """
     Optimize result is a dictionary where each key becomes an attribute.  Neat.
     """
+
     pass
 
 
@@ -47,7 +51,7 @@ class parallelIntegrator(object):
     """
     parallelIntegrator: a class to integrate a function as it is being called
 
-    Parameters:
+    Parameters
     ----------
     func : callable
         The function that is to be integrated.  It can have the form func(t) or
@@ -99,6 +103,7 @@ class parallelIntegrator(object):
     direction : direction of the integrator
     tmax : maximium value of integrator
     """
+
     def __init__(self, func, y0=[0.], method='RK45', tmax=1e9, **kwargs):
         if '(t, y' in str(signature(func)):
             self.func = func
@@ -134,13 +139,13 @@ class parallelIntegrator(object):
         """
         __call: return value at time t:
 
-        Parameters:
-        -----------
+        Parameters
+        ----------
         t : float or array_like
             time at which to evaluate function
 
-        Returns:
-        --------
+        Returns
+        -------
         y : float or array_like
             value of the function at time t.
         """
@@ -228,6 +233,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     To solve a problem in the complex domain, pass y0 with a complex data type.
     Another option always available is to rewrite your problem for real and
     imaginary parts separately.
+
     Parameters
     ----------
     fun : callable
@@ -377,6 +383,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     min_step : float, optional
         The minimum allowed step size for 'LSODA' method.
         By default `min_step` is zero.
+
     Returns
     -------
     Bunch object with the following fields defined:
@@ -409,6 +416,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     success : bool
         True if the solver reached the interval end or a termination event
         occurred (``status >= 0``).
+
     References
     ----------
     .. [1] J. R. Dormand, P. J. Prince, "A family of embedded Runge-Kutta
@@ -447,6 +455,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
             Equations I: Nonstiff Problems", Sec. II.
     .. [14] `Page with original Fortran code of DOP853
             <http://www.unige.ch/~hairer/software.html>`_.
+
     Examples
     --------
     Basic exponential decay showing automatically chosen time points.
@@ -620,7 +629,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
 
         (random_event_number, max_step) = random_func(solver.t, solver.y,
                                                       solver.step_size)
-        if not max_step is None:
+        if max_step is not None:
             solver.max_step = np.min([max_step, max_step_global])  # pyright: ignore[reportAttributeAccessIssue]
 
         t_old = solver.t_old

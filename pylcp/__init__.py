@@ -9,10 +9,19 @@ import numpy as np
 
 from . import hamiltonians
 from .atom import atom
-from .heuristiceq import heuristiceq
-from .rateeq import rateeq
-from .obe import obe
+from .fields import (
+                     clippedGaussianBeam,
+                     constantMagneticField,
+                     conventional3DMOTBeams,
+                     gaussianBeam,
+                     infinitePlaneWaveBeam,
+                     iPMagneticField,
+                     laserBeam,
+                     laserBeams,
+                     magField,
+                     quadrupoleMagneticField,
+)
 from .hamiltonian import hamiltonian
-from .fields import (magField, constantMagneticField, quadrupoleMagneticField, iPMagneticField,
-                     laserBeam, laserBeams, infinitePlaneWaveBeam, gaussianBeam,
-                     clippedGaussianBeam, conventional3DMOTBeams)
+from .heuristiceq import heuristiceq
+from .obe import obe
+from .rateeq import rateeq

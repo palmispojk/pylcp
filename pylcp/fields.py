@@ -177,6 +177,7 @@ class magField(object):
     eps : float
         small epsilon used for computing derivatives
     """
+
     def __init__(self, field: npt.ArrayLike | Callable[..., Any], eps: float = 1e-5) -> None:
         self.eps = eps
 
@@ -248,6 +249,7 @@ class iPMagneticField(magField):
     It is currently missing extra terms that are required for it to fulfill
     Maxwell's equations at second order.
     """
+
     def __init__(self, B0: float, B1: float, B2: float, eps: float = 1e-5) -> None:
         self.B0 = B0
         self.B1 = B1
@@ -274,6 +276,7 @@ class constantMagneticField(magField):
     val : array_like with shape (3,)
         The three-vector defintion of the constant magnetic field.
     """
+
     def __init__(self, B0: npt.ArrayLike) -> None:
         self.B0 = B0
         super().__init__(lambda R, t: B0)
@@ -293,6 +296,7 @@ class quadrupoleMagneticField(magField):
     alpha : float
         strength of the magnetic field gradient.
     """
+
     def __init__(self, alpha: float, eps: float = 1e-5) -> None:
         self.alpha = alpha
 
@@ -360,6 +364,7 @@ class laserBeam(object):
     phase : float
         Overall phase of the laser beam.
     """
+
     def __init__(
         self,
         kvec: npt.ArrayLike | None = None,
@@ -658,7 +663,6 @@ class laserBeam(object):
         pol : array_like, size (3,)
             polarization of the laser beam at R and t in Cartesian basis.
         """
-
         pol = self.pol(R, t)
         return spherical2cart(pol)
 
@@ -869,6 +873,7 @@ class infinitePlaneWaveBeam(laserBeam):
     This implementation is much faster, when it can be used, compared to the
     base laserBeam class.
     """
+
     def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], **kwargs: Any) -> None:
         if callable(kvec):
             raise TypeError('kvec cannot be a function for an infinite plane wave.')
@@ -953,6 +958,7 @@ class gaussianBeam(laserBeam):
     **kwargs:
         Additional keyword arguments to pass to the laserBeam superclass.
     """
+
     def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], wb: float, **kwargs: Any) -> None:
         if callable(kvec):
             raise TypeError('kvec cannot be a function for a Gaussian beam.')
@@ -1058,6 +1064,7 @@ class clippedGaussianBeam(gaussianBeam):
     **kwargs:
         Additional keyword arguments to pass to the laserBeam superclass.
     """
+
     def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], wb: float, rs: float, **kwargs: Any) -> None:
         super().__init__(kvec=kvec, pol=pol, s=s, delta=delta, wb=wb, **kwargs)
 
@@ -1105,6 +1112,7 @@ class laserBeams(object):
         Type of beam to use in the collection of laserBeams.  By default
         `beam_type=laserBeam`.
     """
+
     def __init__(self, laserbeamparams: list[laserBeam | dict[str, Any]] | None = None, beam_type: type[laserBeam] = laserBeam) -> None:
         self.beam_vector = []
         
@@ -1520,6 +1528,7 @@ class conventional3DMOTBeams(laserBeams):
     **kwargs :
         other keyword arguments to pass to beam_type
     """
+
     def __init__(self, k=1., pol=+1, rotation_angles=[0., 0., 0.],
                  rotation_spec='ZYZ', beam_type=laserBeam, **kwargs):
         super().__init__()

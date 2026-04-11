@@ -8,28 +8,31 @@ support multi-GPU sharding.  Helper functions for profiling GPU memory and
 throughput (:func:`optimal_batch_size`) are also included.
 """
 import inspect
-import os
 import logging
+import os
 import tempfile
 import time
 
 import numpy as np
+
 os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')  # suppress XLA Triton tiling warnings
 import jax
+
 jax.config.update("jax_enable_x64", True)
-import jax.numpy as jnp
 import functools
-from jax.sharding import Mesh, NamedSharding, PartitionSpec as P
+
+import jax.numpy as jnp
 from diffrax import (
-    diffeqsolve,
-    ODETerm,
-    Dopri5,
     Bosh3,
+    Dopri5,
     Kvaerno5,
-    SaveAt,
+    ODETerm,
     PIDController,
-    LinearInterpolation
+    SaveAt,
+    diffeqsolve,
 )
+from jax.sharding import Mesh, NamedSharding
+from jax.sharding import PartitionSpec as P
 
 _log = logging.getLogger(__name__)
 
@@ -451,7 +454,7 @@ def _probe_bytes_per_atom(state_dim):
     if not gpu_devs:
         return _bytes_per_atom(state_dim)
 
-    from diffrax import diffeqsolve, ODETerm, Dopri5, SaveAt, PIDController
+    from diffrax import Dopri5, ODETerm, PIDController, SaveAt, diffeqsolve
 
     solver = Dopri5()
 
@@ -549,7 +552,8 @@ def _probe_throughput_cap(state_dim, threshold=1.15,
         n_groups: Number of host-loop groups per measurement.  More groups
             give more stable timings.  Default 5.
 
-    Returns:
+    Returns
+    -------
         int: Recommended batch size at the throughput knee, or ``max_n``
         if no saturation was detected.
     """
@@ -557,7 +561,7 @@ def _probe_throughput_cap(state_dim, threshold=1.15,
     if not gpu_devs:
         return 256  # sensible CPU default
 
-    from diffrax import diffeqsolve, ODETerm, Dopri5, SaveAt, PIDController
+    from diffrax import Dopri5, ODETerm, PIDController, SaveAt, diffeqsolve
 
     solver = Dopri5()
 
@@ -669,7 +673,8 @@ def optimal_batch_size(state_dim, safety=0.6, **_ignored):
         safety (float, optional): Fraction of free memory to use. Defaults to 0.6
             to leave headroom for XLA workspace and compilation buffers.
 
-    Returns:
+    Returns
+    -------
         int: Recommended total batch size, or ``None`` if no GPU is present.
     """
     gpu_devs = _gpu_devices()
@@ -736,7 +741,8 @@ def optimal_batch_size_per_gpu(state_dim, safety=0.6, **_ignored):
         state_dim (int): Length of the per-atom state vector.
         safety (float, optional): Fraction of free memory to use. Defaults to 0.6.
 
-    Returns:
+    Returns
+    -------
         list of (jax.Device, int) pairs, or ``None`` if no GPU is present.
         The int is the number of atoms that GPU can handle.
     """
@@ -794,11 +800,11 @@ def solve_ivp_random(
         n_points: Number of evenly-spaced output points.
         output_dir: Directory for temporary memmap files.
 
-    Returns:
+    Returns
+    -------
         list of RandomOdeResult with attributes ``t``, ``y``, ``success``,
         ``t_random``, ``n_random``, ``nfev``.
     """
-
     # cast to jnp just in case
     y0_batch = jnp.asarray(y0_batch)
     keys_batch = jnp.asarray(keys_batch)
@@ -880,7 +886,8 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         solver_type: 'Dopri5', 'Bosh3', or 'Kvaerno5' (static).
         args: JAX pytree passed to func. Traced dynamically. Default: None.
 
-    Returns:
+    Returns
+    -------
         ys: shape (N, n_points, state_dim)
         ts: shape (n_points,)
     """
@@ -974,7 +981,8 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
         args: JAX pytree passed through to func as its third argument.
               Default: None.
 
-    Returns:
+    Returns
+    -------
         ts: jax.Array, shape (n_points,) or (N, n_points) for per-atom t1
         ys: jax.Array, shape (N, n_points, state_dim)
     """
@@ -1012,9 +1020,9 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
 
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
     import jax
     import jax.numpy as jnp
+    import matplotlib.pyplot as plt
 
     def dydt(t, y):
         return jnp.array([-y[1], y[0]])

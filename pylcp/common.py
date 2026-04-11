@@ -23,6 +23,7 @@ class progressBar(object):
     0 and 1 to refresh the display; it automatically prints a completion message
     when the fraction reaches 1.
     """
+
     def __init__(
         self,
         decimals: int = 1,
@@ -126,19 +127,22 @@ class progressBar(object):
 def cart2spherical(A: jax.Array) -> jax.Array:
     """Convert a 3-component Cartesian vector (x, y, z) to the spherical
     (circular) basis (e_{-1}, e_0, e_{+1}).  The convention follows the
-    standard used in atomic physics for expressing polarisation components."""
+    standard used in atomic physics for expressing polarisation components.
+    """
     return jnp.array([(A[0]-1j*A[1])/jnp.sqrt(2), A[2], -(A[0]+1j*A[1])/jnp.sqrt(2)])
 
 def spherical2cart(A: jax.Array) -> jax.Array:
     """Convert a 3-component spherical (circular) basis vector (e_{-1}, e_0,
     e_{+1}) back to the Cartesian basis (x, y, z).  This is the inverse of
-    :func:`cart2spherical`."""
+    :func:`cart2spherical`.
+    """
     return jnp.array([1/jnp.sqrt(2)*(-A[2]+A[0]), 1j/jnp.sqrt(2)*(A[2]+A[0]), A[1]])
 
 def spherical_dot(A: jax.Array, B: jax.Array) -> jax.Array:
     """Compute the dot product of two vectors expressed in the spherical
     (circular) basis.  The metric tensor in this basis introduces alternating
-    signs: A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}."""
+    signs: A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}.
+    """
     return jnp.tensordot(A, jnp.array([-1., 1., -1.])*B[::-1], axes=(0, 0))
 
 class base_force_profile():
@@ -167,6 +171,7 @@ class base_force_profile():
     Neq : jnp.Array
         Equilibrium population found.
     """
+
     def __init__(
         self,
         R: npt.ArrayLike,
@@ -237,8 +242,8 @@ def random_vector(key: jax.Array, free_axes: Sequence[bool] = [True, True, True]
     """
     This function returns a random vector in either 1D, 2D or 3D
 
-    Parameters:
-    -----------
+    Parameters
+    ----------
         key: jax.random.PRNGKeyArray
             A JAX pseudo-random number generator key. Because JAX functions 
             must be pure and stateless for GPU acceleration, randomness requires 
@@ -288,7 +293,6 @@ def random_vector(key: jax.Array, free_axes: Sequence[bool] = [True, True, True]
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    from mpl_toolkits.mplot3d import Axes3D
     import numpy as np
 
     master_key = jax.random.PRNGKey(42) # can be a random seed as well, is kept as a chosen number here

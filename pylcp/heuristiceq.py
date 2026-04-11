@@ -6,14 +6,16 @@ the scattering force from per-beam saturation parameters projected onto
 the local magnetic field axis.  No internal-state dynamics are evolved,
 so the force is instantaneous at every point in phase space.
 """
-import numpy as np
 import jax
+import numpy as np
+
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
-from .integration_tools_gpu import solve_ivp_random as solve_ivp_random_gpu
 from scipy.integrate import solve_ivp as _scipy_solve_ivp
+
 from .common import base_force_profile
 from .governingeq import governingeq
+from .integration_tools_gpu import solve_ivp_random as solve_ivp_random_gpu
 
 
 class heuristiceq(governingeq):
@@ -44,6 +46,7 @@ class heuristiceq(governingeq):
     v0 : array_like, shape (3,), optional
         Initial velocity. Default: [0., 0., 0.]
     """
+
     def __init__(self, laserBeams, magField, a=jnp.array([0., 0., 0.]),
                  mass=100, gamma=1, k=1, r0=jnp.array([0., 0., 0.]),
                  v0=jnp.array([0., 0., 0.])):

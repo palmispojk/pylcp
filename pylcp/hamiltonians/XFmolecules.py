@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import numpy as np
-from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
-import scipy.constants as cts
 import jax
+import numpy as np
+import scipy.constants as cts
+from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
+
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
+
 
 def __wig3j(j1, j2, j3, m1, m2, m3):
     """
@@ -47,7 +49,6 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
            gS=-cts.value('electron g factor'), gI=cts.value('proton g factor'),
            muB=cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
            muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6) -> tuple[jax.Array, jax.Array, jax.Array, np.ndarray]:
-
     """
     Defines the field-free and magnetic field-dependent components of the
     :math:`X^2\\Sigma^+` ground state Hamiltonian.
@@ -503,7 +504,7 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
             matrices.
 
     Notes
-    ----
+    -----
     The X state is assumed to be Hund's case (b) while the A state is assumed
     to be Hund's case (a).  Thus, this function makes an intermediate basis to
     transform between the two.

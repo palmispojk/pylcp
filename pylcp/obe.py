@@ -9,16 +9,24 @@ force-profile generation over position/velocity grids.
 """
 import functools
 import gc
-import numpy as np
+from typing import Any
+
 import jax
 import jax.numpy as jnp
-from typing import Any
-from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense, optimal_batch_size
+import numpy as np
 
-from .rateeq import rateeq
-from .common import (cart2spherical, spherical2cart, base_force_profile,
-                     progressBar)
+from .common import (
+    base_force_profile,
+    cart2spherical,
+    progressBar,
+    spherical2cart,
+)
 from .governingeq import governingeq
+from .integration_tools_gpu import (
+    solve_ivp_dense,
+    solve_ivp_random,
+)
+from .rateeq import rateeq
 
 
 class force_profile(base_force_profile):
@@ -52,6 +60,7 @@ class force_profile(base_force_profile):
     Neq : array_like
         Equilibrium population found.
     """
+
     def __init__(self, R, V, laserBeams, hamiltonian):
         super().__init__(R, V, laserBeams, hamiltonian)
 
@@ -135,6 +144,7 @@ class obe(governingeq):
     Methods
     -------
     """
+
     def __init__(self, laserBeams, magField, hamiltonian,
                  a=jnp.array([0., 0., 0.]), transform_into_re_im=True, include_mag_forces=True,
                  r0=jnp.array([0., 0., 0.]), v0=jnp.array([0., 0., 0.])):
@@ -840,6 +850,7 @@ class obe(governingeq):
 
         class Bunch:
             """Simple namespace for OBE solution arrays (t, rho, y)."""
+
             t: Any
             y: Any
             rho: Any
@@ -1109,7 +1120,6 @@ class obe(governingeq):
             (Returned if `return_details=True`) The forces due to the 
             magnetic field.
         """
-        
         rho_mat = self.__reshape_rho(rho)
 
         f = jnp.zeros((3,) + rho_mat.shape[2:])

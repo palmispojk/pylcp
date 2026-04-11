@@ -7,9 +7,10 @@ energy levels, hyperfine constants, lifetimes, and derived quantities
 """
 from __future__ import annotations
 
-import scipy.constants as cts
 import numpy as np
+import scipy.constants as cts
 from numpy import pi
+
 
 class state():
     """
@@ -59,6 +60,7 @@ class state():
 
     This construction of the state assumes L-S coupling.
     """
+
     def __init__(
         self,
         n: int | None = None,
@@ -131,6 +133,7 @@ class transition():
         t0 : float
             Time scale :math:`t_0 = v_0/a_0` in s.
     """
+
     def __init__(self, state1: state, state2: state, mass: float) -> None:
         self.k = state2.energy - state1.energy  # cm^{-1}
         self.lam = 0.01/self.k # m
@@ -183,6 +186,7 @@ class atom():
             Transitions in the atom useful for laser cooling.  All transitions
             are from the ground state.
     """
+
     def __init__(self, species: str) -> None:
         # Collect the electronic states relevant for laser cooling:
         self.state = []

@@ -7,18 +7,23 @@ population finding, force-profile generation (JAX-vectorised for diagonal
 Hamiltonians), and time-dependent trajectory integration with optional
 stochastic photon recoil via GPU-batched diffrax solvers.
 """
-import numpy as np
 import jax
+import numpy as np
+
 jax.config.update("jax_enable_x64", True)
+from types import SimpleNamespace
+
 import jax.numpy as jnp
 from scipy.integrate import solve_ivp as scipy_solve_ivp
-from .common import (progressBar, random_vector, spherical_dot,
-                     cart2spherical, spherical2cart, base_force_profile)
+from scipy.interpolate import interp1d
+
+from .common import (
+    base_force_profile,
+    progressBar,
+)
 from .governingeq import governingeq
 from .integration_tools import solve_ivp_random as solve_ivp_random_cpu
-from .integration_tools_gpu import solve_ivp_random, solve_ivp_dense
-from scipy.interpolate import interp1d
-from types import SimpleNamespace
+from .integration_tools_gpu import solve_ivp_dense, solve_ivp_random
 
 
 def abs2(x):
@@ -67,6 +72,7 @@ class force_profile(base_force_profile):
         driven, and individual lasers are in the same order as in the
         pylcp.laserBeams object used to create the governing equation.
     """
+
     def __init__(self, R, V, laserBeams, hamiltonian):
         super().__init__(R, V, laserBeams, hamiltonian)
 
@@ -142,6 +148,7 @@ class rateeq(governingeq):
     v0 : array_like, shape (3,), optional
         Initial velocity.  Default: [0., 0., 0.]
     """
+
     def __init__(self, laserBeams, magField, hamiltonian,
                  a=np.array([0., 0., 0.]), include_mag_forces=True,
                  svd_eps=1e-10, r0=np.array([0., 0., 0.]),

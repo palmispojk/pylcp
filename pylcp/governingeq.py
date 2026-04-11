@@ -127,7 +127,7 @@ class governingeq(object):
     def __check_consistency_in_lasers_and_d_q(self):
         # Check that laser beam keys and Hamiltonian keys match.
         for laser_key in self.laserBeams.keys():
-            if not laser_key in self.hamiltonian.laser_keys.keys():
+            if laser_key not in self.hamiltonian.laser_keys.keys():
                 raise ValueError('laserBeams dictionary keys %s ' % laser_key +
                                  'does not have a corresponding key the '+
                                  'Hamiltonian d_q.')

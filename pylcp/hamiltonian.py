@@ -9,10 +9,11 @@ different manifolds via laser fields.
 """
 from __future__ import annotations
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 import numpy.typing as npt
+
 from .common import spherical2cart
 
 
@@ -72,6 +73,7 @@ class hamiltonian():
         The laser keys dictionary translates laser pumping keys like `g->e` into
         block indices for properly extracting the associated :math:`d_q` matrix.
     """
+
     class block():
         """
         A single scalar block of the Hamiltonian matrix.
@@ -82,6 +84,7 @@ class hamiltonian():
         Off-diagonal blocks represent dipole matrix elements (d_q) that couple
         two different manifolds.
         """
+
         def __init__(self, label: str, M: npt.ArrayLike) -> None:
             self.label = label
             self.matrix = jnp.asarray(M, dtype=jnp.complex128)
@@ -113,6 +116,7 @@ class hamiltonian():
         A spherical-basis vector block with a leading dimension of size 3
         for the q = -1, 0, +1 components.  Used for mu_q and d_q operators.
         """
+
         def __init__(self, label: str, M: npt.ArrayLike) -> None:
             super().__init__(label, M)
 
@@ -437,7 +441,7 @@ class hamiltonian():
         # Next, return d_q:
         for ii in range(self.blocks.shape[0]):
             for jj in range(ii+1, self.blocks.shape[1]):
-                if not self.blocks[ii, jj] is None:
+                if self.blocks[ii, jj] is not None:
                     key = self.state_labels[ii] + '->' + self.state_labels[jj]
                     nstart = int(np.sum(self.ns[:ii]))
                     mstart = int(np.sum(self.ns[:jj]))
@@ -534,7 +538,8 @@ class hamiltonian():
             The magnetic field value at which to diagonalize.  It is always
             assumed to be along the :math:`\\hat{z}` direction.
 
-        Returns:
+        Returns
+        -------
         H : pylcp.hamiltonian
             A block-structured Hamiltonian with diagonal elements diagonalized
             and :math:`d_q` objects rotated into the new eigenbasis.
@@ -556,7 +561,7 @@ class hamiltonian():
             for ii, block_row in enumerate(self.blocks):
                 for jj, block in enumerate(block_row):
                     if jj>ii:
-                        if not block is None:
+                        if block is not None:
                             self.rotated_hamiltonian.add_d_q_block(
                                 self.state_labels[ii], self.state_labels[jj],
                                 block.matrix,

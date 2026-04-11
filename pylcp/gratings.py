@@ -1,6 +1,8 @@
-import numpy as np
-from pylcp.fields import laserBeams, infinitePlaneWaveBeam, clippedGaussianBeam
 import numba
+import numpy as np
+
+from pylcp.fields import clippedGaussianBeam, infinitePlaneWaveBeam, laserBeams
+
 
 @numba.njit
 def reflected_int_single_point(R, zgrating, back_project_x, back_project_y, cos_th_center,
@@ -66,7 +68,9 @@ class infiniteGratingMOTBeams(laserBeams):
                  eta=None, grating_angle=0, **kwargs):
         """
         Creates beams that would be made from a grating.
-        Parameters:
+
+        Parameters
+        ----------
             delta: detuning of the laser beams
             s: intensity of the laser beams
             nr: number of reflected beams
@@ -89,7 +93,6 @@ class infiniteGratingMOTBeams(laserBeams):
             eta: diffraction efficiency of each of the reflected beams
             grating_angle: overall azimuthal rotation of the grating
         """
-
         # Turn on a bunch of stuff for making this laser beam collection:
         super().__init__()
 
@@ -442,7 +445,9 @@ class maskedGaussianGratingMOTBeams(infiniteGratingMOTBeams):
                  **kwargs):
         """
         Creates beams that would be made from a grating.
-        Parameters:
+
+        Parameters
+        ----------
             delta: detuning of the laser beams
             s: intensity of the laser beams
             nr: number of reflected beams

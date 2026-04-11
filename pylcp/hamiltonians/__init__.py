@@ -1,10 +1,13 @@
-import numpy as np
-from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
-import scipy.constants as cts
-from . import XFmolecules
 import jax
+import numpy as np
+import scipy.constants as cts
+from sympy.physics.wigner import wigner_3j, wigner_6j, wigner_9j
+
+from . import XFmolecules
+
 jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
+
 
 def wig3j(j1, j2, j3, m1, m2, m3):
     """Return the Wigner 3-j symbol as a Python float.
@@ -177,7 +180,7 @@ def fine_structure_uncoupled(L, S, I, xi, a_c, a_orb, a_dip, gL, gS, gI,
         # (III)
         if mS+1<=S and mI-1>=-I:
             t1 = np.sqrt((S-mS)*(S+mS+1)*(I+mI)*(I-mI+1))
-            drow = int(np.round(2*I));
+            drow = int(np.round(2*I))
             if np.abs(a_c)>0.:
                 H_0[ii+drow, ii] += t1*(L+S)*a_c/2/S
             if L>0 and np.abs(a_dip)>0.:
