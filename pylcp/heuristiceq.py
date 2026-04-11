@@ -301,6 +301,7 @@ class heuristiceq(governingeq):
 
         # Attach r and v as named attributes for convenience (y is (state_dim, n_steps))
         for sol in self.sols:
+            assert sol.y is not None
             sol.v = sol.y[:3]
             sol.r = sol.y[3:]
 

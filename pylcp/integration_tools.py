@@ -570,7 +570,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     max_step_global = options.pop('max_step', np.inf)
 
     solver = solver_class(fun, t0, y0, tf, vectorized=vectorized,
-                          max_step=max_step_initial, **options)
+                          max_step=max_step_initial, **options)  # pyright: ignore[reportCallIssue]
 
     if t_eval is None:
         ts = [t0]
@@ -621,7 +621,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
         (random_event_number, max_step) = random_func(solver.t, solver.y,
                                                       solver.step_size)
         if not max_step is None:
-            solver.max_step = np.min([max_step, max_step_global])
+            solver.max_step = np.min([max_step, max_step_global])  # pyright: ignore[reportAttributeAccessIssue]
 
         t_old = solver.t_old
         t = solver.t

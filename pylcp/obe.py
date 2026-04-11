@@ -474,7 +474,7 @@ class obe(governingeq):
         for sol in self.sols:
             y_cpu = np.asarray(sol.y)          # GPU → CPU transfer
             rho_flat = y_cpu[:-6, :]           # (n^2, n_steps)
-            sol.rho = self.__reshape_rho(rho_flat)
+            sol.rho = np.asarray(self.__reshape_rho(rho_flat))
             sol.v = np.real(y_cpu[-6:-3, :])   # (3, n_steps)
             sol.r = np.real(y_cpu[-3:, :])     # (3, n_steps)
             del sol.y
@@ -1050,7 +1050,9 @@ class obe(governingeq):
                 rho = self.sol.rho
             else:
                 raise ValueError("No solution found in memory. Please provide 'rho' explicitly.")
-        
+        if rho is None:
+            raise ValueError("No rho available in the stored solution.")
+
         O = jnp.asarray(O) # convert to jax array in case
         if rho.shape[0] == self.hamiltonian.n**2 and rho.ndim == 1:
             rho_mat = self.__reshape_rho(rho)

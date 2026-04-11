@@ -248,10 +248,11 @@ class hamiltonian():
             self.state_labels.append(state_label)
             self.ns.append(H_0.shape[0])
         elif ind_mu_q:
-            if H_0.shape[0] != self.blocks[ind_H_0].n:
+            existing_mu_q = self.blocks[ind_mu_q]
+            assert isinstance(existing_mu_q, hamiltonian.block)
+            if H_0.shape[0] != existing_mu_q.n:
                 raise ValueError('Element %s is not the right shape to match mu_q.' % label)
-            self.blocks[ind_mu_q] = (self.block(label, H_0),
-                                     self.blocks[ind_mu_q])
+            self.blocks[ind_mu_q] = (self.block(label, H_0), existing_mu_q)
         else:
             raise ValueError('H_0 already added.')
 
@@ -326,11 +327,16 @@ class hamiltonian():
         if ind_H_0 is None and ind_mu_q is None:
             raise ValueError('Label %s not found.' % label1)
         elif ind_H_0 is None:
+            assert ind_mu_q is not None
             ind1 = ind_mu_q[0]
-            n = self.blocks[ind_mu_q].n
+            block1 = self.blocks[ind_mu_q]
+            assert isinstance(block1, hamiltonian.block)
+            n = block1.n
         elif ind_mu_q is None:
             ind1 = ind_H_0[0]
-            n = self.blocks[ind_H_0].n
+            block1 = self.blocks[ind_H_0]
+            assert isinstance(block1, hamiltonian.block)
+            n = block1.n
         else:
             ind1 = ind_H_0[0]
             n = self.blocks[ind_H_0][0].n
@@ -341,11 +347,16 @@ class hamiltonian():
         if ind_H_0 is None and ind_mu_q is None:
             raise ValueError('Label %s not found.' % label2)
         elif ind_H_0 is None:
+            assert ind_mu_q is not None
             ind2 = ind_mu_q[0]
-            m = self.blocks[ind_mu_q].n
+            block2 = self.blocks[ind_mu_q]
+            assert isinstance(block2, hamiltonian.block)
+            m = block2.n
         elif ind_mu_q is None:
             ind2 = ind_H_0[0]
-            m = self.blocks[ind_H_0].n
+            block2 = self.blocks[ind_H_0]
+            assert isinstance(block2, hamiltonian.block)
+            m = block2.n
         else:
             ind2 = ind_H_0[0]
             m = self.blocks[ind_H_0][0].n
