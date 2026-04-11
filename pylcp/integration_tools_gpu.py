@@ -289,7 +289,14 @@ def _batched_random_trajectories(
             y_jump, n_scatters, dt_max_suggested, key_new = random_func(
                 t_next, y_next, actual_dt, s['key'], args
             )
-            dt_next = jnp.minimum(dt_max_suggested, max_step_global)
+            # If the step was clipped to t_save_next, dt_max_suggested
+            # collapses to ~0 and would freeze the next save group;
+            # reuse dt_curr (already a recoil-safe step) instead.
+            dt_next = jnp.where(
+                actual_dt < dt_curr,
+                jnp.minimum(dt_curr, max_step_global),
+                jnp.minimum(dt_max_suggested, max_step_global),
+            )
 
             return {
                 't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
