@@ -31,7 +31,7 @@ from .rateeq import rateeq
 
 class force_profile(base_force_profile):
     """
-    Optical Bloch equation force profile
+    Optical Bloch equation force profile.
 
     The force profile object stores all of the calculated quantities created by
     the obe.generate_force_profile() method.  It has the following
@@ -99,8 +99,8 @@ class force_profile(base_force_profile):
 
 
 class obe(governingeq):
-    """
-    The optical Bloch equations
+    r"""
+    The optical Bloch equations.
 
     This class constructs the optical Bloch equations from the given laser
     beams, magnetic field, and hamiltonian.
@@ -141,8 +141,6 @@ class obe(governingeq):
     v0 : array_like, shape (3,), optional
         Initial velocity.  Default: [0., 0., 0.]
 
-    Methods
-    -------
     """
 
     def __init__(self, laserBeams, magField, hamiltonian,
@@ -223,7 +221,7 @@ class obe(governingeq):
         self.__dict__.pop('_motion_dydt', None)
 
     def __cast_ev_mat_to_jax(self):
-        """Recursively convert the nested dictionaries of numpy arrays to jax arrays"""
+        """Recursively convert the nested dictionaries of numpy arrays to jax arrays."""
         dtype = jnp.float64 if self.transform_into_re_im else jnp.complex128
         for key in self.ev_mat:
             if isinstance(self.ev_mat[key], dict):
@@ -238,20 +236,18 @@ class obe(governingeq):
 
 
     def __density_index(self, ii, jj):
-        """
-        Returns the index in the rho vector that corresponds to element rho_{ij}.
-        """
+        """Return the index in the rho vector that corresponds to element rho_{ij}."""
         return ii + jj * self.hamiltonian.n
 
 
     def __build_coherent_ev_submatrix(self, H):
         """
-        This method builds the coherent evolution based on a submatrix of the
-        Hamiltonian H.  In practice, one must be careful about commutators if
-        one breaks up the Hamiltonian.
+        Build the coherent evolution Liouvillian from a Hamiltonian submatrix.
 
-        The density matrix is vectorized column-major: rho_flat[i + j*n] = rho[i,j].
-        The Liouvillian L such that d/dt rho_flat = L @ rho_flat is:
+        In practice, one must be careful about commutators if one breaks up the
+        Hamiltonian.  The density matrix is vectorized column-major:
+        rho_flat[i + j*n] = rho[i,j].  The Liouvillian L such that
+        d/dt rho_flat = L @ rho_flat is:
             L = i * kron(H.T, I_n) - i * kron(I_n, H)
         """
         n = self.hamiltonian.n
@@ -291,8 +287,9 @@ class obe(governingeq):
     # is used only in construction
     def __build_decay_ev(self):
         """
-        This method constructs the decay portion of the OBE using the radiation
-        reaction approximation.
+        Construct the decay portion of the OBE.
+
+        Uses the radiation reaction approximation.
         """
         d_q_bare = self.hamiltonian.d_q_bare
         d_q_star = self.hamiltonian.d_q_star
@@ -477,9 +474,7 @@ class obe(governingeq):
 
 
     def __reshape_sol(self):
-        """
-        Reshape the solution to have all the proper parts.
-        """
+        """Reshape the solution to have all the proper parts."""
         # Transfer to CPU first to avoid GPU OOM on large batches.
         for sol in self.sols:
             y_cpu = np.asarray(sol.y)          # GPU → CPU transfer
@@ -491,8 +486,8 @@ class obe(governingeq):
 
 
     def set_initial_rho(self, rho0):
-        """
-        Sets the initial :math:`\\rho` matrix
+        r"""
+        Set the initial :math:`\\rho` matrix.
 
         Parameters
         ----------
@@ -520,9 +515,10 @@ class obe(governingeq):
             self.rho0 = rho0
 
     def set_initial_rho_equally(self):
-        """
-        Sets the initial :math:`\\rho` matrix such that all states have the same
-        population.
+        r"""
+        Set the initial :math:`\\rho` matrix to equal populations.
+
+        All states receive the same population.
         """
         if self.transform_into_re_im:
             self.rho0 = jnp.zeros((self.hamiltonian.n**2,))
@@ -534,8 +530,8 @@ class obe(governingeq):
             self.rho0 = self.rho0.at[self.__density_index(jj, jj)].set(1/self.hamiltonian.ns[0])
 
     def set_initial_rho_from_populations(self, Npop):
-        """
-        Sets the diagonal elements of the initial :math:`\\rho` matrix
+        r"""
+        Set the diagonal elements of the initial :math:`\\rho` matrix.
 
         Parameters
         ----------
@@ -562,9 +558,10 @@ class obe(governingeq):
             self.rho0 = self.rho0.at[idx].set(Npop[jj])
 
     def set_initial_rho_from_rateeq(self):
-        """
-        Sets the diagonal elements of the initial :math:`\\rho` matrix using
-        the equilibrium populations as determined by pylcp.rateeq
+        r"""
+        Set the diagonal elements of the initial :math:`\\rho` matrix.
+
+        Uses the equilibrium populations as determined by pylcp.rateeq.
         """
         if not hasattr(self, 'rateeq'):
             self.rateeq = rateeq(self.laserBeams, self.magField, self.hamiltonian)
@@ -574,7 +571,7 @@ class obe(governingeq):
 
     def full_OBE_ev_scratch(self, r, t):
         """
-        Calculate the evolution for the density matrix
+        Calculate the evolution for the density matrix.
 
         This function calculates the OBE evolution matrix at position t and r
         from scratch, first computing the full Hamiltonian, then the
@@ -611,7 +608,7 @@ class obe(governingeq):
 
     def full_OBE_ev(self, r, t):
         """
-        Calculate the evolution for the density matrix
+        Calculate the evolution for the density matrix.
 
         This function calculates the OBE evolution matrix by assembling
         pre-stored versions of the component matries.  This should be
@@ -792,7 +789,7 @@ class obe(governingeq):
         return y, 0, jnp.inf, key
 
     def evolve_density(self, t_span, y0_batch=None, n_points=1000, **kwargs):
-        """
+        r"""
         Evolve the density operators :math:`\\rho_{ij}` in time.
 
         This function integrates the optical Bloch equations to determine how
@@ -873,7 +870,7 @@ class obe(governingeq):
                       max_scatter_probability=0.1,
                       backend='auto',
                       **kwargs):
-        """
+        r"""
         Evolve :math:`\\rho_{ij}` and the motion of the atom in time.
 
         This function evolves the optical Bloch equations, moving the atom
@@ -1023,7 +1020,7 @@ class obe(governingeq):
 
     def observable(self, O, rho=None):
         """
-        Calculates the expectation value of the observable O given density matrix rho.
+        Calculate the expectation value of the observable O given density matrix rho.
 
         This method computes the trace of the product of the observable operator
         and the density matrix. It natively supports evaluating single states 
@@ -1085,7 +1082,7 @@ class obe(governingeq):
 
     def force(self, r, t, rho, return_details=False):
         """
-        Calculates the instantaneous force on the atom.
+        Calculate the instantaneous force on the atom.
 
         This method computes the gradient of the laser and magnetic fields 
         and traces them with the density matrix to find the instantaneous 
@@ -1211,8 +1208,8 @@ class obe(governingeq):
                                rel=1e-5, abs=1e-9, debug=False,
                                initial_rho='rateeq',
                                return_details=False, **kwargs):
-        """
-        Finds the equilibrium force at the initial position.
+        r"""
+        Find the equilibrium force at the initial position.
 
         This method works by solving the OBEs in a chunk of time
         $\\Delta T$, calculating the force during that chunk, continuing
@@ -1342,7 +1339,7 @@ class obe(governingeq):
 
 
     def generate_force_profile(self, R, V, name=None, **kwargs):
-        """
+        r"""
         Map out the equilibrium force vs. position and velocity using batched JAX integration.
 
         This method solves the Optical Bloch Equations (OBEs) simultaneously across a

@@ -23,7 +23,7 @@ from .fields import magField as magFieldObject
 
 class governingeq(object):
     """
-    Governing equation base class
+    Governing equation base class.
 
     This class is the basis for making all the governing equations in `pylcp`,
     including the rate equations, heuristic equation, and the optical Bloch
@@ -135,7 +135,7 @@ class governingeq(object):
 
     def set_initial_position_and_velocity(self, r0: npt.ArrayLike, v0: npt.ArrayLike) -> None:
         """
-        Sets the initial position and velocity
+        Set the initial position and velocity.
 
         Parameters
         ----------
@@ -149,7 +149,7 @@ class governingeq(object):
 
     def set_initial_position(self, r0: npt.ArrayLike) -> None:
         """
-        Sets the initial position
+        Set the initial position.
 
         Parameters
         ----------
@@ -161,7 +161,7 @@ class governingeq(object):
 
     def set_initial_velocity(self, v0: npt.ArrayLike) -> None:
         """
-        Sets the initial velocity
+        Set the initial velocity.
 
         Parameters
         ----------
@@ -172,11 +172,12 @@ class governingeq(object):
         self.sol = None
 
     def evolve_motion(self):
+        """Evolve the equations of motion (implemented by subclasses)."""
         pass
 
     def find_equilibrium_force(self):
         """
-        Find the equilibrium force at the initial conditions
+        Find the equilibrium force at the initial conditions.
 
         Returns
         -------
@@ -187,7 +188,7 @@ class governingeq(object):
 
     def force(self):
         """
-        Find the instantaneous force
+        Find the instantaneous force.
 
         Returns
         -------
@@ -198,7 +199,7 @@ class governingeq(object):
 
     def generate_force_profile(self):
         """
-        Map out the equilibrium force vs. position and velocity
+        Map out the equilibrium force vs. position and velocity.
 
         Parameters
         ----------
@@ -225,8 +226,8 @@ class governingeq(object):
         pass
 
     def find_equilibrium_position(self, axes: Sequence[int], **kwargs: Any) -> jax.Array:
-        """
-        Find the equilibrium position
+        r"""
+        Find the equilibrium position.
 
         Uses the find_equilibrium force() method to calculate the where the
         :math:`\\mathbf{f}(\\mathbf{r}, \\mathbf{v}=0)=0`.
@@ -282,8 +283,8 @@ class governingeq(object):
         return self.r_eq
 
     def trapping_frequencies(self, axes: Sequence[int], r: npt.ArrayLike | None = None, eps: float = 0.01, **kwargs: Any) -> jax.Array | float:
-        """
-        Find the trapping frequency
+        r"""
+        Find the trapping frequency.
 
         Uses the find_equilibrium force() method to calculate the trapping
         frequency for the particular configuration.
@@ -356,8 +357,8 @@ class governingeq(object):
         return result
 
     def damping_coeff(self, axes: Sequence[int], r: npt.ArrayLike | None = None, eps: float = 0.01, **kwargs: Any) -> jax.Array | float:
-        """
-        Find the damping coefficent
+        r"""
+        Find the damping coefficent.
 
         Uses the find_equilibrium force() method to calculate the damping
         coefficient for the particular configuration.

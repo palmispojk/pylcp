@@ -1,3 +1,4 @@
+"""Standard atomic Hamiltonian constructors for common level structures."""
 import jax
 import numpy as np
 import scipy.constants as cts
@@ -73,7 +74,7 @@ def fine_structure_uncoupled(L, S, I, xi, a_c, a_orb, a_dip, gL, gS, gI,
                              muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
                              return_basis=False):
     """
-    Returns the full fine structure manifold in the uncoupled basis.
+    Return the full fine structure manifold in the uncoupled basis.
 
     Parameters
     ----------
@@ -227,8 +228,8 @@ def fine_structure_uncoupled(L, S, I, xi, a_c, a_orb, a_dip, gL, gS, gI,
 
 
 def dqij_two_fine_stucture_manifolds_uncoupled(basis_g, basis_e):
-    """
-    Return the coupling between two fine structure manifolds
+    r"""
+    Return the coupling between two fine structure manifolds.
 
     Parameters
     ----------
@@ -540,7 +541,7 @@ def hyperfine_coupled(J, I, gJ, gI, Ahfs, Bhfs=0, Chfs=0,
 def singleF(F, gF=1, muB=(cts.value("Bohr magneton in Hz/T")*1e-4),
             return_basis=False):
     """
-    Construct the Hamiltonian for a lonely angular momentum state
+    Construct the Hamiltonian for a lonely angular momentum state.
 
     Parameters
     ----------
@@ -619,9 +620,8 @@ def dqij_norm(dqij):
 
 
 def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
-    """
-    Dipole matrix element matrix elements for transitions between two
-    hyperfine manifolds.
+    r"""
+    Compute dipole matrix elements between two hyperfine manifolds.
 
     Parameters
     ----------
@@ -697,9 +697,10 @@ def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
 
 
 def dqij_two_bare_hyperfine(F, Fp, normalize=True):
-    """
-    Calculates the dqij matrix for two bare hyperfine states.  Specifically,
-    it returns the matrix of the operator $d_q$, where a photon is created by
+    r"""
+    Calculate the dqij matrix for two bare hyperfine states.
+
+    Returns the matrix of the operator $d_q$, where a photon is created by
     a transition from the excited state to the ground state.
 
     Parameters

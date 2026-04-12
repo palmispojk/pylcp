@@ -1,3 +1,4 @@
+"""Hamiltonians for X-F diatomic molecules (e.g. CaF, SrF, YbF)."""
 from __future__ import annotations
 
 import jax
@@ -10,38 +11,28 @@ import jax.numpy as jnp
 
 
 def __wig3j(j1, j2, j3, m1, m2, m3):
-    """
-    This function redefines the wig3jj in terms of things that I like:
-    """
+    """Wrap wigner_3j returning a plain float."""
     return float(wigner_3j(j1, j2, j3, m1, m2, m3))
 
 
 def __wig6j(j1, j2, j3, l1, l2, l3):
-    """
-    This function redefines the wig6jj in terms of things that I like:
-    """
+    """Wrap wigner_6j returning a plain float."""
     return float(wigner_6j(j1, j2, j3, l1, l2, l3))
 
 
 
 def __wig9j(j1, j2, j3, l1, l2, l3, n1, n2, n3):
-    """
-    This function redefines the wig9jj in terms of things that I like:
-    """
+    """Wrap wigner_9j returning a plain float."""
     return float(wigner_9j(j1, j2, j3, l1, l2, l3, n1, n2, n3))
 
 
 def __ishermitian(A):
-    """
-    Simple method to check if a matrix is Hermitian.
-    """
+    """Check if a matrix is check if a matrix is Hermitian."""
     return np.allclose(A, np.conjugate(A.T), rtol=1e-10, atol=1e-10)
 
 
 def __isunitary(A):
-    """
-    Simple method to check if a matrix is Hermitian.
-    """
+    """Check if a matrix is check if a matrix is Hermitian."""
     return np.allclose(np.identity(A.shape[0]), A.T @ A, atol=1e-10)
 
 
@@ -49,9 +40,10 @@ def Xstate(N, I, B=0., gamma=0., b=0., c=0., CI=0., q0=0, q2=0,
            gS=-cts.value('electron g factor'), gI=cts.value('proton g factor'),
            muB=cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
            muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6) -> tuple[jax.Array, jax.Array, jax.Array, np.ndarray]:
-    """
-    Defines the field-free and magnetic field-dependent components of the
-    :math:`X^2\\Sigma^+` ground state Hamiltonian.
+    r"""
+    Define the :math:`X^2\\Sigma^+` ground state Hamiltonian.
+
+    Builds the field-free and magnetic field-dependent components.
 
     Parameters
     ----------
@@ -286,9 +278,10 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
            gS=-cts.value('electron g factor'), gL=1, gl=0, glprime=0., gr=0, greprime=0, gN=0,
            muB=cts.value('Bohr magneton in Hz/T')*1e-4*1e-6,
            muN=cts.m_e/cts.m_p*cts.value('Bohr magneton in Hz/T')*1e-4*1e-6) -> tuple[jax.Array, jax.Array, np.ndarray]:
-    """
-    Defines the field-free and magnetic field-dependent components of the excited
-    :math:`A^2\\Pi_{1/2}` state Hamiltonian.
+    r"""
+    Define the excited :math:`A^2\\Pi_{1/2}` state Hamiltonian.
+
+    Builds the field-free and magnetic field-dependent components.
 
     Parameters
     ----------
@@ -483,7 +476,7 @@ def Astate(J, I, P, B=0., D=0., H=0., a=0., b=0., c=0., eQq0=0., p=0., q=0.,
 
 def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
                       return_intermediate=False):
-    """
+    r"""
     Calculate the oscillator strengths between the X and A states.
 
     Parameters
@@ -514,8 +507,9 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
     def dipole_matrix_element(L, Sig, O, J, F, mF,
                               Lp, Sigp, Op, Jp, Fp, mFp, q):
         """
-        The dipole matrix element, less the reduced matrix element between the X
-        and A states.  Shorthand: L=Lambda, O=Omega, P=parity.
+        Compute the dipole matrix element (less reduced X-A element).
+
+        Shorthand: L=Lambda, O=Omega, P=parity.
         """
         return (-1)**(F-mF)*__wig3j(F, 1, Fp, -mF, q, mFp)*(-1)**(Fp+J+I+1)*\
             np.sqrt((2*F+1)*(2*Fp+1))*__wig6j(Jp, Fp, I, F, J, 1)*\
@@ -524,17 +518,13 @@ def dipoleXandAstates(xbasis, abasis, I=1/2, S=1/2, UX=[],
 
     def elements_transform_a_to_b(L, Sig, O, J, F, mF,
                                   Lp, Np, Jp, Fp, mFp, Pp):
-        """
-        Matrix elements to transform for Hund's case (a) to (b) (Norrgard thesis, pg.)
-        """
+        """Matrix elements to transform for Hund's case (a) to (b) (Norrgard thesis, pg.)."""
         return (-1)**(J+Sig+L)*np.sqrt(2*Np+1)*__wig3j(S, Np, J, Sig, L, -O)*\
             (L == Lp)*(J == Jp)*(F == Fp)*(mF == mFp)
 
     def elements_transform_a_to_p(L, S, J, O, I, F, mF, P,
                                   Lp, Sigp, Op, Jp, Fp, mFp):
-        """
-        Matrix elements to transform for Hund's case (a) to to parity Eq. 6.234
-        """
+        """Matrix elements to transform for Hund's case (a) to to parity Eq. 6.234."""
         if Lp > 0:
             el = 1/np.sqrt(2)*(J == Jp)*(F == Fp)*(mF == mFp)
         else:

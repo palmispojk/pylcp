@@ -18,10 +18,12 @@ import numpy.typing as npt
 
 class progressBar(object):
     """
-    A terminal progress bar that displays completion percentage, a visual bar,
-    and estimated time remaining. Call ``update(fraction)`` with a value between
-    0 and 1 to refresh the display; it automatically prints a completion message
-    when the fraction reaches 1.
+    A terminal progress bar with completion percentage and ETA.
+
+    Displays completion percentage, a visual bar, and estimated time remaining.
+    Call ``update(fraction)`` with a value between 0 and 1 to refresh the
+    display; it automatically prints a completion message when the fraction
+    reaches 1.
     """
 
     def __init__(
@@ -125,29 +127,32 @@ class progressBar(object):
 
 
 def cart2spherical(A: jax.Array) -> jax.Array:
-    """Convert a 3-component Cartesian vector (x, y, z) to the spherical
-    (circular) basis (e_{-1}, e_0, e_{+1}).  The convention follows the
-    standard used in atomic physics for expressing polarisation components.
+    """Convert a Cartesian vector to the spherical (circular) basis.
+
+    Maps (x, y, z) to (e_{-1}, e_0, e_{+1}) using the standard atomic-physics
+    convention for polarisation components.
     """
     return jnp.array([(A[0]-1j*A[1])/jnp.sqrt(2), A[2], -(A[0]+1j*A[1])/jnp.sqrt(2)])
 
 def spherical2cart(A: jax.Array) -> jax.Array:
-    """Convert a 3-component spherical (circular) basis vector (e_{-1}, e_0,
-    e_{+1}) back to the Cartesian basis (x, y, z).  This is the inverse of
+    """Convert a spherical (circular) basis vector to Cartesian.
+
+    Maps (e_{-1}, e_0, e_{+1}) back to (x, y, z).  Inverse of
     :func:`cart2spherical`.
     """
     return jnp.array([1/jnp.sqrt(2)*(-A[2]+A[0]), 1j/jnp.sqrt(2)*(A[2]+A[0]), A[1]])
 
 def spherical_dot(A: jax.Array, B: jax.Array) -> jax.Array:
-    """Compute the dot product of two vectors expressed in the spherical
-    (circular) basis.  The metric tensor in this basis introduces alternating
-    signs: A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}.
+    """Compute the dot product of two spherical-basis vectors.
+
+    The metric tensor in this basis introduces alternating signs:
+    A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}.
     """
     return jnp.tensordot(A, jnp.array([-1., 1., -1.])*B[::-1], axes=(0, 0))
 
 class base_force_profile():
     """
-    Base force profile
+    Base force profile.
 
     The force profile object stores all of the calculated quantities created by
     the governingeq.generate_force_profile() method.  It has the following
@@ -240,7 +245,7 @@ class base_force_profile():
 
 def random_vector(key: jax.Array, free_axes: Sequence[bool] = [True, True, True]) -> jax.Array:
     """
-    This function returns a random vector in either 1D, 2D or 3D
+    Return a random vector in either 1D, 2D, or 3D.
 
     Parameters
     ----------

@@ -1025,9 +1025,11 @@ if __name__ == '__main__':
     import matplotlib.pyplot as plt
 
     def dydt(t, y):
+        """Return the derivative for a simple harmonic oscillator."""
         return jnp.array([-y[1], y[0]])
 
     def func2(t, y, dt, key, args):
+        """Apply a random kick with probability proportional to dt."""
         key, subkey1, subkey2 = jax.random.split(key, 3)
         roll = jax.random.uniform(subkey1)
         did_scatter = roll < 2 * dt

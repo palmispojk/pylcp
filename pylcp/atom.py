@@ -13,7 +13,7 @@ from numpy import pi
 
 
 class state():
-    """
+    r"""
     The quantum state and its parameters for an atom.
 
     Parameters
@@ -100,7 +100,7 @@ class state():
 
 
 class transition():
-    """
+    r"""
     Reference numbers for transitions.
 
     Parameters
@@ -159,7 +159,7 @@ class transition():
 
 class atom():
     """
-    A class containing reference data for select laser-coolable alkali atoms
+    A class containing reference data for select laser-coolable alkali atoms.
 
     Parameters
     ----------
@@ -366,18 +366,17 @@ class atom():
 
 
     def __sort_states(self):
-        """
-        Sorts the states by energy.
-        """
+        """Sorts the states by energy."""
         # TODO: implement
         pass
 
 
     def __make_transitions(self):
         """
-        Build transition objects for every excited state relative to the
-        ground state (index 0), computing wavelengths, saturation
-        intensities, and natural unit scales.
+        Build transition objects for every excited state.
+
+        Computes wavelengths, saturation intensities, and natural unit scales
+        relative to the ground state (index 0).
         """
         self.transition = []
         for ii, state_i in enumerate(self.state):

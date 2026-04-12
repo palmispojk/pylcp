@@ -44,7 +44,7 @@ def abs2(x):
 
 class force_profile(base_force_profile):
     """
-    Rate equation force profile
+    Rate equation force profile.
 
     The force profile object stores all of the calculated quantities created by
     the rateeq.generate_force_profile() method.  It has the following attributes:
@@ -113,7 +113,7 @@ class force_profile(base_force_profile):
 
 class rateeq(governingeq):
     """
-    The rate equations
+    The rate equations.
 
     This class constructs the rate equations from the given laser
     beams, magnetic field, and hamiltonian.
@@ -183,7 +183,7 @@ class rateeq(governingeq):
 
     def _calc_decay_comp_of_Rev(self, rotated_ham):
         """
-        Constructs the decay portion of the evolution matrix.
+        Construct the decay portion of the evolution matrix.
 
         Parameters
         ----------
@@ -224,8 +224,10 @@ class rateeq(governingeq):
 
     def _calc_pumping_rates(self, r, v, t, Bhat):
         """
-        Compute the optical pumping rate R_{ij,l} for each laser beam l at the
-        given position, velocity, and time.  Stores results in ``self.Rijl``.
+        Compute optical pumping rates for each laser beam.
+
+        Calculates R_{ij,l} at the given position, velocity, and time.
+        Stores results in ``self.Rijl``.
         """
         for key in self.laserBeams:
             ind = self.hamiltonian.rotated_hamiltonian.laser_keys[key]
@@ -284,7 +286,7 @@ class rateeq(governingeq):
     def construct_evolution_matrix(self, r, v, t=0.,
                                    default_axis=jnp.array([0., 0., 1.])):
         """
-        Constructs the evolution matrix at a given position and time.
+        Construct the evolution matrix at a given position and time.
 
         Parameters
         ----------
@@ -336,7 +338,7 @@ class rateeq(governingeq):
 
     def equilibrium_populations(self, r, v, t, **kwargs):
         """
-        Returns the equilibrium population as determined by the rate equations.
+        Return the equilibrium population as determined by the rate equations.
 
         Parameters
         ----------
@@ -388,7 +390,7 @@ class rateeq(governingeq):
 
     def force(self, r, t, N, return_details=True):
         """
-        Calculates the instantaneous force.
+        Calculate the instantaneous force.
 
         Parameters
         ----------
@@ -464,7 +466,7 @@ class rateeq(governingeq):
 
     def set_initial_pop(self, N0):
         """
-        Sets the initial populations.
+        Set the initial populations.
 
         Parameters
         ----------
@@ -480,9 +482,7 @@ class rateeq(governingeq):
         self.N0 = N0
 
     def set_initial_pop_from_equilibrium(self):
-        """
-        Sets the initial populations based on the equilibrium at r0, v0, t=0.
-        """
+        """Set the initial populations based on the equilibrium at r0, v0, t=0."""
         self.N0 = self.equilibrium_populations(self.r0, self.v0, t=0.)
 
 
@@ -1139,7 +1139,7 @@ class rateeq(governingeq):
 
     def find_equilibrium_force(self, return_details=False, **kwargs):
         """
-        Finds the equilibrium force at the initial position.
+        Find the equilibrium force at the initial position.
 
         Parameters
         ----------
@@ -1211,8 +1211,10 @@ class rateeq(governingeq):
 
     def _generate_force_profile_jax(self, R, V, name, t=0.):
         """
-        JAX-vectorized force profile: batches all (r, v) grid points into a
-        single jax.vmap call so the whole computation runs on the GPU.
+        Compute the force profile using JAX-vectorized evaluation.
+
+        Batches all (r, v) grid points into a single ``jax.vmap`` call so the
+        whole computation runs on the GPU.
         """
         Rev_decay_jax, pump_data, force_data, mag_mats = \
             self._get_jax_components()

@@ -40,16 +40,14 @@ MESSAGES = {0: "The solver successfully reached the end of the integration inter
 
 
 class RandomOdeResult(OptimizeResult):
-    """
-    Optimize result is a dictionary where each key becomes an attribute.  Neat.
-    """
+    """Optimize result is a dictionary where each key becomes an attribute.  Neat."""
 
     pass
 
 
 class parallelIntegrator(object):
     """
-    parallelIntegrator: a class to integrate a function as it is being called
+    parallelIntegrator: a class to integrate a function as it is being called.
 
     Parameters
     ----------
@@ -137,7 +135,7 @@ class parallelIntegrator(object):
 
     def __call__(self, t):
         """
-        __call: return value at time t:
+        __call: return value at time t.
 
         Parameters
         ----------
@@ -218,6 +216,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
                      dense_output=False, events=None, vectorized=False,
                      args=None, **options):
     """Solve an initial value problem for a system of ODEs.
+
     This function numerically integrates a system of ordinary differential
     equations given an initial value::
         dy / dt = f(t, y)
@@ -734,9 +733,11 @@ if __name__ == '__main__':
     import numpy as np
 
     def dydt(t, y):
+        """Return the derivative for a simple harmonic oscillator."""
         return np.array([-y[1], y[0]])
 
     def func2(t, y, dt):
+        """Apply a random kick with probability proportional to dt."""
         if np.random.rand() < 2 * dt:
             y[1] += 5 * np.random.randn()
             return (1, max(0.1, np.abs(y[1])))

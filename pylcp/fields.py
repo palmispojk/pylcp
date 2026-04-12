@@ -158,7 +158,7 @@ def promote_to_lambda(
 
 class magField(object):
     """
-    Base magnetic field class
+    Base magnetic field class.
 
     Stores a magnetic field and calculates useful derivatives
     for `pylcp`.
@@ -190,7 +190,7 @@ class magField(object):
 
     def FieldMag(self, R=jnp.array([0., 0., 0.]), t=0):
         """
-        Magnetic field magnitude at R and t:
+        Magnetic field magnitude at R and t.
 
         Parameters
         ----------
@@ -208,8 +208,8 @@ class magField(object):
         return jnp.linalg.norm(self.Field(R, t))
 
     def gradFieldMag(self, R=jnp.array([0., 0., 0.]), t=0):
-        """
-        Gradient of the magnetic field magnitude at R and t:
+        r"""
+        Gradient of the magnetic field magnitude at R and t.
 
         Parameters
         ----------
@@ -229,8 +229,8 @@ class magField(object):
 
 
 class iPMagneticField(magField):
-    """
-    Ioffe-Pritchard trap magnetic field
+    r"""
+    Ioffe-Pritchard trap magnetic field.
 
     Generates a magnetic field of the form
 
@@ -265,8 +265,8 @@ class iPMagneticField(magField):
 
 
 class constantMagneticField(magField):
-    """
-    Spatially constant magnetic field
+    r"""
+    Spatially constant magnetic field.
 
     Represents a magnetic field of the form
 
@@ -285,8 +285,8 @@ class constantMagneticField(magField):
 
 
 class quadrupoleMagneticField(magField):
-    """
-    Spherical quadrupole magnetic field
+    r"""
+    Spherical quadrupole magnetic field.
 
     Represents a magnetic field of the form
 
@@ -309,8 +309,8 @@ class quadrupoleMagneticField(magField):
             ]))
 
 class laserBeam(object):
-    """
-    The base class for a single laser beam
+    r"""
+    The base class for a single laser beam.
 
     Attempts to represent a laser beam as
 
@@ -445,7 +445,7 @@ class laserBeam(object):
 
     def kvec(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the k-vector of the laser beam
+        Return the k-vector of the laser beam.
 
         Parameters
         ----------
@@ -464,7 +464,7 @@ class laserBeam(object):
 
     def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the intensity of the laser beam at position R and t
+        Return the intensity of the laser beam at position R and t.
 
         Parameters
         ----------
@@ -485,7 +485,7 @@ class laserBeam(object):
 
     def pol(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the polarization of the laser beam at position R and t
+        Return the polarization of the laser beam at position R and t.
 
         The polarization is returned in the spherical basis.
 
@@ -506,7 +506,7 @@ class laserBeam(object):
 
     def delta(self, t=0.):
         """
-        Returns the detuning of the laser beam at time t
+        Return the detuning of the laser beam at time t.
 
         Parameters
         ----------
@@ -650,7 +650,7 @@ class laserBeam(object):
 
     def cartesian_pol(self, R=jnp.array([0., 0., 0.]), t=0):
         """
-        Returns the polarization in Cartesian coordinates.
+        Return the polarization in Cartesian coordinates.
 
         Parameters
         ----------
@@ -670,7 +670,7 @@ class laserBeam(object):
 
     def jones_vector(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
         """
-        Returns the Jones vector at position
+        Return the Jones vector at position.
 
         Parameters
         ----------
@@ -712,7 +712,7 @@ class laserBeam(object):
 
     def stokes_parameters(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
         """
-        The Stokes Parameters of the laser beam at R and t
+        Return the Stokes Parameters of the laser beam at R and t.
 
         Parameters
         ----------
@@ -743,8 +743,8 @@ class laserBeam(object):
 
 
     def polarization_ellipse(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
-        """
-        The polarization ellipse parameters of the laser beam at R and t
+        r"""
+        Return the polarization ellipse parameters of the laser beam at R and t.
 
         Parameters
         ----------
@@ -780,7 +780,7 @@ class laserBeam(object):
 
     def electric_field(self, R=jnp.array([0., 0., 0.,]), t=0.):
         """
-        The electric field at position R and t
+        Return the electric field at position R and t.
 
         Parameters
         ----------
@@ -836,8 +836,8 @@ class laserBeam(object):
 
 
 class infinitePlaneWaveBeam(laserBeam):
-    """
-    Infinte plane wave beam
+    r"""
+    Infinte plane wave beam.
 
     A beam which has spatially constant intensity, k-vector, and polarization.
 
@@ -922,8 +922,8 @@ class infinitePlaneWaveBeam(laserBeam):
 
 
 class gaussianBeam(laserBeam):
-    """
-    Collimated Gaussian beam
+    r"""
+    Collimated Gaussian beam.
 
     A beam which has spatially constant k-vector and polarization, with a
     Gaussian intensity modulation.  Specifically,
@@ -1025,8 +1025,8 @@ class gaussianBeam(laserBeam):
 
 
 class clippedGaussianBeam(gaussianBeam):
-    """
-    Clipped, collimated Gaussian beam
+    r"""
+    Clipped, collimated Gaussian beam.
 
     A beam which has spatially constant k-vector and polarization, with a
     Gaussian intensity modulation.  Specifically,
@@ -1102,7 +1102,7 @@ class clippedGaussianBeam(gaussianBeam):
 
 class laserBeams(object):
     """
-    The base class for a collection of laser beams
+    The base class for a collection of laser beams.
 
     Parameters
     ----------
@@ -1146,7 +1146,7 @@ class laserBeams(object):
 
     def add_laser(self, new_laser: laserBeam | dict[str, Any]) -> None:
         """
-        Add a laser to the collection
+        Add a laser to the collection.
 
         Parameters
         ----------
@@ -1164,7 +1164,7 @@ class laserBeams(object):
 
     def pol(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the polarization of each of the laser beams at position R and t
+        Return the polarization of each of the laser beams at position R and t.
 
         The polarization is returned in the spherical basis.
 
@@ -1188,7 +1188,7 @@ class laserBeams(object):
 
     def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the intensity of each of the laser beams at position R and t
+        Return the intensity of each of the laser beams at position R and t.
 
         Parameters
         ----------
@@ -1209,7 +1209,7 @@ class laserBeams(object):
 
     def kvec(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the k-vectors of each of the laser beams
+        Return the k-vectors of each of the laser beams.
 
         Parameters
         ----------
@@ -1230,7 +1230,7 @@ class laserBeams(object):
 
     def delta(self, t=0.):
         """
-        Returns the detuning of each of the laser beams at time t
+        Return the detuning of each of the laser beams at time t.
 
         Parameters
         ----------
@@ -1248,7 +1248,7 @@ class laserBeams(object):
 
     def electric_field(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the electric field of each of the laser beams
+        Return the electric field of each of the laser beams.
 
         Parameters
         ----------
@@ -1271,7 +1271,7 @@ class laserBeams(object):
 
     def electric_field_gradient(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the gradient of the electric field of each of the laser beams
+        Return the gradient of the electric field of each of the laser beams.
 
         Parameters
         ----------
@@ -1294,7 +1294,7 @@ class laserBeams(object):
 
     def total_electric_field(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the total electric field of the laser beams 
+        Return the total electric field of the laser beams.
 
         Parameters
         ----------
@@ -1318,7 +1318,7 @@ class laserBeams(object):
 
     def total_electric_field_gradient(self, R=jnp.array([0., 0., 0.]), t=0.):
         """
-        Returns the total gradient of the electric field of the laser beams
+        Return the total gradient of the electric field of the laser beams.
 
         Parameters
         ----------
@@ -1400,7 +1400,7 @@ class laserBeams(object):
 
     def cartesian_pol(self, R=jnp.array([0., 0., 0.]), t=0):
         """
-        Returns the polarization of all laser beams in Cartesian coordinates.
+        Return the polarization of all laser beams in Cartesian coordinates.
 
         Parameters
         ----------
@@ -1422,7 +1422,7 @@ class laserBeams(object):
 
     def jones_vector(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
         """
-        Jones vector at position R and time t
+        Jones vector at position R and time t.
 
         Parameters
         ----------
@@ -1451,7 +1451,7 @@ class laserBeams(object):
 
     def stokes_parameters(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
         """
-        The Stokes Parameters of the laser beam at R and t
+        Return the Stokes Parameters of the laser beam at R and t.
 
         Parameters
         ----------
@@ -1478,8 +1478,8 @@ class laserBeams(object):
         return jnp.stack([beam.stokes_parameters(xp, yp, R, t) for beam in self.beam_vector])
 
     def polarization_ellipse(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
-        """
-        The polarization ellipse parameters of the laser beam at R and t
+        r"""
+        Return the polarization ellipse parameters of the laser beam at R and t.
 
         Parameters
         ----------
@@ -1507,8 +1507,8 @@ class laserBeams(object):
 
 
 class conventional3DMOTBeams(laserBeams):
-    """
-    A collection of laser beams for 6-beam MOT
+    r"""
+    A collection of laser beams for 6-beam MOT.
 
     The standard geometry is to generate counter-progagating beams along all
     orthogonal axes :math:`(\\hat{x}, \\hat{y}, \\hat{z})`.

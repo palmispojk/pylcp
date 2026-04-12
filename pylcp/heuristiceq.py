@@ -20,7 +20,7 @@ from .integration_tools_gpu import solve_ivp_random as solve_ivp_random_gpu
 
 class heuristiceq(governingeq):
     """
-    Heuristic force equation (JAX/GPU implementation)
+    Heuristic force equation (JAX/GPU implementation).
 
     The heuristic equation governs the atom or molecule as if it has a single
     transition between an :math:`F=0` ground state to an :math:`F'=1` excited
@@ -63,7 +63,7 @@ class heuristiceq(governingeq):
 
     def scattering_rate(self, r, v, t, return_kvecs=False):
         """
-        Calculates the scattering rate for each laser beam.
+        Calculate the scattering rate for each laser beam.
 
         Parameters
         ----------
@@ -116,7 +116,7 @@ class heuristiceq(governingeq):
 
     def force(self, r, v, t):
         """
-        Calculates the instantaneous force.
+        Calculate the instantaneous force.
 
         Parameters
         ----------
@@ -312,7 +312,7 @@ class heuristiceq(governingeq):
 
     def find_equilibrium_force(self, return_details=False):
         """
-        Finds the equilibrium force at the initial position and velocity.
+        Find the equilibrium force at the initial position and velocity.
 
         Since the heuristic force is instantaneous (no internal state to
         converge), this is a direct evaluation of :meth:`force`.

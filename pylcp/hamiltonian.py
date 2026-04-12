@@ -19,7 +19,7 @@ from .common import spherical2cart
 
 class hamiltonian():
     """
-    A representation of the Hamiltonian in blocks
+    A representation of the Hamiltonian in blocks.
 
     Diagonal blocks describe the internal structure of a manifold, and
     off-diagonal blocks describe how those manifolds are connected via laser
@@ -95,12 +95,14 @@ class hamiltonian():
             self.m = self.matrix.shape[1]
 
         def check_diagonality(self, M: jax.Array) -> bool:
+            """Return True if M is diagonal (square with zero off-diagonals)."""
             if M.shape[0] == M.shape[1]:
                 return bool(jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0)
             else:
                 return False # Cannot be diagonal, cause not square.
 
         def return_block_in_place(self, i: int, j: int, N: int) -> jax.Array:
+            """Embed this block into an NxN zero matrix at position (i, j)."""
             super_M = jnp.zeros((N, N), dtype=jnp.complex128)
             return super_M.at[i:i+self.n, j:j+self.m].set(self.matrix)
 
@@ -113,8 +115,9 @@ class hamiltonian():
 
     class vector_block(block):
         """
-        A spherical-basis vector block with a leading dimension of size 3
-        for the q = -1, 0, +1 components.  Used for mu_q and d_q operators.
+        A spherical-basis vector block for mu_q and d_q operators.
+
+        Has a leading dimension of size 3 for the q = -1, 0, +1 components.
         """
 
         def __init__(self, label: str, M: npt.ArrayLike) -> None:
@@ -124,12 +127,14 @@ class hamiltonian():
             self.m = self.matrix.shape[2]
 
         def check_diagonality(self, M: jax.Array) -> bool:
+            """Return True if each q-component slice is diagonal."""
             if M.shape[1] == M.shape[2]:
                 return bool(jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0)
             else:
                 return False # Cannot be diagonal, cause not square.
 
         def return_block_in_place(self, i: int, j: int, N: int) -> jax.Array:
+            """Embed this block into a 3xNxN zero array at position (i, j)."""
             super_M = jnp.zeros((3, N, N), dtype=jnp.complex128)
             return super_M.at[:, i:i+self.n, j:j+self.m].set(self.matrix)
 
@@ -162,14 +167,12 @@ class hamiltonian():
                                       len(args))
 
     def print_structure(self) -> None:
-        """
-        Print structure of the Hamiltonian
-        """
+        """Print structure of the Hamiltonian."""
         print(self.blocks)
 
     def set_mass(self, mass: float) -> None:
         """
-        Sets the Hamiltonian's mass parameter
+        Set the Hamiltonian's mass parameter.
 
         Parameters
         ----------
@@ -230,7 +233,7 @@ class hamiltonian():
 
     def add_H_0_block(self, state_label: str, H_0: npt.ArrayLike) -> None:
         """
-        Adds a new H_0 block to the hamiltonian
+        Add a new H_0 block to the hamiltonian.
 
         Parameters
         ----------
@@ -267,8 +270,8 @@ class hamiltonian():
 
 
     def add_mu_q_block(self, state_label: str, mu_q: npt.ArrayLike, muB: float = 1) -> None:
-        """
-        Adds a new :math:`\\mu_q` block to the hamiltonian
+        r"""
+        Add a new :math:`\\mu_q` block to the hamiltonian.
 
         Parameters
         ----------
@@ -307,8 +310,7 @@ class hamiltonian():
 
     def add_d_q_block(self, label1: str, label2: str, d_q: npt.ArrayLike, k: float = 1, gamma: float = 1) -> None:
         """
-        Adds a new :math:`d_q` block to the hamiltonian to connect two
-        manifolds together.
+        Add a new :math:`d_q` block connecting two manifolds.
 
         Parameters
         ----------
@@ -398,7 +400,7 @@ class hamiltonian():
 
     def make_full_matrices(self) -> tuple[jax.Array, jax.Array, dict[str, jax.Array], dict[str, jax.Array]]:
         """
-        Returns the full matrices that define the Hamiltonian.
+        Return the full matrices that define the Hamiltonian.
 
         Assembles the full Hamiltonian matrices from the stored block
         representation, and returns the Hamiltonian in the appropriate parts.
@@ -473,7 +475,7 @@ class hamiltonian():
 
     def return_full_H(self, Eq: np.ndarray | jax.Array | list | dict[str, np.ndarray | jax.Array | list], Bq: npt.ArrayLike) -> jax.Array:
         """
-        Assemble the block diagonal Hamiltonian into a single matrix
+        Assemble the block diagonal Hamiltonian into a single matrix.
 
         Parameters
         ----------
@@ -524,8 +526,8 @@ class hamiltonian():
 
 
     def diag_static_field(self, B: float) -> hamiltonian:
-        """
-        Block diagonalize at a specified magnetic field
+        r"""
+        Block diagonalize at a specified magnetic field.
 
         This function diagonalizes the Hamiltonian's diagonal blocks separately
         based on the value of the static magnetic field :math:`B`, and then
@@ -652,6 +654,7 @@ class hamiltonian():
 
 
     def diag_H_0(self, B0):
+        """Diagonalize H_0 at the given magnetic field (not yet implemented)."""
         pass
 
 
