@@ -910,7 +910,6 @@ class infinitePlaneWaveBeam(laserBeam):
 
     .. math::
         \\frac{1}{2}\\hat{\\boldsymbol{\\epsilon}} E_0e^{i\\mathbf{k}\\cdot\\mathbf{r}-i \\int dt\\Delta(t) + i\\phi(r, t)}
-
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`\\mathbf{k}(r,t)` is the k-vector,
     :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the detuning,
@@ -1016,7 +1015,6 @@ class gaussianBeam(laserBeam):
 
     .. math::
       \\frac{1}{2}\\hat{\\boldsymbol{\\epsilon}} E_0 e^{-\\mathbf{r}^2/w_b^2} e^{i\\mathbf{k}\\cdot\\mathbf{r}-i \\int dt\\Delta(t) + i\\phi(r, t)}
-
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`\\mathbf{k}(r,t)` is the k-vector,
     :math:`\\mathbf{r}` is the position, :math:`\\Delta(t)` is the detuning,
@@ -1127,7 +1125,6 @@ class clippedGaussianBeam(gaussianBeam):
 
     .. math::
       \\frac{1}{2}\\hat{\\boldsymbol{\\epsilon}} E_0 e^{-\\mathbf{r}^2/w_b^2} (|\\mathbf{r}|<r_s) e^{i\\mathbf{k}\\cdot\\mathbf{r}-i \\int dt\\Delta(t) + i\\phi(r, t)}
-
     where :math:`\\hat{\\boldsymbol{\\epsilon}}` is the polarization, :math:`E_0`
     is the electric field magnitude, :math:`r_s` is the radius of the stop,
     :math:`\\mathbf{k}(r,t)` is the k-vector,

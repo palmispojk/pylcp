@@ -498,9 +498,6 @@ class hamiltonian:
         self.d_q_star = {}
         for key in self.d_q_bare.keys():
             # self.d_q_star[key] = jnp.zeros(self.d_q_bare[key].shape, dtype=jnp.complex128)
-            # for kk in range(3):
-            #     self.d_q_star[key][kk] = np.conjugate(self.d_q_bare[key][kk].T)
-            #     self.d_q_star[key] = self.d_q_star[key].at[kk].set(jnp.conjugate(self.d_q_bare[key][kk].T))
             self.d_q_star[key] = jnp.array(
                 [jnp.conjugate(self.d_q_bare[key][kk].T) for kk in range(3)]
             )

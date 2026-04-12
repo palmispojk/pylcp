@@ -666,7 +666,8 @@ def Astate(
             )
         )
 
-    # Brown and Carrington 8.506.  This ignores eQq2, which couples states with \Delta\Omega = \pm 2, see Brown and Carrington 8.382
+    # Brown and Carrington 8.506.  Ignores eQq2 (couples Delta_Omega = +/-2,
+    # see Brown and Carrington 8.382).
     def quadrupole(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
         """Return electric quadrupole matrix element (Brown & Carrington 8.506)."""
         return (

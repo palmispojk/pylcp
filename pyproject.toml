@@ -56,7 +56,7 @@ docs = [
 ]
 
 [tool.ruff]
-line-length = 79
+line-length = 100
 
 [tool.ruff.lint]
 select = [
@@ -68,7 +68,13 @@ select = [
 ignore = [
     "D105",  # missing docstring in magic method
     "D107",  # missing docstring in __init__
+    "E402",  # module-level import not at top (needed for jax.config.update)
+    "E731",  # lambda assignment (common for short physics expressions)
+    "E741",  # ambiguous variable name (l, I, O are standard physics notation)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"pylcp/fields.py" = ["E501"]  # long LaTeX math in docstrings
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
