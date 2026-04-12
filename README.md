@@ -28,15 +28,23 @@ The stable release (v1.x, scipy backend) is available on PyPI:
 pip install pylcp
 ```
 
-To install the development version (v2.0, JAX backend), clone the repository:
+To install the development version (v2.0, JAX backend), clone the repository
+and install with [Poetry](https://python-poetry.org/):
 ```
 git clone https://github.com/palmispojk/pylcp/
 cd pylcp
-pip install -e .
+poetry install
 ```
 
 To also install development and documentation dependencies:
 ```
+poetry install --with dev,docs
+```
+
+Alternatively, you can install with pip (not recommended — Poetry is preferred
+for consistent dependency resolution):
+```
+pip install -e .
 pip install -e . --group dev --group docs
 ```
 
@@ -105,3 +113,8 @@ The v2.0 branch is under active development. Key changes from v1.x:
 - **Batched `evolve_motion`** for simulating multiple atoms in a single call
 - **GPU-accelerated `evolve_motion`** using `jax.vmap` for batched atom trajectories
 - **Improved convergence** with a monotonic decay guard for dark-state detection in `generate_force_profile`
+
+Contributing
+------------
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup, code style, and
+linting/formatting instructions.
