@@ -5,6 +5,7 @@ Provides classes for defining magnetic fields (constant, quadrupole,
 Ioffe-Pritchard) and laser beams (plane wave, Gaussian, clipped Gaussian)
 used in laser cooling and trapping simulations.
 """
+
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -41,7 +42,10 @@ def return_constant_val(R: npt.ArrayLike, t: float, val: Any) -> Any:
     """
     return val
 
-def return_constant_vector(R: npt.ArrayLike, t: float, vector: npt.ArrayLike) -> jax.Array:
+
+def return_constant_vector(
+    R: npt.ArrayLike, t: float, vector: npt.ArrayLike
+) -> jax.Array:
     """Return a constant vector as a JAX array, ignoring position and time.
 
     Used internally to promote constant vector parameters to callable ``(R, t)``
@@ -63,7 +67,10 @@ def return_constant_vector(R: npt.ArrayLike, t: float, vector: npt.ArrayLike) ->
     """
     return jnp.array(vector)
 
-def return_constant_val_t(t: float | jax.Array, val: float) -> float | jax.Array:
+
+def return_constant_val_t(
+    t: float | jax.Array, val: float
+) -> float | jax.Array:
     """Return a constant value, broadcasting over a time array when needed.
 
     Parameters
@@ -81,14 +88,15 @@ def return_constant_val_t(t: float | jax.Array, val: float) -> float | jax.Array
         filled with ``val`` when ``t`` is an array.
     """
     if isinstance(t, jnp.ndarray):
-        return val*jnp.ones(t.shape)
+        return val * jnp.ones(t.shape)
     else:
         return val
 
+
 def promote_to_lambda(
     val: Any,
-    var_name: str = '',
-    kind: str = 'Rt',
+    var_name: str = "",
+    kind: str = "Rt",
 ) -> tuple[Callable[..., Any], str]:
     """
     Promotes a constant or callable to a lambda function with proper arguments.
@@ -114,41 +122,45 @@ def promote_to_lambda(
         sig : string
             Either `(R,t)` or `(t)`
     """
-    if kind == 'Rt':
+    if kind == "Rt":
         if not callable(val):
             if isinstance(val, list) or isinstance(val, jnp.ndarray):
-                func = lambda R=jnp.array([0., 0., 0.]), t=0.: return_constant_vector(R, t, val)
+                func = lambda R=jnp.array([0.0, 0.0, 0.0]), t=0.0: (
+                    return_constant_vector(R, t, val)
+                )
             else:
-                func = lambda R=jnp.array([0., 0., 0.]), t=0.: return_constant_val(R, t, val)
-            sig = '()'
+                func = lambda R=jnp.array([0.0, 0.0, 0.0]), t=0.0: (
+                    return_constant_val(R, t, val)
+                )
+            sig = "()"
         else:
             sig = str(signature(val))
-            if ('(R)' in sig or '(r)' in sig or '(x)' in sig):
-                func = lambda R=jnp.array([0., 0., 0.]), t=0.: val(R)
-                sig = '(R)'
-            elif ('(R, t)' in sig or '(r, t)' in sig or '(x, t)' in sig):
-                func = lambda R=jnp.array([0., 0., 0.]), t=0.: val(R, t)
-                sig = '(R, t)'
-            elif '(t)' in sig:
-                func = lambda R=jnp.array([0., 0., 0.]), t=0.: val(t)
-                sig = '(R, t)'
+            if "(R)" in sig or "(r)" in sig or "(x)" in sig:
+                func = lambda R=jnp.array([0.0, 0.0, 0.0]), t=0.0: val(R)
+                sig = "(R)"
+            elif "(R, t)" in sig or "(r, t)" in sig or "(x, t)" in sig:
+                func = lambda R=jnp.array([0.0, 0.0, 0.0]), t=0.0: val(R, t)
+                sig = "(R, t)"
+            elif "(t)" in sig:
+                func = lambda R=jnp.array([0.0, 0.0, 0.0]), t=0.0: val(t)
+                sig = "(R, t)"
             else:
                 raise TypeError(
-                    f'Signature [{sig}] of function {var_name} not understood.'
+                    f"Signature [{sig}] of function {var_name} not understood."
                 )
 
         return func, sig
-    elif kind == 't':
+    elif kind == "t":
         if not callable(val):
-            func = lambda t=0.: return_constant_val_t(t, val)
-            sig = '()'
+            func = lambda t=0.0: return_constant_val_t(t, val)
+            sig = "()"
         else:
             sig = str(signature(val))
-            if '(t)' in sig:
-                func = lambda t=0.: val(t)
+            if "(t)" in sig:
+                func = lambda t=0.0: val(t)
             else:
                 raise TypeError(
-                    f'Signature [{sig}] of function {var_name} not understood.'
+                    f"Signature [{sig}] of function {var_name} not understood."
                 )
 
         return func, sig
@@ -180,15 +192,19 @@ class magField(object):
         small epsilon used for computing derivatives
     """
 
-    def __init__(self, field: npt.ArrayLike | Callable[..., Any], eps: float = 1e-5) -> None:
+    def __init__(
+        self, field: npt.ArrayLike | Callable[..., Any], eps: float = 1e-5
+    ) -> None:
         self.eps = eps
 
         # Promote it to a lambda func:
-        self.Field, self.FieldSig = promote_to_lambda(field, var_name='for field')
+        self.Field, self.FieldSig = promote_to_lambda(
+            field, var_name="for field"
+        )
 
         self.gradField = jax.jacfwd(self.Field, argnums=0)
 
-    def FieldMag(self, R=jnp.array([0., 0., 0.]), t=0):
+    def FieldMag(self, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Magnetic field magnitude at R and t.
 
@@ -207,7 +223,7 @@ class magField(object):
         """
         return jnp.linalg.norm(self.Field(R, t))
 
-    def gradFieldMag(self, R=jnp.array([0., 0., 0.]), t=0):
+    def gradFieldMag(self, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         r"""
         Gradient of the magnetic field magnitude at R and t.
 
@@ -252,16 +268,22 @@ class iPMagneticField(magField):
     Maxwell's equations at second order.
     """
 
-    def __init__(self, B0: float, B1: float, B2: float, eps: float = 1e-5) -> None:
+    def __init__(
+        self, B0: float, B1: float, B2: float, eps: float = 1e-5
+    ) -> None:
         self.B0 = B0
         self.B1 = B1
         self.B2 = B2
-        
-        super().__init__(lambda R, t: jnp.array([
-            B1*R[0]-B2*R[0]*R[2]/2,
-            -R[1]*B1-B2*R[1]*R[2]/2,
-            B0+B2/2*(R[2]**2 - (R[0]**2+R[1]**2)/2)
-        ]))
+
+        super().__init__(
+            lambda R, t: jnp.array(
+                [
+                    B1 * R[0] - B2 * R[0] * R[2] / 2,
+                    -R[1] * B1 - B2 * R[1] * R[2] / 2,
+                    B0 + B2 / 2 * (R[2] ** 2 - (R[0] ** 2 + R[1] ** 2) / 2),
+                ]
+            )
+        )
 
 
 class constantMagneticField(magField):
@@ -302,11 +324,10 @@ class quadrupoleMagneticField(magField):
     def __init__(self, alpha: float, eps: float = 1e-5) -> None:
         self.alpha = alpha
 
-        super().__init__(lambda R, t: alpha*jnp.array([
-            -0.5*R[0], 
-            -0.5*R[1], 
-            R[2]
-            ]))
+        super().__init__(
+            lambda R, t: alpha * jnp.array([-0.5 * R[0], -0.5 * R[1], R[2]])
+        )
+
 
 class laserBeam(object):
     r"""
@@ -371,23 +392,41 @@ class laserBeam(object):
         self,
         kvec: npt.ArrayLike | None = None,
         s: float | Callable[..., Any] | None = None,
-        pol: int | float | npt.ArrayLike | Callable[..., jax.Array] | None = None,
+        pol: int
+        | float
+        | npt.ArrayLike
+        | Callable[..., jax.Array]
+        | None = None,
         delta: float | Callable[[float], float] | None = None,
-        phase: float | Callable[[float], float] = 0.,
-        pol_coord: str = 'spherical',
+        phase: float | Callable[[float], float] = 0.0,
+        pol_coord: str = "spherical",
         eps: float = 1e-5,
     ) -> None:
-        self._kvec = jnp.array(kvec) if kvec is not None else jnp.array([0., 0., 1.])
-        self._s = s if callable(s) else (float(jnp.real(s)) if s is not None else 1.0)
-        self._delta = delta if callable(delta) else (float(jnp.real(delta)) if delta is not None else 0.0)
-        self._phase = phase if callable(phase) else (float(jnp.real(phase)) if phase is not None else 0.0)
+        self._kvec = (
+            jnp.array(kvec) if kvec is not None else jnp.array([0.0, 0.0, 1.0])
+        )
+        self._s = (
+            s
+            if callable(s)
+            else (float(jnp.real(s)) if s is not None else 1.0)
+        )
+        self._delta = (
+            delta
+            if callable(delta)
+            else (float(jnp.real(delta)) if delta is not None else 0.0)
+        )
+        self._phase = (
+            phase
+            if callable(phase)
+            else (float(jnp.real(phase)) if phase is not None else 0.0)
+        )
         self.eps = eps
 
         if pol is not None:
             parsed_pol = self.__parse_constant_polarization(pol, pol_coord)
             self._pol = jnp.array(parsed_pol, dtype=jnp.complex64)
         else:
-            self._pol = jnp.array([0., 0., 1.], dtype=jnp.complex64)
+            self._pol = jnp.array([0.0, 0.0, 1.0], dtype=jnp.complex64)
 
     def __parse_constant_polarization(self, pol, pol_coord):
         if isinstance(pol, (float, int)):
@@ -398,15 +437,17 @@ class laserBeam(object):
             # relatively simple as there is only one angle.
 
             # Set the polarization in this direction:
-            if jnp.sign(pol)<0:
-                base_pol = jnp.array([1., 0., 0.], dtype=jnp.complex64)
+            if jnp.sign(pol) < 0:
+                base_pol = jnp.array([1.0, 0.0, 0.0], dtype=jnp.complex64)
             else:
-                base_pol = jnp.array([0., 0., 1.], dtype=jnp.complex64)
+                base_pol = jnp.array([0.0, 0.0, 1.0], dtype=jnp.complex64)
 
             k_norm = jnp.linalg.norm(self._kvec)
             # jnp.where with 3 args always returns Array; cast avoids stub ambiguity
-            k_dir = self._kvec / cast(jax.Array, jnp.where(k_norm == 0, 1.0, k_norm))
-            
+            k_dir = self._kvec / cast(
+                jax.Array, jnp.where(k_norm == 0, 1.0, k_norm)
+            )
+
             parsed_pol = self.project_pol(k_dir, pol=base_pol, invert=True)
 
         elif isinstance(pol, (jnp.ndarray, np.ndarray, list)):
@@ -416,7 +457,7 @@ class laserBeam(object):
 
             # The user has specified a single polarization vector in
             # cartesian coordinates:
-            if pol_coord=='cartesian':
+            if pol_coord == "cartesian":
                 # Check for transverseness:
                 if jnp.abs(jnp.dot(self.kvec(), pol_arr)) > 1e-9:
                     raise ValueError("I'm sorry; light is a transverse wave")
@@ -425,7 +466,7 @@ class laserBeam(object):
 
             # The user has specified a single polarization vector in
             # spherical basis:
-            elif pol_coord=='spherical':
+            elif pol_coord == "spherical":
                 pol_cart = spherical2cart(pol_arr)
 
                 # Check for transverseness:
@@ -434,16 +475,14 @@ class laserBeam(object):
                 parsed_pol = pol_arr
             else:
                 raise ValueError(f"Unknown pol_coord: {pol_coord}")
-            
+
             parsed_pol = parsed_pol / jnp.linalg.norm(parsed_pol)
         else:
             raise ValueError("pol must be +1, -1, or a numpy array")
-        
 
         return jnp.array(parsed_pol, dtype=jnp.complex64)
 
-
-    def kvec(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def kvec(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the k-vector of the laser beam.
 
@@ -462,7 +501,7 @@ class laserBeam(object):
         """
         return self._kvec
 
-    def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def intensity(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the intensity of the laser beam at position R and t.
 
@@ -483,7 +522,7 @@ class laserBeam(object):
             return self._s(R, t)
         return self._s
 
-    def pol(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def pol(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the polarization of the laser beam at position R and t.
 
@@ -504,7 +543,7 @@ class laserBeam(object):
         """
         return self._pol
 
-    def delta(self, t=0.):
+    def delta(self, t=0.0):
         """
         Return the detuning of the laser beam at time t.
 
@@ -522,7 +561,7 @@ class laserBeam(object):
             return self._delta(t)
         return self._delta
 
-    def phase(self, t=0.):
+    def phase(self, t=0.0):
         """Return the static phase offset of the laser beam at time t.
 
         Parameters
@@ -539,7 +578,7 @@ class laserBeam(object):
             return self._phase(t)
         return self._phase
 
-    def delta_phase(self, t=0.):
+    def delta_phase(self, t=0.0):
         """Return the cumulative phase accumulated by detuning up to time t.
 
         Computes ``delta * t``.  Raises :exc:`NotImplementedError` if ``delta``
@@ -574,8 +613,17 @@ class laserBeam(object):
         return self._delta * t
 
     # TODO: add testing of kvec/pol orthogonality.
-    def project_pol(self, quant_axis, R=jnp.array([0., 0., 0.]), t=0.,
-                    treat_nans=False, calculate_norm=False, invert=False, pol=None, **kwargs):
+    def project_pol(
+        self,
+        quant_axis,
+        R=jnp.array([0.0, 0.0, 0.0]),
+        t=0.0,
+        treat_nans=False,
+        calculate_norm=False,
+        invert=False,
+        pol=None,
+        **kwargs,
+    ):
         """
         Project the polarization onto a quantization axis.
 
@@ -601,54 +649,54 @@ class laserBeam(object):
             The polarization projected onto the quantization axis.
         """
         p_vec = jnp.array(pol) if pol is not None else self.pol(R, t)
-        
 
         if calculate_norm:
             quant_axis_norm = jnp.linalg.norm(quant_axis, axis=0)
-            
+
             safe_norm = jnp.where(quant_axis_norm == 0, 1.0, quant_axis_norm)
             quant_axis = quant_axis / safe_norm
-            
+
             fallback = jnp.zeros_like(quant_axis).at[-1].set(1.0)
             quant_axis = jnp.where(quant_axis_norm == 0, fallback, quant_axis)
 
         elif treat_nans:
             nan_mask = jnp.isnan(quant_axis[-1])
-            
+
             fallback = jnp.zeros_like(quant_axis).at[-1].set(1.0)
             quant_axis = jnp.where(nan_mask, fallback, quant_axis)
-        
+
         cosbeta = quant_axis[2]
         sinbeta = jnp.sqrt(jnp.clip(1.0 - cosbeta**2, 0.0, 1.0))
         gamma = jnp.arctan2(quant_axis[1], quant_axis[0])
         alpha = 0.0
-        
-        D = jnp.array([
+
+        D = jnp.array(
             [
-                (1+cosbeta)/2*jnp.exp(-1j*alpha + 1j*gamma),
-                -sinbeta/jnp.sqrt(2)*jnp.exp(-1j*alpha),
-                (1-cosbeta)/2*jnp.exp(-1j*alpha - 1j*gamma)
+                [
+                    (1 + cosbeta) / 2 * jnp.exp(-1j * alpha + 1j * gamma),
+                    -sinbeta / jnp.sqrt(2) * jnp.exp(-1j * alpha),
+                    (1 - cosbeta) / 2 * jnp.exp(-1j * alpha - 1j * gamma),
+                ],
+                [
+                    sinbeta / jnp.sqrt(2) * jnp.exp(1j * gamma),
+                    cosbeta,
+                    -sinbeta / jnp.sqrt(2) * jnp.exp(-1j * gamma),
+                ],
+                [
+                    (1 - cosbeta) / 2 * jnp.exp(1j * alpha + 1j * gamma),
+                    sinbeta / jnp.sqrt(2),
+                    (1 + cosbeta) / 2 * jnp.exp(1j * alpha - 1j * gamma),
+                ],
             ],
-            [
-                sinbeta/jnp.sqrt(2)*jnp.exp(1j*gamma),
-                cosbeta,
-                -sinbeta/jnp.sqrt(2)*jnp.exp(-1j*gamma)
-            ],
-            [
-                (1-cosbeta)/2*jnp.exp(1j*alpha+1j*gamma),
-                sinbeta/jnp.sqrt(2), 
-                (1+cosbeta)/2*jnp.exp(1j*alpha-1j*gamma)
-            ]
-        ], dtype=jnp.complex64)
-        
+            dtype=jnp.complex64,
+        )
+
         if invert:
             D = jnp.conjugate(jnp.swapaxes(D, 0, 1))
-        
-        return jnp.einsum('ij...,j...->i...', D, p_vec)
-        
 
+        return jnp.einsum("ij...,j...->i...", D, p_vec)
 
-    def cartesian_pol(self, R=jnp.array([0., 0., 0.]), t=0):
+    def cartesian_pol(self, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Return the polarization in Cartesian coordinates.
 
@@ -668,7 +716,7 @@ class laserBeam(object):
         pol = self.pol(R, t)
         return spherical2cart(pol)
 
-    def jones_vector(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
+    def jones_vector(self, xp, yp, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Return the Jones vector at position.
 
@@ -693,24 +741,24 @@ class laserBeam(object):
         """
         # First, run some basic checks.
         if jnp.abs(jnp.dot(xp, yp)) > 1e-10:
-            raise ValueError('xp and yp must be orthogonal.')
+            raise ValueError("xp and yp must be orthogonal.")
         if jnp.abs(jnp.dot(xp, self.kvec(R, t))) > 1e-10:
-            raise ValueError('xp and k must be orthogonal.')
+            raise ValueError("xp and k must be orthogonal.")
         if jnp.abs(jnp.dot(yp, self.kvec(R, t))) > 1e-10:
-            raise ValueError('yp and k must be orthogonal.')
+            raise ValueError("yp and k must be orthogonal.")
         if jnp.sum(jnp.abs(jnp.cross(xp, yp) - self.kvec(R, t))) > 1e-10:
-            raise ValueError('xp, yp, and k must form a right-handed' +
-                             'coordinate system.')
+            raise ValueError(
+                "xp, yp, and k must form a right-handed" + "coordinate system."
+            )
 
         pol_cart = self.cartesian_pol(R, t)
 
         if jnp.abs(jnp.dot(pol_cart, self.kvec(R, t))) > 1e-9:
-            raise ValueError('Something is terribly, terribly wrong.')
+            raise ValueError("Something is terribly, terribly wrong.")
 
         return jnp.array([jnp.dot(pol_cart, xp), jnp.dot(pol_cart, yp)])
 
-
-    def stokes_parameters(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
+    def stokes_parameters(self, xp, yp, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Return the Stokes Parameters of the laser beam at R and t.
 
@@ -735,14 +783,13 @@ class laserBeam(object):
         """
         jones_vector = self.jones_vector(xp, yp, R, t)
 
-        Q = jnp.abs(jones_vector[0])**2 - jnp.abs(jones_vector[1])**2
-        U = 2*jnp.real(jones_vector[0]*jnp.conj(jones_vector[1]))
-        V = -2*jnp.imag(jones_vector[0]*jnp.conj(jones_vector[1]))
+        Q = jnp.abs(jones_vector[0]) ** 2 - jnp.abs(jones_vector[1]) ** 2
+        U = 2 * jnp.real(jones_vector[0] * jnp.conj(jones_vector[1]))
+        V = -2 * jnp.imag(jones_vector[0] * jnp.conj(jones_vector[1]))
 
         return jnp.array([Q, U, V])
 
-
-    def polarization_ellipse(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
+    def polarization_ellipse(self, xp, yp, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         r"""
         Return the polarization ellipse parameters of the laser beam at R and t.
 
@@ -769,16 +816,25 @@ class laserBeam(object):
         """
         Q, U, V = self.stokes_parameters(xp, yp, R, t)
 
-        psi = (jnp.arctan2(U, Q) % (2*jnp.pi)) / 2
-        if jnp.sqrt(Q**2+U**2)>1e-10:
-            chi = 0.5*jnp.arctan(V/jnp.sqrt(Q**2+U**2))
+        psi = (jnp.arctan2(U, Q) % (2 * jnp.pi)) / 2
+        if jnp.sqrt(Q**2 + U**2) > 1e-10:
+            chi = 0.5 * jnp.arctan(V / jnp.sqrt(Q**2 + U**2))
         else:
-            chi = jnp.pi/4*jnp.sign(V)
+            chi = jnp.pi / 4 * jnp.sign(V)
 
         return (psi, chi)
 
-
-    def electric_field(self, R=jnp.array([0., 0., 0.,]), t=0.):
+    def electric_field(
+        self,
+        R=jnp.array(
+            [
+                0.0,
+                0.0,
+                0.0,
+            ]
+        ),
+        t=0.0,
+    ):
         """
         Return the electric field at position R and t.
 
@@ -801,13 +857,23 @@ class laserBeam(object):
         delta_phase = self.delta_phase(t)
         phase = self.phase(t)
 
-        amp = jnp.sqrt(2*s)
-        
-        phi = -1j * (jnp.dot(kvec, R) - delta_phase + phase) # phase term
-        
+        amp = jnp.sqrt(2 * s)
+
+        phi = -1j * (jnp.dot(kvec, R) - delta_phase + phase)  # phase term
+
         return pol * amp * jnp.exp(phi)
-    
-    def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0.):
+
+    def electric_field_gradient(
+        self,
+        R=jnp.array(
+            [
+                0.0,
+                0.0,
+                0.0,
+            ]
+        ),
+        t=0.0,
+    ):
         """Return the Jacobian of the electric field with respect to position.
 
         Computes the gradient numerically via forward-mode automatic
@@ -827,6 +893,7 @@ class laserBeam(object):
         grad_E : jnp.Array, shape (3, 3)
             Jacobian of the electric field in the spherical basis.
         """
+
         def e_field_R(R_val):
             return self.electric_field(R_val, t)
 
@@ -876,27 +943,46 @@ class infinitePlaneWaveBeam(laserBeam):
     base laserBeam class.
     """
 
-    def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], **kwargs: Any) -> None:
+    def __init__(
+        self,
+        kvec: npt.ArrayLike,
+        pol: int | float | npt.ArrayLike,
+        s: float,
+        delta: float | Callable[[float], float],
+        **kwargs: Any,
+    ) -> None:
         if callable(kvec):
-            raise TypeError('kvec cannot be a function for an infinite plane wave.')
+            raise TypeError(
+                "kvec cannot be a function for an infinite plane wave."
+            )
 
         if callable(s):
-            raise TypeError('s cannot be a function for an infinite plane wave.')
+            raise TypeError(
+                "s cannot be a function for an infinite plane wave."
+            )
 
         if callable(pol):
-            raise TypeError('Polarization cannot be a function for an infinite plane wave.')
+            raise TypeError(
+                "Polarization cannot be a function for an infinite plane wave."
+            )
 
         self.con_kvec = jnp.array(kvec)
 
         super().__init__(
-            kvec=self.con_kvec,
-            pol=pol,
-            s=s,
-            delta=delta,
-            **kwargs
+            kvec=self.con_kvec, pol=pol, s=s, delta=delta, **kwargs
         )
 
-    def electric_field_gradient(self, R=jnp.array([0., 0., 0.,]), t=0.):
+    def electric_field_gradient(
+        self,
+        R=jnp.array(
+            [
+                0.0,
+                0.0,
+                0.0,
+            ]
+        ),
+        t=0.0,
+    ):
         """Return the analytic Jacobian of the electric field for a plane wave.
 
         For an infinite plane wave the gradient is exact:
@@ -961,12 +1047,22 @@ class gaussianBeam(laserBeam):
         Additional keyword arguments to pass to the laserBeam superclass.
     """
 
-    def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], wb: float, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        kvec: npt.ArrayLike,
+        pol: int | float | npt.ArrayLike,
+        s: float,
+        delta: float | Callable[[float], float],
+        wb: float,
+        **kwargs: Any,
+    ) -> None:
         if callable(kvec):
-            raise TypeError('kvec cannot be a function for a Gaussian beam.')
+            raise TypeError("kvec cannot be a function for a Gaussian beam.")
 
         if callable(pol):
-            raise TypeError('Polarization cannot be a function for a Gaussian beam.')
+            raise TypeError(
+                "Polarization cannot be a function for a Gaussian beam."
+            )
 
         # # Use super class to define kvec(R, t), pol(R, t), and delta(t)
         # super().__init__(kvec=kvec, pol=pol, delta=delta, **kwargs)
@@ -980,25 +1076,23 @@ class gaussianBeam(laserBeam):
         # self.s_max = s # central saturation parameter
         # self.wb = wb # 1/e^2 radius
         # self.define_rotation_matrix()
-        
+
         self.con_kvec = jnp.array(kvec)
-        self.con_khat = self.con_kvec/jnp.linalg.norm(self.con_kvec)
+        self.con_khat = self.con_kvec / jnp.linalg.norm(self.con_kvec)
         th = jnp.arccos(self.con_khat[2])
         phi = jnp.arctan2(self.con_khat[1], self.con_khat[0])
-        
-        self.rmat = jnp.array(Rotation.from_euler('ZY', [phi, th]).inv().as_matrix())
+
+        self.rmat = jnp.array(
+            Rotation.from_euler("ZY", [phi, th]).inv().as_matrix()
+        )
 
         self.s_max = s
         self.wb = wb
         super().__init__(
-            kvec=self.con_kvec,
-            pol=pol,
-            delta=delta,
-            s=s,
-            **kwargs
+            kvec=self.con_kvec, pol=pol, delta=delta, s=s, **kwargs
         )
 
-    def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def intensity(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """Return the Gaussian intensity profile at position R and time t.
 
         Evaluates ``s_max * exp(-2 * rho^2 / wb^2)`` where ``rho`` is the
@@ -1019,9 +1113,9 @@ class gaussianBeam(laserBeam):
         # Rotate up to the z-axis where we can apply formulas:
         Rp = jnp.matmul(self.rmat, R)
 
-        rho_sq= Rp[0]**2 + Rp[1]**2
+        rho_sq = Rp[0] ** 2 + Rp[1] ** 2
 
-        return self.s_max*jnp.exp(-2*rho_sq/self.wb**2)
+        return self.s_max * jnp.exp(-2 * rho_sq / self.wb**2)
 
 
 class clippedGaussianBeam(gaussianBeam):
@@ -1067,12 +1161,21 @@ class clippedGaussianBeam(gaussianBeam):
         Additional keyword arguments to pass to the laserBeam superclass.
     """
 
-    def __init__(self, kvec: npt.ArrayLike, pol: int | float | npt.ArrayLike, s: float, delta: float | Callable[[float], float], wb: float, rs: float, **kwargs: Any) -> None:
+    def __init__(
+        self,
+        kvec: npt.ArrayLike,
+        pol: int | float | npt.ArrayLike,
+        s: float,
+        delta: float | Callable[[float], float],
+        wb: float,
+        rs: float,
+        **kwargs: Any,
+    ) -> None:
         super().__init__(kvec=kvec, pol=pol, s=s, delta=delta, wb=wb, **kwargs)
 
-        self.rs = rs # Save the radius of the stop.
+        self.rs = rs  # Save the radius of the stop.
 
-    def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def intensity(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """Return the clipped Gaussian intensity profile at position R and time t.
 
         Evaluates the Gaussian profile ``s_max * exp(-2 * rho^2 / wb^2)`` and
@@ -1092,7 +1195,7 @@ class clippedGaussianBeam(gaussianBeam):
             transverse distance from the beam axis exceeds ``rs``.
         """
         Rp = jnp.matmul(self.rmat, R)
-        rho_sq = Rp[0]**2 + Rp[1]**2
+        rho_sq = Rp[0] ** 2 + Rp[1] ** 2
 
         # standard gaussian
         s_gaussian = self.s_max * jnp.exp(-2 * rho_sq / self.wb**2)
@@ -1115,13 +1218,17 @@ class laserBeams(object):
         `beam_type=laserBeam`.
     """
 
-    def __init__(self, laserbeamparams: list[laserBeam | dict[str, Any]] | None = None, beam_type: type[laserBeam] = laserBeam) -> None:
+    def __init__(
+        self,
+        laserbeamparams: list[laserBeam | dict[str, Any]] | None = None,
+        beam_type: type[laserBeam] = laserBeam,
+    ) -> None:
         self.beam_vector = []
-        
+
         if laserbeamparams is not None:
             if not isinstance(laserbeamparams, list):
-                raise ValueError('laserbeamparams must be a list.')
-            
+                raise ValueError("laserbeamparams must be a list.")
+
             for laserbeamparam in laserbeamparams:
                 if isinstance(laserbeamparam, dict):
                     self.beam_vector.append(beam_type(**laserbeamparam))
@@ -1129,9 +1236,11 @@ class laserBeams(object):
                 elif isinstance(laserbeamparam, laserBeam):
                     self.beam_vector.append(laserbeamparam)
                 else:
-                    raise TypeError('Each element of laserbeamparams must either ' +
-                                    'be a list of dictionaries or list of ' +
-                                    'laserBeams')
+                    raise TypeError(
+                        "Each element of laserbeamparams must either "
+                        + "be a list of dictionaries or list of "
+                        + "laserBeams"
+                    )
 
         self.num_of_beams = len(self.beam_vector)
 
@@ -1159,10 +1268,12 @@ class laserBeams(object):
             self.beam_vector.append(laserBeam(**new_laser))
             self.num_of_beams = len(self.beam_vector)
         else:
-            raise TypeError('new_laser should by type laserBeam or a dictionary' +
-                            'of arguments to initialize the laserBeam class.')
+            raise TypeError(
+                "new_laser should by type laserBeam or a dictionary"
+                + "of arguments to initialize the laserBeam class."
+            )
 
-    def pol(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def pol(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the polarization of each of the laser beams at position R and t.
 
@@ -1183,10 +1294,10 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3), dtype=jnp.complex64)
-        
+
         return jnp.stack([beam.pol(R, t) for beam in self.beam_vector])
 
-    def intensity(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def intensity(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the intensity of each of the laser beams at position R and t.
 
@@ -1207,7 +1318,7 @@ class laserBeams(object):
             return jnp.array([], dtype=jnp.float32)
         return jnp.stack([beam.intensity(R, t) for beam in self.beam_vector])
 
-    def kvec(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def kvec(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the k-vectors of each of the laser beams.
 
@@ -1228,7 +1339,7 @@ class laserBeams(object):
             return jnp.zeros((0, 3), dtype=jnp.float32)
         return jnp.stack([beam.kvec(R, t) for beam in self.beam_vector])
 
-    def delta(self, t=0.):
+    def delta(self, t=0.0):
         """
         Return the detuning of each of the laser beams at time t.
 
@@ -1246,7 +1357,7 @@ class laserBeams(object):
             return jnp.array([], dtype=jnp.float32)
         return jnp.stack([beam.delta(t) for beam in self.beam_vector])
 
-    def electric_field(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def electric_field(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the electric field of each of the laser beams.
 
@@ -1266,10 +1377,11 @@ class laserBeams(object):
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3), dtype=jnp.complex64)
 
-        return jnp.stack([beam.electric_field(R, t)
-                          for beam in self.beam_vector])
+        return jnp.stack(
+            [beam.electric_field(R, t) for beam in self.beam_vector]
+        )
 
-    def electric_field_gradient(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def electric_field_gradient(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the gradient of the electric field of each of the laser beams.
 
@@ -1288,11 +1400,12 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3, 3), dtype=jnp.complex64)
-        
-        return jnp.stack([beam.electric_field_gradient(R, t)
-                         for beam in self.beam_vector])
 
-    def total_electric_field(self, R=jnp.array([0., 0., 0.]), t=0.):
+        return jnp.stack(
+            [beam.electric_field_gradient(R, t) for beam in self.beam_vector]
+        )
+
+    def total_electric_field(self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0):
         """
         Return the total electric field of the laser beams.
 
@@ -1312,11 +1425,12 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros(3, dtype=jnp.complex64)
-        
-        
+
         return jnp.sum(self.electric_field(R, t), axis=0)
 
-    def total_electric_field_gradient(self, R=jnp.array([0., 0., 0.]), t=0.):
+    def total_electric_field_gradient(
+        self, R=jnp.array([0.0, 0.0, 0.0]), t=0.0
+    ):
         """
         Return the total gradient of the electric field of the laser beams.
 
@@ -1336,8 +1450,9 @@ class laserBeams(object):
         """
         return jnp.sum(self.electric_field_gradient(R, t), axis=0)
 
-
-    def project_pol(self, quant_axis, R=jnp.array([0., 0., 0.]), t=0., **kwargs):
+    def project_pol(
+        self, quant_axis, R=jnp.array([0.0, 0.0, 0.0]), t=0.0, **kwargs
+    ):
         """
         Project the polarization onto a quantization axis.
 
@@ -1366,39 +1481,39 @@ class laserBeams(object):
         # apply norm so it doesnt rely on it being normalised before
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3), dtype=jnp.complex64)
-        
+
         norm = jnp.linalg.norm(quant_axis)
         q = quant_axis / jnp.where(norm == 0, 1.0, norm)
         cosbeta = q[2]
         sinbeta = jnp.sqrt(jnp.clip(1 - cosbeta**2, 0, 1))
         gamma = jnp.arctan2(q[1], q[0])
         alpha = 0.0
-        
-        D = jnp.array([
-            [
-                (1+cosbeta)/2*jnp.exp(-1j*alpha + 1j*gamma),
-                -sinbeta/jnp.sqrt(2)*jnp.exp(-1j*alpha),
-                (1-cosbeta)/2*jnp.exp(-1j*alpha - 1j*gamma)
-            ],
-            [
-                sinbeta/jnp.sqrt(2)*jnp.exp(1j*gamma),
-                cosbeta,
-                -sinbeta/jnp.sqrt(2)*jnp.exp(-1j*gamma)
-            ],
-            [
-                (1-cosbeta)/2*jnp.exp(1j*alpha+1j*gamma),
-                sinbeta/jnp.sqrt(2),
-                (1+cosbeta)/2*jnp.exp(1j*alpha-1j*gamma)
-            ]
-        ])
-        
-        pols = self.pol(R, t)
-        
-        return jnp.einsum('ij, bj -> bi', D, pols)
-        
-        
 
-    def cartesian_pol(self, R=jnp.array([0., 0., 0.]), t=0):
+        D = jnp.array(
+            [
+                [
+                    (1 + cosbeta) / 2 * jnp.exp(-1j * alpha + 1j * gamma),
+                    -sinbeta / jnp.sqrt(2) * jnp.exp(-1j * alpha),
+                    (1 - cosbeta) / 2 * jnp.exp(-1j * alpha - 1j * gamma),
+                ],
+                [
+                    sinbeta / jnp.sqrt(2) * jnp.exp(1j * gamma),
+                    cosbeta,
+                    -sinbeta / jnp.sqrt(2) * jnp.exp(-1j * gamma),
+                ],
+                [
+                    (1 - cosbeta) / 2 * jnp.exp(1j * alpha + 1j * gamma),
+                    sinbeta / jnp.sqrt(2),
+                    (1 + cosbeta) / 2 * jnp.exp(1j * alpha - 1j * gamma),
+                ],
+            ]
+        )
+
+        pols = self.pol(R, t)
+
+        return jnp.einsum("ij, bj -> bi", D, pols)
+
+    def cartesian_pol(self, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Return the polarization of all laser beams in Cartesian coordinates.
 
@@ -1417,10 +1532,12 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3), dtype=jnp.complex64)
-        
-        return jnp.stack([beam.cartesian_pol(R, t) for beam in self.beam_vector])
 
-    def jones_vector(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
+        return jnp.stack(
+            [beam.cartesian_pol(R, t) for beam in self.beam_vector]
+        )
+
+    def jones_vector(self, xp, yp, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Jones vector at position R and time t.
 
@@ -1445,11 +1562,12 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros((0, 2), dtype=jnp.complex64)
-        
 
-        return jnp.stack([beam.jones_vector(xp, yp, R, t) for beam in self.beam_vector])
+        return jnp.stack(
+            [beam.jones_vector(xp, yp, R, t) for beam in self.beam_vector]
+        )
 
-    def stokes_parameters(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
+    def stokes_parameters(self, xp, yp, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         """
         Return the Stokes Parameters of the laser beam at R and t.
 
@@ -1474,10 +1592,12 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3), dtype=jnp.complex64)
-        
-        return jnp.stack([beam.stokes_parameters(xp, yp, R, t) for beam in self.beam_vector])
 
-    def polarization_ellipse(self, xp, yp, R=jnp.array([0., 0., 0.]), t=0):
+        return jnp.stack(
+            [beam.stokes_parameters(xp, yp, R, t) for beam in self.beam_vector]
+        )
+
+    def polarization_ellipse(self, xp, yp, R=jnp.array([0.0, 0.0, 0.0]), t=0):
         r"""
         Return the polarization ellipse parameters of the laser beam at R and t.
 
@@ -1503,7 +1623,12 @@ class laserBeams(object):
         """
         if self.num_of_beams == 0:
             return jnp.zeros((0, 3), dtype=jnp.complex64)
-        return jnp.stack([beam.polarization_ellipse(xp, yp, R, t) for beam in self.beam_vector])
+        return jnp.stack(
+            [
+                beam.polarization_ellipse(xp, yp, R, t)
+                for beam in self.beam_vector
+            ]
+        )
 
 
 class conventional3DMOTBeams(laserBeams):
@@ -1531,84 +1656,143 @@ class conventional3DMOTBeams(laserBeams):
         other keyword arguments to pass to beam_type
     """
 
-    def __init__(self, k=1., pol=+1, rotation_angles=[0., 0., 0.],
-                 rotation_spec='ZYZ', beam_type=laserBeam, **kwargs):
+    def __init__(
+        self,
+        k=1.0,
+        pol=+1,
+        rotation_angles=[0.0, 0.0, 0.0],
+        rotation_spec="ZYZ",
+        beam_type=laserBeam,
+        **kwargs,
+    ):
         super().__init__()
 
-        rot_mat = jnp.array(Rotation.from_euler(rotation_spec, rotation_angles).as_matrix())
+        rot_mat = jnp.array(
+            Rotation.from_euler(rotation_spec, rotation_angles).as_matrix()
+        )
 
-        kvecs = [jnp.array([ 1.,  0.,  0.]), jnp.array([-1.,  0.,  0.]),
-                 jnp.array([ 0.,  1.,  0.]), jnp.array([ 0., -1.,  0.]),
-                 jnp.array([ 0.,  0.,  1.]), jnp.array([ 0.,  0., -1.])]
+        kvecs = [
+            jnp.array([1.0, 0.0, 0.0]),
+            jnp.array([-1.0, 0.0, 0.0]),
+            jnp.array([0.0, 1.0, 0.0]),
+            jnp.array([0.0, -1.0, 0.0]),
+            jnp.array([0.0, 0.0, 1.0]),
+            jnp.array([0.0, 0.0, -1.0]),
+        ]
         pols = [-pol, -pol, -pol, -pol, +pol, +pol]
 
         for kvec, pol in zip(kvecs, pols):
-            rotated_kvec = jnp.matmul(rot_mat, k*kvec)
+            rotated_kvec = jnp.matmul(rot_mat, k * kvec)
             self.add_laser(beam_type(kvec=rotated_kvec, pol=pol, **kwargs))
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import numpy as np
 
-    test_field = magField(lambda R: jnp.array([-0.5*R[0], -0.5*R[1], 1*R[2]]))
-    print("B-field at origin:\n", test_field.Field(jnp.array([0., 0., 0.])))
-    print("B-field gradient:\n", test_field.gradField(jnp.array([5., 2., 1.])))
-    
-    example_beams = laserBeams([
-        {'kvec': jnp.array([0., 0., 1.]), 'pol': jnp.array([0., 0., 1.]),
-         'pol_coord': 'spherical', 'delta': -2.0, 's': 1.0},
-        {'kvec': jnp.array([0., 0., -1.]), 'pol': jnp.array([0., 0., 1.]),
-         'pol_coord': 'spherical', 'delta': -2.0, 's': 1.0},
-    ], beam_type=infinitePlaneWaveBeam)
-    
-    print("Jones Vector:\n", example_beams.beam_vector[0].jones_vector(
-        jnp.array([1., 0., 0.]), jnp.array([0., 1., 0.])
-    ))
+    test_field = magField(
+        lambda R: jnp.array([-0.5 * R[0], -0.5 * R[1], 1 * R[2]])
+    )
+    print("B-field at origin:\n", test_field.Field(jnp.array([0.0, 0.0, 0.0])))
+    print(
+        "B-field gradient:\n", test_field.gradField(jnp.array([5.0, 2.0, 1.0]))
+    )
+
+    example_beams = laserBeams(
+        [
+            {
+                "kvec": jnp.array([0.0, 0.0, 1.0]),
+                "pol": jnp.array([0.0, 0.0, 1.0]),
+                "pol_coord": "spherical",
+                "delta": -2.0,
+                "s": 1.0,
+            },
+            {
+                "kvec": jnp.array([0.0, 0.0, -1.0]),
+                "pol": jnp.array([0.0, 0.0, 1.0]),
+                "pol_coord": "spherical",
+                "delta": -2.0,
+                "s": 1.0,
+            },
+        ],
+        beam_type=infinitePlaneWaveBeam,
+    )
+
+    print(
+        "Jones Vector:\n",
+        example_beams.beam_vector[0].jones_vector(
+            jnp.array([1.0, 0.0, 0.0]), jnp.array([0.0, 1.0, 0.0])
+        ),
+    )
     # 3. Testing the "Stacked" Collection Returns
     print("All kvecs shape:\n", example_beams.kvec().shape)
     print("All pols shape:\n", example_beams.pol().shape)
     print("All intensities shape:\n", example_beams.intensity().shape)
-    print("All gradients shape:\n", example_beams.electric_field_gradient(jnp.array([0., 0., 0.]), 0.5).shape)
+    print(
+        "All gradients shape:\n",
+        example_beams.electric_field_gradient(
+            jnp.array([0.0, 0.0, 0.0]), 0.5
+        ).shape,
+    )
 
     # 4. Gaussian Beam Test
-    example_beam_gauss = gaussianBeam(kvec=jnp.array([1., 0., 0.]), pol=+1, s=5.0, delta=-2.0, wb=1000.0)
-    print("Gaussian Intensity at edge:\n", 
-          example_beam_gauss.intensity(jnp.array([0., 1000/jnp.sqrt(2), 1000/jnp.sqrt(2)])))
+    example_beam_gauss = gaussianBeam(
+        kvec=jnp.array([1.0, 0.0, 0.0]), pol=+1, s=5.0, delta=-2.0, wb=1000.0
+    )
+    print(
+        "Gaussian Intensity at edge:\n",
+        example_beam_gauss.intensity(
+            jnp.array([0.0, 1000 / jnp.sqrt(2), 1000 / jnp.sqrt(2)])
+        ),
+    )
 
     # 5. Infinite Plane Wave Test
-    example_beam_plane = infinitePlaneWaveBeam(kvec=jnp.array([1., 0., 0.]), pol=+1, s=5.0, delta=-2.0)
-    print("Plane Wave Gradient at origin:\n", 
-          example_beam_plane.electric_field_gradient(jnp.array([0., 0., 0.]), 0.))
+    example_beam_plane = infinitePlaneWaveBeam(
+        kvec=jnp.array([1.0, 0.0, 0.0]), pol=+1, s=5.0, delta=-2.0
+    )
+    print(
+        "Plane Wave Gradient at origin:\n",
+        example_beam_plane.electric_field_gradient(
+            jnp.array([0.0, 0.0, 0.0]), 0.0
+        ),
+    )
 
-    R_batch = jnp.array(np.random.rand(101, 3)) 
+    R_batch = jnp.array(np.random.rand(101, 3))
     t_batch = jnp.linspace(0, 10, 101)
 
     # jax.vmap passes Array scalars; t: float annotation is correct for normal use
-    vmapped_gradient = jax.vmap(example_beam_plane.electric_field_gradient)(R_batch, t_batch)  # type: ignore[arg-type]
+    vmapped_gradient = jax.vmap(example_beam_plane.electric_field_gradient)(
+        R_batch, t_batch  # pyright: ignore[reportArgumentType]
+    )
     print("Batch Gradient shape (Atoms, 3, 3):\n", vmapped_gradient.shape)
 
     # 7. MOT Beams Initialization
-    MOT_beams = conventional3DMOTBeams(k=1.0, pol=1, beam_type=gaussianBeam, wb=1000.0, s=5.0, delta=-2.0)
+    MOT_beams = conventional3DMOTBeams(
+        k=1.0, pol=1, beam_type=gaussianBeam, wb=1000.0, s=5.0, delta=-2.0
+    )
     print("MOT Beam 1 kvec:\n", MOT_beams.beam_vector[1].kvec())
-    
-    OT_beams = conventional3DMOTBeams(k=1.0, pol=1, beam_type=gaussianBeam, wb=1000.0, s=5.0, delta=-2.0)
+
+    OT_beams = conventional3DMOTBeams(
+        k=1.0, pol=1, beam_type=gaussianBeam, wb=1000.0, s=5.0, delta=-2.0
+    )
     print("MOT Beam 1 kvec:\n", MOT_beams.beam_vector[1].kvec())
 
     # --- Let's actually use plt to plot the Gaussian beam profile! ---
-    
+
     # Create an array of 400 points along the y-axis from -2000 to +2000
     y_vals = jnp.linspace(-2000, 2000, 400)
-    
+
     # Stack them into coordinates [0, y, 0] so the shape is (400, 3)
-    R_plot = jnp.stack([jnp.zeros_like(y_vals), y_vals, jnp.zeros_like(y_vals)], axis=1)
-    
+    R_plot = jnp.stack(
+        [jnp.zeros_like(y_vals), y_vals, jnp.zeros_like(y_vals)], axis=1
+    )
+
     # Use vmap to calculate the intensity for all 400 points at once
     intensities = jax.vmap(example_beam_gauss.intensity)(R_plot)
-    
+
     # Plot it
     plt.figure(figsize=(8, 5))
-    plt.plot(y_vals, intensities, label=f'waist = {example_beam_gauss.wb}')
+    plt.plot(y_vals, intensities, label=f"waist = {example_beam_gauss.wb}")
     plt.title("Gaussian Beam Intensity Profile (JAX vmapped)")
     plt.xlabel("Transverse Position (y)")
     plt.ylabel("Saturation Parameter (s)")

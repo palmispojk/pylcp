@@ -7,6 +7,7 @@ dense output on a fixed time grid).  Both are GPU-native, JIT-compiled, and
 support multi-GPU sharding.  Helper functions for profiling GPU memory and
 throughput (:func:`optimal_batch_size`) are also included.
 """
+
 import inspect
 import logging
 import os
@@ -15,7 +16,9 @@ import time
 
 import numpy as np
 
-os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')  # suppress XLA Triton tiling warnings
+os.environ.setdefault(
+    "TF_CPP_MIN_LOG_LEVEL", "2"
+)  # suppress XLA Triton tiling warnings
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -37,12 +40,12 @@ from jax.sharding import PartitionSpec as P
 _log = logging.getLogger(__name__)
 
 # Enable verbose GPU diagnostics with PYLCP_GPU_DEBUG=1
-_GPU_DEBUG = os.environ.get('PYLCP_GPU_DEBUG', '0') == '1'
+_GPU_DEBUG = os.environ.get("PYLCP_GPU_DEBUG", "0") == "1"
 
 
 def _gpu_devices():
     """Return all available GPU devices on this node."""
-    return [d for d in jax.devices() if d.platform == 'gpu']
+    return [d for d in jax.devices() if d.platform == "gpu"]
 
 
 def _gpu_device_info(gpu_devs=None):
@@ -57,21 +60,21 @@ def _gpu_device_info(gpu_devs=None):
     info = []
     for d in gpu_devs:
         entry = {
-            'device': d,
-            'device_kind': getattr(d, 'device_kind', 'unknown'),
-            'process_index': getattr(d, 'process_index', 0),
+            "device": d,
+            "device_kind": getattr(d, "device_kind", "unknown"),
+            "process_index": getattr(d, "process_index", 0),
         }
         stats = d.memory_stats()
         if stats is not None:
-            entry['bytes_limit'] = stats['bytes_limit']
-            entry['bytes_in_use'] = stats['bytes_in_use']
-            entry['peak_bytes_in_use'] = stats['peak_bytes_in_use']
-            entry['bytes_free'] = stats['bytes_limit'] - stats['bytes_in_use']
+            entry["bytes_limit"] = stats["bytes_limit"]
+            entry["bytes_in_use"] = stats["bytes_in_use"]
+            entry["peak_bytes_in_use"] = stats["peak_bytes_in_use"]
+            entry["bytes_free"] = stats["bytes_limit"] - stats["bytes_in_use"]
         else:
-            entry['bytes_limit'] = 0
-            entry['bytes_in_use'] = 0
-            entry['peak_bytes_in_use'] = 0
-            entry['bytes_free'] = 0
+            entry["bytes_limit"] = 0
+            entry["bytes_in_use"] = 0
+            entry["peak_bytes_in_use"] = 0
+            entry["bytes_free"] = 0
         info.append(entry)
     return info
 
@@ -84,15 +87,15 @@ def _log_gpu_debug(gpu_devs=None, label=""):
     prefix = f"[GPU DEBUG{': ' + label if label else ''}]"
     _log.info(f"{prefix} {len(infos)} GPU(s) detected")
     for i, info in enumerate(infos):
-        d = info['device']
+        d = info["device"]
         _log.info(
             f"{prefix}   GPU {i}: {d}"
             f"  kind={info['device_kind']}"
             f"  process={info['process_index']}"
-            f"  pool={info['bytes_limit']/2**30:.2f} GiB"
-            f"  in_use={info['bytes_in_use']/2**20:.1f} MiB"
-            f"  peak={info['peak_bytes_in_use']/2**20:.1f} MiB"
-            f"  free={info['bytes_free']/2**20:.1f} MiB"
+            f"  pool={info['bytes_limit'] / 2**30:.2f} GiB"
+            f"  in_use={info['bytes_in_use'] / 2**20:.1f} MiB"
+            f"  peak={info['peak_bytes_in_use'] / 2**20:.1f} MiB"
+            f"  free={info['bytes_free'] / 2**20:.1f} MiB"
         )
 
 
@@ -122,8 +125,8 @@ def _shard_batch(arr, gpu_devs):
             f"arr_shape={arr.shape}"
         )
 
-    mesh = Mesh(gpu_devs, axis_names=('batch',))
-    sharding = NamedSharding(mesh, P('batch'))
+    mesh = Mesh(gpu_devs, axis_names=("batch",))
+    sharding = NamedSharding(mesh, P("batch"))
     return jax.device_put(arr, sharding), N
 
 
@@ -134,15 +137,14 @@ def _ensure_3arg(func):
     """
     sig = inspect.signature(func)
     n_required = sum(
-        1 for p in sig.parameters.values()
+        1
+        for p in sig.parameters.values()
         if p.default is inspect.Parameter.empty
         and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)
     )
     if n_required < 3:
         return lambda t, y, args: func(t, y)
     return func
-
-
 
 
 class RandomOdeResult:
@@ -163,9 +165,21 @@ class RandomOdeResult:
     r: np.ndarray | None
     rho: np.ndarray | None
 
-    def __init__(self, t=None, y=None, t_random=None, n_random=None,
-                 inds_random=None, success=None, status=0, message="",
-                 nfev=0, _batched_state=None, _index=None, _tf=None):
+    def __init__(
+        self,
+        t=None,
+        y=None,
+        t_random=None,
+        n_random=None,
+        inds_random=None,
+        success=None,
+        status=0,
+        message="",
+        nfev=0,
+        _batched_state=None,
+        _index=None,
+        _tf=None,
+    ):
         if _batched_state is not None:
             # Lazy mode: defer slicing until attribute access.
             self._batched_state = _batched_state
@@ -187,36 +201,39 @@ class RandomOdeResult:
 
     def _materialise(self):
         """Slice this atom's data from the batched state (once)."""
-        if 't' in self._cache:
+        if "t" in self._cache:
             return
         i = self._index
         bs = self._batched_state
         assert bs is not None  # only called in lazy mode
         assert i is not None
-        n_saved = int(bs['save_idx'][i])
+        n_saved = int(bs["save_idx"][i])
 
         # Initial state is already in slot 0 of ts/ys (written by the
         # while_loop init), so just slice up to n_saved.
-        self._cache['t'] = bs['ts'][i, :n_saved]
-        self._cache['y'] = np.moveaxis(bs['ys'][i, :n_saved], 0, -1)
+        self._cache["t"] = bs["ts"][i, :n_saved]
+        self._cache["y"] = np.moveaxis(bs["ys"][i, :n_saved], 0, -1)
 
-        t_rand_raw = bs['t_random'][i, :n_saved]
-        n_rand_raw = bs['n_random'][i, :n_saved]
+        t_rand_raw = bs["t_random"][i, :n_saved]
+        n_rand_raw = bs["n_random"][i, :n_saved]
         scatter_mask = n_rand_raw > 0
 
-        self._cache['t_random'] = t_rand_raw[scatter_mask]
-        self._cache['n_random'] = n_rand_raw[scatter_mask]
-        self._cache['inds_random'] = scatter_mask
+        self._cache["t_random"] = t_rand_raw[scatter_mask]
+        self._cache["n_random"] = n_rand_raw[scatter_mask]
+        self._cache["inds_random"] = scatter_mask
         assert self._tf is not None
-        self._cache['success'] = bool(bs['t'][i] >= self._tf)
-        self._cache['status'] = 0 if self._cache['success'] else -1
-        self._cache['message'] = ("Success" if self._cache['success']
-                                  else "Terminated early (did not reach tf).")
-        self._cache['nfev'] = int(bs['nfev'][i])
+        self._cache["success"] = bool(bs["t"][i] >= self._tf)
+        self._cache["status"] = 0 if self._cache["success"] else -1
+        self._cache["message"] = (
+            "Success"
+            if self._cache["success"]
+            else "Terminated early (did not reach tf)."
+        )
+        self._cache["nfev"] = int(bs["nfev"][i])
 
     def __getattr__(self, name):
         # Only called when normal attribute lookup fails (lazy mode).
-        if name.startswith('_'):
+        if name.startswith("_"):
             raise AttributeError(name)
         self._materialise()
         try:
@@ -243,36 +260,44 @@ def _make_run_group(func, random_func, solver_type):
     elif solver_type == "Kvaerno5":
         solver = Kvaerno5()
     else:
-        raise ValueError(f"Solver '{solver_type}' is not one of the specified "
-                         f"solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
+        raise ValueError(
+            f"Solver '{solver_type}' is not one of the specified "
+            f"solvers. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'."
+        )
 
     term = ODETerm(_ensure_3arg(func))
 
-    @functools.partial(jax.jit, static_argnames=('rtol', 'atol', 'max_step_global'))
+    @functools.partial(
+        jax.jit, static_argnames=("rtol", "atol", "max_step_global")
+    )
     def _run_group(carry_batch, max_step_global, rtol, atol, args):
         def _single_group(carry):
             def cond_fn(s):
-                return s['t'] < s['t_save_next']
+                return s["t"] < s["t_save_next"]
 
             def body_fn(s):
-                t_curr = s['t']
-                dt_curr = s['dt']
-                t_next = jnp.minimum(t_curr + dt_curr, s['t_save_next'])
+                t_curr = s["t"]
+                dt_curr = s["dt"]
+                t_next = jnp.minimum(t_curr + dt_curr, s["t_save_next"])
                 actual_dt = t_next - t_curr
 
                 sol = diffeqsolve(
-                    term, solver,
-                    t0=t_curr, t1=t_next, dt0=dt_curr,
-                    y0=s['y'], args=args,
+                    term,
+                    solver,
+                    t0=t_curr,
+                    t1=t_next,
+                    dt0=dt_curr,
+                    y0=s["y"],
+                    args=args,
                     stepsize_controller=PIDController(rtol=rtol, atol=atol),
                     saveat=SaveAt(t1=True),
                     max_steps=None,
                 )
                 y_next = sol.ys[-1]  # type: ignore[index]
-                nfev_add = sol.stats['num_steps']
+                nfev_add = sol.stats["num_steps"]
 
                 y_jump, n_scatters, dt_max_suggested, key_new = random_func(
-                    t_next, y_next, actual_dt, s['key'], args
+                    t_next, y_next, actual_dt, s["key"], args
                 )
                 # If the step was clipped to t_save_next, dt_max_suggested
                 # collapses to ~0 and would freeze the next save group;
@@ -284,15 +309,21 @@ def _make_run_group(func, random_func, solver_type):
                 )
 
                 return {
-                    't': t_next, 'y': y_jump, 'dt': dt_next, 'key': key_new,
-                    'step_idx': s['step_idx'] + 1,
-                    'nfev': s['nfev'] + nfev_add,
-                    'last_t_random': jnp.where(
-                        n_scatters > 0, t_next, s['last_t_random']),
-                    'last_n_random': jnp.where(
-                        n_scatters > 0, jnp.int32(n_scatters),
-                        s['last_n_random']),
-                    't_save_next': s['t_save_next'],
+                    "t": t_next,
+                    "y": y_jump,
+                    "dt": dt_next,
+                    "key": key_new,
+                    "step_idx": s["step_idx"] + 1,
+                    "nfev": s["nfev"] + nfev_add,
+                    "last_t_random": jnp.where(
+                        n_scatters > 0, t_next, s["last_t_random"]
+                    ),
+                    "last_n_random": jnp.where(
+                        n_scatters > 0,
+                        jnp.int32(n_scatters),
+                        s["last_n_random"],
+                    ),
+                    "t_save_next": s["t_save_next"],
                 }
 
             return jax.lax.while_loop(cond_fn, body_fn, carry)
@@ -318,7 +349,7 @@ def _batched_random_trajectories(
     args=None,
     progress=False,
     output_dir=None,
-    ):
+):
     """
     Batched stochastic trajectory solver with disk-backed output.
 
@@ -341,15 +372,15 @@ def _batched_random_trajectories(
 
     # -- Initialise carry (tiny, on GPU) -----------------------------------
     carry = {
-        't': jnp.full(N, t0, dtype=jnp.float64),
-        'y': y0_batch,
-        'dt': jnp.full(N, dt0, dtype=jnp.float64),
-        'key': keys_batch,
-        'step_idx': jnp.ones(N, dtype=jnp.int32),
-        'nfev': jnp.zeros(N, dtype=jnp.int32),
-        'last_t_random': jnp.zeros(N, dtype=jnp.float64),
-        'last_n_random': jnp.zeros(N, dtype=jnp.int32),
-        't_save_next': jnp.full(N, t_save_grid[1], dtype=jnp.float64),
+        "t": jnp.full(N, t0, dtype=jnp.float64),
+        "y": y0_batch,
+        "dt": jnp.full(N, dt0, dtype=jnp.float64),
+        "key": keys_batch,
+        "step_idx": jnp.ones(N, dtype=jnp.int32),
+        "nfev": jnp.zeros(N, dtype=jnp.int32),
+        "last_t_random": jnp.zeros(N, dtype=jnp.float64),
+        "last_n_random": jnp.zeros(N, dtype=jnp.int32),
+        "t_save_next": jnp.full(N, t_save_grid[1], dtype=jnp.float64),
     }
 
     # -- Pre-allocate disk-backed output arrays (memmap) --------------------
@@ -357,23 +388,24 @@ def _batched_random_trajectories(
     _tmpdir = output_dir or tempfile.gettempdir()
 
     def _make_mmap(name, shape, dtype):
-        fd, path = tempfile.mkstemp(prefix=f'pylcp_{name}_', suffix='.mmap',
-                                    dir=_tmpdir)
+        fd, path = tempfile.mkstemp(
+            prefix=f"pylcp_{name}_", suffix=".mmap", dir=_tmpdir
+        )
         os.close(fd)
-        mm = np.memmap(path, dtype=dtype, mode='w+', shape=shape)
+        mm = np.memmap(path, dtype=dtype, mode="w+", shape=shape)
         # Unlink immediately: on Linux the file stays accessible via the
         # memmap mapping until the object is GC'd, then disk is reclaimed.
         os.unlink(path)
         return mm
 
-    ts_cpu = _make_mmap('ts', (N, n_total), np.float64)
-    ys_cpu = _make_mmap('ys', (N, n_total, state_dim), np.float64)
-    t_random_cpu = _make_mmap('trand', (N, n_total), np.float64)
-    n_random_cpu = _make_mmap('nrand', (N, n_total), np.int32)
+    ts_cpu = _make_mmap("ts", (N, n_total), np.float64)
+    ys_cpu = _make_mmap("ys", (N, n_total, state_dim), np.float64)
+    t_random_cpu = _make_mmap("trand", (N, n_total), np.float64)
+    n_random_cpu = _make_mmap("nrand", (N, n_total), np.int32)
 
     # Slot 0: initial state
-    ts_cpu[:, 0] = np.asarray(carry['t'])
-    ys_cpu[:, 0, :] = np.asarray(carry['y'])
+    ts_cpu[:, 0] = np.asarray(carry["t"])
+    ys_cpu[:, 0, :] = np.asarray(carry["y"])
 
     # -- Host loop: one group per save slot --------------------------------
     _log_interval = max(1, n_points // 20)  # ~5 % increments
@@ -392,24 +424,29 @@ def _batched_random_trajectories(
             eta = (n_points - _gi) / rate if rate > 0 else 0
             m, s = divmod(int(eta), 60)
             h, m = divmod(m, 60)
-            print(f"\r  [{_gi}/{n_points}] {100*_gi/n_points:.0f}%  "
-                  f"ETA {h}h{m:02d}m{s:02d}s", end="", flush=True)
+            print(
+                f"\r  [{_gi}/{n_points}] {100 * _gi / n_points:.0f}%  "
+                f"ETA {h}h{m:02d}m{s:02d}s",
+                end="",
+                flush=True,
+            )
 
         # Tiny transfer: scalars + one state vector per atom.
         save_idx = _gi + 1
-        ts_cpu[:, save_idx] = np.asarray(carry['t'])
-        ys_cpu[:, save_idx, :] = np.asarray(carry['y'])
-        t_random_cpu[:, save_idx] = np.asarray(carry['last_t_random'])
-        n_random_cpu[:, save_idx] = np.asarray(carry['last_n_random'])
+        ts_cpu[:, save_idx] = np.asarray(carry["t"])
+        ys_cpu[:, save_idx, :] = np.asarray(carry["y"])
+        t_random_cpu[:, save_idx] = np.asarray(carry["last_t_random"])
+        n_random_cpu[:, save_idx] = np.asarray(carry["last_n_random"])
 
         # Reset scatter accumulators and advance save target for next group.
         if _gi < n_points - 1:
             carry = {
                 **carry,
-                'last_t_random': jnp.zeros(N, dtype=jnp.float64),
-                'last_n_random': jnp.zeros(N, dtype=jnp.int32),
-                't_save_next': jnp.full(N, t_save_grid[_gi + 2],
-                                        dtype=jnp.float64),
+                "last_t_random": jnp.zeros(N, dtype=jnp.float64),
+                "last_n_random": jnp.zeros(N, dtype=jnp.int32),
+                "t_save_next": jnp.full(
+                    N, t_save_grid[_gi + 2], dtype=jnp.float64
+                ),
             }
 
     if progress:
@@ -419,16 +456,17 @@ def _batched_random_trajectories(
     save_idx_arr = np.full(N, n_points + 1, dtype=np.int32)
 
     return {
-        't': np.asarray(carry['t']),
-        'y': np.asarray(carry['y']),
-        'step_idx': np.asarray(carry['step_idx']),
-        'save_idx': save_idx_arr,
-        'ts': ts_cpu,
-        'ys': ys_cpu,
-        't_random': t_random_cpu,
-        'n_random': n_random_cpu,
-        'nfev': np.asarray(carry['nfev']),
+        "t": np.asarray(carry["t"]),
+        "y": np.asarray(carry["y"]),
+        "step_idx": np.asarray(carry["step_idx"]),
+        "save_idx": save_idx_arr,
+        "ts": ts_cpu,
+        "ys": ys_cpu,
+        "t_random": t_random_cpu,
+        "n_random": n_random_cpu,
+        "nfev": np.asarray(carry["nfev"]),
     }
+
 
 def _bytes_per_atom(state_dim):
     """Estimated peak GPU allocation per atom in the batched solver.
@@ -467,21 +505,31 @@ def _probe_bytes_per_atom(state_dim):
 
     def _single_group(carry):
         def cond_fn(s):
-            return (s['t'] < 1.0) & (s['count'] < save_every)
+            return (s["t"] < 1.0) & (s["count"] < save_every)
+
         def body_fn(s):
             sol = diffeqsolve(
-                term, solver,
-                t0=s['t'], t1=s['t'] + s['dt'], dt0=s['dt'],
-                y0=s['y'], args=None,
+                term,
+                solver,
+                t0=s["t"],
+                t1=s["t"] + s["dt"],
+                dt0=s["dt"],
+                y0=s["y"],
+                args=None,
                 stepsize_controller=PIDController(rtol=1e-5, atol=1e-6),
                 saveat=SaveAt(t1=True),
                 max_steps=None,
             )
-            return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],  # type: ignore[index]
-                    'count': s['count'] + 1}
-        init = {**carry, 'count': jnp.int32(0)}
+            return {
+                **s,
+                "t": s["t"] + s["dt"],
+                "y": sol.ys[-1],  # type: ignore[index]
+                "count": s["count"] + 1,
+            }
+
+        init = {**carry, "count": jnp.int32(0)}
         final = jax.lax.while_loop(cond_fn, body_fn, init)
-        return {k: v for k, v in final.items() if k != 'count'}
+        return {k: v for k, v in final.items() if k != "count"}
 
     @jax.jit
     def _run_probe(carry_batch):
@@ -489,9 +537,9 @@ def _probe_bytes_per_atom(state_dim):
 
     def _make_carry(n):
         return {
-            't': jnp.zeros(n, dtype=jnp.float64),
-            'y': jnp.zeros((n, state_dim), dtype=jnp.float64),
-            'dt': jnp.full(n, 0.5, dtype=jnp.float64),
+            "t": jnp.zeros(n, dtype=jnp.float64),
+            "y": jnp.zeros((n, state_dim), dtype=jnp.float64),
+            "dt": jnp.full(n, 0.5, dtype=jnp.float64),
         }
 
     # Warm up JIT (compilation cost is fixed, not per-atom).
@@ -502,13 +550,13 @@ def _probe_bytes_per_atom(state_dim):
     carry_small = _make_carry(2)
     _run_probe(carry_small)
     jax.effects_barrier()
-    mem_2 = _gpu_device_info(gpu_devs)[0]['peak_bytes_in_use']
+    mem_2 = _gpu_device_info(gpu_devs)[0]["peak_bytes_in_use"]
 
     # Run with N=8 to get a reliable delta
     carry_large = _make_carry(8)
     _run_probe(carry_large)
     jax.effects_barrier()
-    mem_8 = _gpu_device_info(gpu_devs)[0]['peak_bytes_in_use']
+    mem_8 = _gpu_device_info(gpu_devs)[0]["peak_bytes_in_use"]
 
     measured_bpa = max(1, (mem_8 - mem_2) // (8 - 2))
 
@@ -520,8 +568,8 @@ def _probe_bytes_per_atom(state_dim):
     if _GPU_DEBUG:
         _log.info(
             f"[GPU DEBUG: _probe_bytes_per_atom] state_dim={state_dim}, "
-            f"mem_2={mem_2/2**20:.1f} MiB, mem_8={mem_8/2**20:.1f} MiB, "
-            f"measured={measured_bpa} B/atom ({measured_bpa/2**20:.4f} MiB/atom), "
+            f"mem_2={mem_2 / 2**20:.1f} MiB, mem_8={mem_8 / 2**20:.1f} MiB, "
+            f"measured={measured_bpa} B/atom ({measured_bpa / 2**20:.4f} MiB/atom), "
             f"analytical={analytical_bpa} B/atom"
         )
 
@@ -532,8 +580,7 @@ def _probe_bytes_per_atom(state_dim):
     return int(measured_bpa)
 
 
-def _probe_throughput_cap(state_dim, threshold=1.15,
-                          max_n=131072, n_groups=5):
+def _probe_throughput_cap(state_dim, threshold=1.15, max_n=131072, n_groups=5):
     """Find the batch size where GPU compute throughput saturates.
 
     Doubles N from 32 upward, running ``n_groups`` host-loop iterations
@@ -573,21 +620,31 @@ def _probe_throughput_cap(state_dim, threshold=1.15,
 
     def _single_group(carry):
         def cond_fn(s):
-            return (s['t'] < 1.0) & (s['count'] < save_every)
+            return (s["t"] < 1.0) & (s["count"] < save_every)
+
         def body_fn(s):
             sol = diffeqsolve(
-                term, solver,
-                t0=s['t'], t1=s['t'] + s['dt'], dt0=s['dt'],
-                y0=s['y'], args=None,
+                term,
+                solver,
+                t0=s["t"],
+                t1=s["t"] + s["dt"],
+                dt0=s["dt"],
+                y0=s["y"],
+                args=None,
                 stepsize_controller=PIDController(rtol=1e-5, atol=1e-6),
                 saveat=SaveAt(t1=True),
                 max_steps=None,
             )
-            return {**s, 't': s['t'] + s['dt'], 'y': sol.ys[-1],  # type: ignore[index]
-                    'count': s['count'] + 1}
-        init = {**carry, 'count': jnp.int32(0)}
+            return {
+                **s,
+                "t": s["t"] + s["dt"],
+                "y": sol.ys[-1],  # type: ignore[index]
+                "count": s["count"] + 1,
+            }
+
+        init = {**carry, "count": jnp.int32(0)}
         final = jax.lax.while_loop(cond_fn, body_fn, init)
-        return {k: v for k, v in final.items() if k != 'count'}
+        return {k: v for k, v in final.items() if k != "count"}
 
     @jax.jit
     def _run_group(carry_batch):
@@ -595,9 +652,9 @@ def _probe_throughput_cap(state_dim, threshold=1.15,
 
     def _make_carry(n):
         return {
-            't': jnp.zeros(n, dtype=jnp.float64),
-            'y': jnp.zeros((n, state_dim), dtype=jnp.float64),
-            'dt': jnp.full(n, 0.5, dtype=jnp.float64),
+            "t": jnp.zeros(n, dtype=jnp.float64),
+            "y": jnp.zeros((n, state_dim), dtype=jnp.float64),
+            "dt": jnp.full(n, 0.5, dtype=jnp.float64),
         }
 
     # JIT warmup (compilation cost excluded from timings)
@@ -689,9 +746,9 @@ def optimal_batch_size(state_dim, safety=0.6, **_ignored):
 
     capacities = []
     for info in infos:
-        if info['bytes_limit'] == 0:
+        if info["bytes_limit"] == 0:
             return None
-        cap = max(1, int(info['bytes_free'] * safety / bpa))
+        cap = max(1, int(info["bytes_free"] * safety / bpa))
         capacities.append(cap)
 
     min_cap = min(capacities)
@@ -704,7 +761,7 @@ def optimal_batch_size(state_dim, safety=0.6, **_ignored):
 
     _log.info(
         f"[optimal_batch_size] memory_cap={memory_cap} "
-        f"({bpa/2**20:.4f} MiB/atom), "
+        f"({bpa / 2**20:.4f} MiB/atom), "
         f"throughput_cap={throughput_cap}, "
         f"result={total}"
     )
@@ -713,9 +770,9 @@ def optimal_batch_size(state_dim, safety=0.6, **_ignored):
         for i, (info, cap) in enumerate(zip(infos, capacities)):
             _log.info(
                 f"[GPU DEBUG: optimal_batch_size]   GPU {i}: "
-                f"free={info['bytes_free']/2**20:.1f} MiB, "
+                f"free={info['bytes_free'] / 2**20:.1f} MiB, "
                 f"memory_cap={cap} atoms "
-                f"({cap * bpa / 2**20:.1f} MiB at {bpa/2**20:.3f} MiB/atom)"
+                f"({cap * bpa / 2**20:.1f} MiB at {bpa / 2**20:.3f} MiB/atom)"
             )
 
     if _GPU_DEBUG and len(gpu_devs) > 1:
@@ -755,10 +812,10 @@ def optimal_batch_size_per_gpu(state_dim, safety=0.6, **_ignored):
 
     result = []
     for info in infos:
-        if info['bytes_limit'] == 0:
+        if info["bytes_limit"] == 0:
             return None
-        cap = max(1, int(info['bytes_free'] * safety / bpa))
-        result.append((info['device'], cap))
+        cap = max(1, int(info["bytes_free"] * safety / bpa))
+        result.append((info["device"], cap))
     return result
 
 
@@ -770,15 +827,15 @@ def solve_ivp_random(
     keys_batch,
     n_points,
     solver_type="Dopri5",
-    max_step=float('inf'),
+    max_step=float("inf"),
     rtol=1e-5,
     atol=1e-6,
     batch_size=None,
     args=None,
     progress=False,
     output_dir=None,
-    **options
-    ):
+    **options,
+):
     """
     GPU-batched ODE solver with stochastic jumps.
 
@@ -808,10 +865,15 @@ def solve_ivp_random(
     # cast to jnp just in case
     y0_batch = jnp.asarray(y0_batch)
     keys_batch = jnp.asarray(keys_batch)
-    t0, tf = jnp.asarray(t_span[0], dtype=jnp.float64), jnp.asarray(t_span[1], dtype=jnp.float64)
+    t0, tf = (
+        jnp.asarray(t_span[0], dtype=jnp.float64),
+        jnp.asarray(t_span[1], dtype=jnp.float64),
+    )
     t_range = float(tf - t0)
-    dt0 = jnp.minimum(jnp.asarray(t_range * 1e-3, dtype=jnp.float64),
-                       jnp.asarray(max_step, dtype=jnp.float64))
+    dt0 = jnp.minimum(
+        jnp.asarray(t_range * 1e-3, dtype=jnp.float64),
+        jnp.asarray(max_step, dtype=jnp.float64),
+    )
     N = y0_batch.shape[0]
 
     if batch_size is None:
@@ -834,9 +896,16 @@ def solve_ivp_random(
             y0_chunk, _ = _shard_batch(y0_chunk, gpu_devs)
             keys_chunk, _ = _shard_batch(keys_chunk, gpu_devs)
         batched_state = _batched_random_trajectories(
-            fun, random_func, t0, tf,
-            y0_chunk, keys_chunk,
-            max_step, rtol, atol, dt0,
+            fun,
+            random_func,
+            t0,
+            tf,
+            y0_chunk,
+            keys_chunk,
+            max_step,
+            rtol,
+            atol,
+            dt0,
             n_points=n_points,
             solver_type=solver_type,
             args=args,
@@ -845,7 +914,9 @@ def solve_ivp_random(
         )
         tf_float = float(tf)
         return [
-            RandomOdeResult(_batched_state=batched_state, _index=i, _tf=tf_float)
+            RandomOdeResult(
+                _batched_state=batched_state, _index=i, _tf=tf_float
+            )
             for i in range(chunk_N)
         ]
 
@@ -861,14 +932,35 @@ def solve_ivp_random(
     results = []
     for start in range(0, N, batch_size):
         end = min(start + batch_size, N)
-        results.extend(_run_chunk(
-            y0_batch[start:end], keys_batch[start:end], end - start
-        ))
+        results.extend(
+            _run_chunk(y0_batch[start:end], keys_batch[start:end], end - start)
+        )
     return results
 
 
-@functools.partial(jax.jit, static_argnames=('func', 'n_points', 'max_steps', 'rtol', 'atol', 'solver_type'))
-def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096, rtol=1e-5, atol=1e-6, solver_type='Dopri5', args=None):
+@functools.partial(
+    jax.jit,
+    static_argnames=(
+        "func",
+        "n_points",
+        "max_steps",
+        "rtol",
+        "atol",
+        "solver_type",
+    ),
+)
+def _batched_dense_trajectories(
+    func,
+    t0,
+    t1,
+    y0_batch,
+    n_points,
+    max_steps=4096,
+    rtol=1e-5,
+    atol=1e-6,
+    solver_type="Dopri5",
+    args=None,
+):
     """
     JIT-compiled batched ODE solve on a fixed time grid.
 
@@ -891,22 +983,24 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         ys: shape (N, n_points, state_dim)
         ts: shape (n_points,)
     """
-    if solver_type == 'Dopri5':
+    if solver_type == "Dopri5":
         solver = Dopri5()
-    elif solver_type == 'Bosh3':
+    elif solver_type == "Bosh3":
         solver = Bosh3()
-    elif solver_type == 'Kvaerno5':
+    elif solver_type == "Kvaerno5":
         solver = Kvaerno5()
     else:
-        raise ValueError(f"Solver '{solver_type}' not recognised. "
-                         f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'.")
+        raise ValueError(
+            f"Solver '{solver_type}' not recognised. "
+            f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'."
+        )
 
     term = ODETerm(_ensure_3arg(func))
 
     # t0/t1 can be scalars (shared) or per-atom arrays (shape (N,)).
     # When per-atom, each atom gets its own time grid and integration
     # window — all run in parallel via vmap with a single JIT trace.
-    per_atom = (jnp.ndim(t0) > 0 or jnp.ndim(t1) > 0)
+    per_atom = jnp.ndim(t0) > 0 or jnp.ndim(t1) > 0
 
     if not per_atom:
         # Shared t_span: single ts_grid, vmap over y0 only
@@ -957,9 +1051,17 @@ def _batched_dense_trajectories(func, t0, t1, y0_batch, n_points, max_steps=4096
         return ys, ts_batch  # (N, n_points)
 
 
-def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
-                    max_steps=4096, rtol=1e-5, atol=1e-6,
-                    solver_type='Dopri5', args=None):
+def solve_ivp_dense(
+    func,
+    t_span,
+    y0_batch,
+    n_points=1001,
+    max_steps=4096,
+    rtol=1e-5,
+    atol=1e-6,
+    solver_type="Dopri5",
+    args=None,
+):
     """
     Batched ODE solve returning solution on a fixed time grid (GPU-native).
 
@@ -1009,7 +1111,16 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
         orig_N = y0_batch.shape[0]
 
     ys, ts = _batched_dense_trajectories(
-        func, t0, t1, y0_batch, n_points, max_steps, rtol, atol, solver_type, args
+        func,
+        t0,
+        t1,
+        y0_batch,
+        n_points,
+        max_steps,
+        rtol,
+        atol,
+        solver_type,
+        args,
     )
     # Strip padding atoms added by _shard_batch.
     if ys.shape[0] > orig_N:
@@ -1019,7 +1130,7 @@ def solve_ivp_dense(func, t_span, y0_batch, n_points=1001,
     return ts, ys
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     import jax
     import jax.numpy as jnp
     import matplotlib.pyplot as plt
@@ -1040,30 +1151,47 @@ if __name__ == '__main__':
         return y_jump, n_events, max_dt, key
 
     # initial conditions
-    y0_batch = jnp.array([
-        [0., 1.],  # Atom 1
-        [0., 1.],  # Atom 2
-        [0., 1.]   # Atom 3
-    ])
-    
+    y0_batch = jnp.array(
+        [
+            [0.0, 1.0],  # Atom 1
+            [0.0, 1.0],  # Atom 2
+            [0.0, 1.0],  # Atom 3
+        ]
+    )
+
     # 3 unique keys, one for each atom
     initial_key = jax.random.PRNGKey(42)
     keys_batch = jax.random.split(initial_key, 3)
 
     # Runs the batched solver on 3 atoms
-    sols = solve_ivp_random(dydt, func2, [0., 10 * jnp.pi], y0_batch, keys_batch, max_step=0.1, solver_type='Dopri5', n_points=500)
+    sols = solve_ivp_random(
+        dydt,
+        func2,
+        [0.0, 10 * jnp.pi],
+        y0_batch,
+        keys_batch,
+        max_step=0.1,
+        solver_type="Dopri5",
+        n_points=500,
+    )
 
     # only plot one atom instead of all 3
-    sol = sols[0] 
-    
+    sol = sols[0]
+
     plt.figure()
     plt.plot(sol.t, sol.y.T)  # type: ignore[attr-defined]
 
-    if len(sol.t_random) > 0:  # type: ignore[arg-type]
-        plt.plot(sol.t_random, sol.y[:, sol.inds_random].T, 'o', color='black', label='Random Kicks')  # type: ignore[attr-defined]
+    if len(sol.t_random) > 0:  # type: ignore[arg-type]  # pyright: ignore[reportOptionalSubscript]
+        plt.plot(
+            sol.t_random,  # pyright: ignore[reportArgumentType]
+            sol.y[:, sol.inds_random].T,  # pyright: ignore[reportOptionalSubscript]
+            "o",
+            color="black",
+            label="Random Kicks",
+        )  # type: ignore[attr-defined]
         plt.legend()
-        
-    plt.xlabel('Time')
-    plt.ylabel('State (Position & Velocity)')
-    plt.title('Batched GPU Integration (Atom 1)')
+
+    plt.xlabel("Time")
+    plt.ylabel("State (Position & Velocity)")
+    plt.title("Batched GPU Integration (Atom 1)")
     plt.show()

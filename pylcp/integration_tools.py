@@ -7,6 +7,7 @@ adaptive time steps.  Also includes a :class:`parallelIntegrator` for
 on-the-fly integration as data arrives, and :class:`RandomOdeResult` for
 storing trajectories with scatter-event metadata.
 """
+
 from __future__ import absolute_import, division, print_function
 
 import inspect
@@ -27,16 +28,18 @@ from scipy.integrate._ivp.rk import DOP853, RK23, RK45
 from scipy.optimize import OptimizeResult
 
 METHODS: dict[str, type[OdeSolver]] = {
-    'RK23': RK23,
-    'RK45': RK45,
-    'Radau': Radau,
-    'BDF': BDF,
-    'LSODA': LSODA,
+    "RK23": RK23,
+    "RK45": RK45,
+    "Radau": Radau,
+    "BDF": BDF,
+    "LSODA": LSODA,
 }
 
 
-MESSAGES = {0: "The solver successfully reached the end of the integration interval.",
-            1: "A termination event occurred."}
+MESSAGES = {
+    0: "The solver successfully reached the end of the integration interval.",
+    1: "A termination event occurred.",
+}
 
 
 class RandomOdeResult(OptimizeResult):
@@ -102,33 +105,35 @@ class parallelIntegrator(object):
     tmax : maximium value of integrator
     """
 
-    def __init__(self, func, y0=[0.], method='RK45', tmax=1e9, **kwargs):
-        if '(t, y' in str(signature(func)):
+    def __init__(self, func, y0=[0.0], method="RK45", tmax=1e9, **kwargs):
+        if "(t, y" in str(signature(func)):
             self.func = func
-        elif '(t' in str(signature(func)):
+        elif "(t" in str(signature(func)):
             self.func = lambda t, y: func(t)
         else:
-            raise ValueError('signature %s for func not recognized'%str(signature(func)))
+            raise ValueError(
+                "signature %s for func not recognized" % str(signature(func))
+            )
 
         self.t0 = None
         self.tlast = None
         self.direction = +1
         self.tmax = tmax
         # Now we can actually create the integrator:
-        if method == 'RK45':
+        if method == "RK45":
             self.intobj = RK45
-        elif method == 'RK23':
+        elif method == "RK23":
             self.intobj = RK23
-        elif method == 'DOP853':
+        elif method == "DOP853":
             self.intobj = DOP853
-        elif method == 'Radau':
+        elif method == "Radau":
             self.intobj = Radau
-        elif method == 'BDF':
+        elif method == "BDF":
             self.intobj = BDF
-        elif method == 'LSODA':
+        elif method == "LSODA":
             self.intobj = LSODA
         else:
-            raise ValueError('Method %s not recognized'%method)
+            raise ValueError("Method %s not recognized" % method)
 
         self.y0 = np.array(y0)
         self.extra_kwargs = kwargs
@@ -148,17 +153,17 @@ class parallelIntegrator(object):
             value of the function at time t.
         """
         if isinstance(t, np.ndarray):
-            self.__step(np.amin(t)) # start the intergrator
-            self.__step(np.amax(t)) # step the integrator through to max value
+            self.__step(np.amin(t))  # start the intergrator
+            self.__step(np.amax(t))  # step the integrator through to max value
 
             # Rebuild the solution:
             sol = OdeSolution(self.ts, self.interpolants)
 
-            return sol(t) # return the full array
+            return sol(t)  # return the full array
         else:
-            self.__step(t) # step integrator
+            self.__step(t)  # step integrator
 
-            if t==self.t0:
+            if t == self.t0:
                 return self.y0
             else:
                 # Rebuild the solution:
@@ -168,7 +173,7 @@ class parallelIntegrator(object):
 
     def __step(self, t):
         # Is this the first call, or did we return to the initial time?
-        if self.t0 is None or t==self.t0:
+        if self.t0 is None or t == self.t0:
             self.t0 = t
             self.tlast = None
             self.interpolants = []
@@ -179,20 +184,27 @@ class parallelIntegrator(object):
 
         # Second call, we will now establish a direction and create the solver:
         elif self.tlast is None:
-            if t>self.t0:
+            if t > self.t0:
                 self.direction = +1
-            elif t<self.t0:
+            elif t < self.t0:
                 self.direction = -1
 
-            self.integrator=self.intobj(self.func, self.t0, self.y0,
-                                        self.direction*self.tmax, **self.extra_kwargs)
+            self.integrator = self.intobj(
+                self.func,
+                self.t0,
+                self.y0,
+                self.direction * self.tmax,
+                **self.extra_kwargs,
+            )
 
         # Did we go to a value smaller than our initial value, given the
         # direction?
-        elif (t<self.t0 and self.direction==+1) or (t>self.t0 and self.direction==-1):
+        elif (t < self.t0 and self.direction == +1) or (
+            t > self.t0 and self.direction == -1
+        ):
             # Reset the integrator.
-            self.t0=None
-            self.tlast=None
+            self.t0 = None
+            self.tlast = None
             # Cute way to reset the integrator to a new starting t:
             return self(t)
 
@@ -200,21 +212,33 @@ class parallelIntegrator(object):
         self.tlast = t
 
         # Now integrator up to t:
-        while self.integrator.t<t:
+        while self.integrator.t < t:
             self.integrator.step()
             sol = self.integrator.dense_output()
             self.interpolants.append(sol)
             self.ts.append(self.integrator.t)
 
+
 def _bind_event_args(event, args):
     def wrapped(t, x):
         return event(t, x, *args)
+
     return wrapped
 
 
-def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver] = 'RK45', t_eval=None,
-                     dense_output=False, events=None, vectorized=False,
-                     args=None, **options):
+def solve_ivp_random(
+    fun,
+    random_func,
+    t_span,
+    y0,
+    method: str | type[OdeSolver] = "RK45",
+    t_eval=None,
+    dense_output=False,
+    events=None,
+    vectorized=False,
+    args=None,
+    **options,
+):
     """Solve an initial value problem for a system of ODEs.
 
     This function numerically integrates a system of ordinary differential
@@ -534,9 +558,11 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     >>> plt.show()
     """
     if method not in METHODS and not (
-            inspect.isclass(method) and issubclass(method, OdeSolver)):
-        raise ValueError("`method` must be one of {} or OdeSolver class."
-                         .format(METHODS))
+        inspect.isclass(method) and issubclass(method, OdeSolver)
+    ):
+        raise ValueError(
+            "`method` must be one of {} or OdeSolver class.".format(METHODS)
+        )
 
     t0, tf = float(t_span[0]), float(t_span[1])
 
@@ -545,9 +571,9 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
         # additional parameters.  Pass in the original fun as a keyword
         # argument to keep it in the scope of the lambda.
         fun = lambda t, x, fun=fun: fun(t, x, *args)
-        jac = options.get('jac')
+        jac = options.get("jac")
         if callable(jac):
-            options['jac'] = lambda t, x: jac(t, x, *args)
+            options["jac"] = lambda t, x: jac(t, x, *args)
 
     if t_eval is not None:
         t_eval = np.asarray(t_eval)
@@ -574,11 +600,18 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     else:
         solver_class = method
 
-    max_step_initial = options.pop('initial_max_step', np.inf)
-    max_step_global = options.pop('max_step', np.inf)
+    max_step_initial = options.pop("initial_max_step", np.inf)
+    max_step_global = options.pop("max_step", np.inf)
 
-    solver = solver_class(fun, t0, y0, tf, vectorized=vectorized,
-                          max_step=max_step_initial, **options)  # pyright: ignore[reportCallIssue]
+    solver = solver_class(
+        fun,
+        t0,
+        y0,
+        tf,
+        vectorized=vectorized,
+        max_step=max_step_initial,  # pyright: ignore[reportCallIssue]
+        **options,
+    )
 
     if t_eval is None:
         ts = [t0]
@@ -620,14 +653,15 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     while status is None:
         message = solver.step()
 
-        if solver.status == 'finished':
+        if solver.status == "finished":
             status = 0
-        elif solver.status == 'failed':
+        elif solver.status == "failed":
             status = -1
             break
 
-        (random_event_number, max_step) = random_func(solver.t, solver.y,
-                                                      solver.step_size)
+        (random_event_number, max_step) = random_func(
+            solver.t, solver.y, solver.step_size
+        )
         if max_step is not None:
             solver.max_step = np.min([max_step, max_step_global])  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -635,7 +669,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
         t = solver.t
         y = solver.y
 
-        if random_event_number>0:
+        if random_event_number > 0:
             t_random.append(t)
             n_random.append(int(random_event_number))
 
@@ -653,10 +687,11 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
                     sol = solver.dense_output()
 
                 root_indices, roots, terminate = handle_events(  # type: ignore[call-arg]
-                    sol, events, active_events, is_terminal, t_old, t)
+                    sol, events, active_events, is_terminal, t_old, t
+                )
 
                 for e, te in zip(root_indices, roots):
-                    t_events[e].append(te)   # type: ignore[index]
+                    t_events[e].append(te)  # type: ignore[index]
                     y_events[e].append(sol(te))  # type: ignore[index]
 
                 if terminate:
@@ -672,10 +707,10 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
         else:
             # The value in t_eval equal to t will be included.
             if solver.direction > 0:
-                t_eval_i_new = np.searchsorted(t_eval, t, side='right')
+                t_eval_i_new = np.searchsorted(t_eval, t, side="right")
                 t_eval_step = t_eval[t_eval_i:t_eval_i_new]
             else:
-                t_eval_i_new = np.searchsorted(t_eval, t, side='left')
+                t_eval_i_new = np.searchsorted(t_eval, t, side="left")
                 # It has to be done with two slice operations, because
                 # you can't slice to 0-th element inclusive using backward
                 # slicing.
@@ -705,7 +740,7 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
         ts = np.hstack(ts)
         ys = np.hstack(ys)
 
-    if len(t_random)>0:
+    if len(t_random) > 0:
         t_random = np.array(t_random)
         n_random = np.vstack(n_random)
 
@@ -717,18 +752,29 @@ def solve_ivp_random(fun, random_func, t_span, y0, method: str | type[OdeSolver]
     else:
         sol = None
 
-    inds_random = np.zeros(ts.shape, dtype='bool')
+    inds_random = np.zeros(ts.shape, dtype="bool")
     for t_i in t_random:
-        inds_random = np.bitwise_or(inds_random, ts==t_i)
+        inds_random = np.bitwise_or(inds_random, ts == t_i)
 
-    return RandomOdeResult(t=ts, y=ys, sol=sol, t_events=t_events,
-                           y_events=y_events, t_random=t_random,
-                           n_random=n_random, inds_random=inds_random,
-                           nfev=solver.nfev, njev=solver.njev,
-                           nlu=solver.nlu, status=status, message=message,
-                           success=status >= 0)
+    return RandomOdeResult(
+        t=ts,
+        y=ys,
+        sol=sol,
+        t_events=t_events,
+        y_events=y_events,
+        t_random=t_random,
+        n_random=n_random,
+        inds_random=inds_random,
+        nfev=solver.nfev,
+        njev=solver.njev,
+        nlu=solver.nlu,
+        status=status,
+        message=message,
+        success=status >= 0,
+    )
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     import matplotlib.pyplot as plt
     import numpy as np
 
@@ -744,22 +790,26 @@ if __name__ == '__main__':
         else:
             return (0, max(0.1, np.abs(y[1])))
 
-
-    sol = solve_ivp_random(dydt, func2, [0, 10 * np.pi], [0., 1.],
-                           max_step=0.1, method='RK45')
+    sol = solve_ivp_random(
+        dydt, func2, [0, 10 * np.pi], [0.0, 1.0], max_step=0.1, method="RK45"
+    )
 
     plt.figure()
-    
 
     plt.plot(sol.t, sol.y.T)
-    
 
     if len(sol.t_random) > 0:
-        plt.plot(sol.t_random, sol.y[:, sol.inds_random].T, 'o', color='black', label='Random Kicks')
+        plt.plot(
+            sol.t_random,
+            sol.y[:, sol.inds_random].T,
+            "o",
+            color="black",
+            label="Random Kicks",
+        )
         plt.legend()
-        
-    plt.xlabel('Time')
-    plt.ylabel('State (Position & Velocity)')
-    plt.title('Stochastic ODE Integration (SciPy)')
-    
+
+    plt.xlabel("Time")
+    plt.ylabel("State (Position & Velocity)")
+    plt.title("Stochastic ODE Integration (SciPy)")
+
     plt.show()

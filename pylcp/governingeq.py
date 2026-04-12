@@ -5,6 +5,7 @@ Defines the common interface (initial conditions, force profiles, equilibrium
 finding, trapping frequencies, damping coefficients) shared by the heuristic
 equation, rate equations, and optical Bloch equations.
 """
+
 from __future__ import annotations
 
 import copy
@@ -63,32 +64,36 @@ class governingeq(object):
         laserBeams: dict[str, laserBeamsObject] | laserBeamsObject | list[Any],
         magField: magFieldObject | npt.ArrayLike,
         hamiltonian: Any = None,
-        a: npt.ArrayLike = jnp.array([0., 0., 0.]),
-        r0: npt.ArrayLike = jnp.array([0., 0., 0.]),
-        v0: npt.ArrayLike = jnp.array([0., 0., 0.]),
+        a: npt.ArrayLike = jnp.array([0.0, 0.0, 0.0]),
+        r0: npt.ArrayLike = jnp.array([0.0, 0.0, 0.0]),
+        v0: npt.ArrayLike = jnp.array([0.0, 0.0, 0.0]),
     ) -> None:
-        
-        a = jnp.asarray(a, dtype=jnp.float64) # cast to jax if not already given
+
+        a = jnp.asarray(
+            a, dtype=jnp.float64
+        )  # cast to jax if not already given
         r0 = jnp.asarray(r0, dtype=jnp.float64)
         v0 = jnp.asarray(v0, dtype=jnp.float64)
-        
+
         self.set_initial_position_and_velocity(r0, v0)
-        
+
         # Normalise laserBeams into a dict keyed by transition label (e.g. 'g->e').
         # Lists and bare laserBeams objects default to the 'g->e' key.
         self.laserBeams = {}
         if isinstance(laserBeams, list):
-            self.laserBeams['g->e'] = laserBeamsObject(laserBeams)
+            self.laserBeams["g->e"] = laserBeamsObject(laserBeams)
         elif isinstance(laserBeams, laserBeamsObject):
-            self.laserBeams['g->e'] = copy.copy(laserBeams)
+            self.laserBeams["g->e"] = copy.copy(laserBeams)
         elif isinstance(laserBeams, dict):
             for key in laserBeams.keys():
                 if not isinstance(laserBeams[key], laserBeamsObject):
-                    raise TypeError('Key %s in dictionary laserBeams ' % key +
-                                     'is not of type laserBeams.')
+                    raise TypeError(
+                        "Key %s in dictionary laserBeams " % key
+                        + "is not of type laserBeams."
+                    )
             self.laserBeams = copy.copy(laserBeams)
         else:
-            raise TypeError('laserBeams is not a valid type.')
+            raise TypeError("laserBeams is not a valid type.")
 
         # Add in magnetic field:
         if callable(magField):
@@ -98,8 +103,10 @@ class governingeq(object):
         elif isinstance(magField, magFieldObject):
             self.magField = copy.copy(magField)
         else:
-            raise TypeError('The magnetic field must be either a lambda ' +
-                            'function or a magField object.')
+            raise TypeError(
+                "The magnetic field must be either a lambda "
+                + "function or a magField object."
+            )
 
         # Add the Hamiltonian:
         if hamiltonian is not None:
@@ -111,7 +118,7 @@ class governingeq(object):
 
         # Check the acceleration:
         if a.size != 3:
-            raise ValueError('Constant acceleration must have length 3.')
+            raise ValueError("Constant acceleration must have length 3.")
         self.constant_accel = a
 
         # Set up a dictionary to store any resulting force profiles.
@@ -123,17 +130,19 @@ class governingeq(object):
         # Set an attribute for the equilibrium position:
         self.r_eq = None
 
-
     def __check_consistency_in_lasers_and_d_q(self):
         # Check that laser beam keys and Hamiltonian keys match.
         for laser_key in self.laserBeams.keys():
             if laser_key not in self.hamiltonian.laser_keys.keys():
-                raise ValueError('laserBeams dictionary keys %s ' % laser_key +
-                                 'does not have a corresponding key the '+
-                                 'Hamiltonian d_q.')
+                raise ValueError(
+                    "laserBeams dictionary keys %s " % laser_key
+                    + "does not have a corresponding key the "
+                    + "Hamiltonian d_q."
+                )
 
-
-    def set_initial_position_and_velocity(self, r0: npt.ArrayLike, v0: npt.ArrayLike) -> None:
+    def set_initial_position_and_velocity(
+        self, r0: npt.ArrayLike, v0: npt.ArrayLike
+    ) -> None:
         """
         Set the initial position and velocity.
 
@@ -225,7 +234,9 @@ class governingeq(object):
         """
         pass
 
-    def find_equilibrium_position(self, axes: Sequence[int], **kwargs: Any) -> jax.Array:
+    def find_equilibrium_position(
+        self, axes: Sequence[int], **kwargs: Any
+    ) -> jax.Array:
         r"""
         Find the equilibrium position.
 
@@ -256,6 +267,7 @@ class governingeq(object):
             return self.find_equilibrium_force()
 
         if len(axes) > 1:
+
             def multi_wrapper(r_changing):
                 r_vals = list(np.array(self.r_eq, dtype=float))
                 for i, ax in enumerate(axes):
@@ -282,7 +294,13 @@ class governingeq(object):
 
         return self.r_eq
 
-    def trapping_frequencies(self, axes: Sequence[int], r: npt.ArrayLike | None = None, eps: float = 0.01, **kwargs: Any) -> jax.Array | float:
+    def trapping_frequencies(
+        self,
+        axes: Sequence[int],
+        r: npt.ArrayLike | None = None,
+        eps: float = 0.01,
+        **kwargs: Any,
+    ) -> jax.Array | float:
         r"""
         Find the trapping frequency.
 
@@ -312,23 +330,33 @@ class governingeq(object):
         omega : list or float
             The trapping frequencies along the selected axes.
         """
-        self.omega = jnp.zeros(3,)
+        self.omega = jnp.zeros(
+            3,
+        )
 
-        eps_arr: jax.Array = jnp.array([eps]*3) if isinstance(eps, float) else jnp.asarray(eps)
+        eps_arr: jax.Array = (
+            jnp.array([eps] * 3)
+            if isinstance(eps, float)
+            else jnp.asarray(eps)
+        )
 
         if r is None and self.r_eq is None:
-            r = jnp.array([0., 0., 0.])
+            r = jnp.array([0.0, 0.0, 0.0])
         elif r is None:
-            r = self.r_eq if self.r_eq is not None else jnp.array([0., 0., 0.])
+            r = (
+                self.r_eq
+                if self.r_eq is not None
+                else jnp.array([0.0, 0.0, 0.0])
+            )
 
         assert r is not None
         r_arr: jax.Array = jnp.asarray(r)
 
-        mass = getattr(self, 'mass', None) or self.hamiltonian.mass
+        mass = getattr(self, "mass", None) or self.hamiltonian.mass
 
         for axis in axes:
             if not jnp.isnan(r_arr[axis]):
-                rpmdri = jnp.tile(r_arr, (2,1)).T
+                rpmdri = jnp.tile(r_arr, (2, 1)).T
                 # rpmdri[axis, 1] += eps_arr[axis]
                 # rpmdri[axis, 0] -= eps_arr[axis]
                 rpmdri = rpmdri.at[axis, 1].add(eps_arr[axis])
@@ -336,8 +364,9 @@ class governingeq(object):
 
                 F = np.zeros((2,))
                 for jj in range(2):
-                    self.set_initial_position_and_velocity(rpmdri[:, jj],
-                                                           jnp.zeros((3,)))
+                    self.set_initial_position_and_velocity(
+                        rpmdri[:, jj], jnp.zeros((3,))
+                    )
                     f = self.find_equilibrium_force(**kwargs)
 
                     assert f is not None
@@ -345,7 +374,9 @@ class governingeq(object):
 
                 dF = jnp.diff(jnp.array(F))[0]
                 if dF < 0:
-                    self.omega = self.omega.at[axis].set(jnp.sqrt(-dF/(2*eps_arr[axis]*mass)))
+                    self.omega = self.omega.at[axis].set(
+                        jnp.sqrt(-dF / (2 * eps_arr[axis] * mass))
+                    )
                 else:
                     self.omega = self.omega.at[axis].set(0.0)
             else:
@@ -356,7 +387,13 @@ class governingeq(object):
             return float(result[0])
         return result
 
-    def damping_coeff(self, axes: Sequence[int], r: npt.ArrayLike | None = None, eps: float = 0.01, **kwargs: Any) -> jax.Array | float:
+    def damping_coeff(
+        self,
+        axes: Sequence[int],
+        r: npt.ArrayLike | None = None,
+        eps: float = 0.01,
+        **kwargs: Any,
+    ) -> jax.Array | float:
         r"""
         Find the damping coefficent.
 
@@ -386,34 +423,46 @@ class governingeq(object):
         beta : list or float
             The damping coefficients along the selected axes.
         """
-        self.beta = jnp.zeros(3,)
+        self.beta = jnp.zeros(
+            3,
+        )
 
-        eps_arr: jax.Array = jnp.array([eps]*3) if isinstance(eps, float) else jnp.asarray(eps)
+        eps_arr: jax.Array = (
+            jnp.array([eps] * 3)
+            if isinstance(eps, float)
+            else jnp.asarray(eps)
+        )
 
         if r is None and self.r_eq is None:
-            r = jnp.array([0., 0., 0.])
+            r = jnp.array([0.0, 0.0, 0.0])
         elif r is None:
-            r = self.r_eq if self.r_eq is not None else jnp.array([0., 0., 0.])
+            r = (
+                self.r_eq
+                if self.r_eq is not None
+                else jnp.array([0.0, 0.0, 0.0])
+            )
 
         assert r is not None
         r_arr: jax.Array = jnp.asarray(r)
 
         for axis in axes:
             if not jnp.isnan(r_arr[axis]):
-                vpmdvi = jnp.zeros((3,2))
+                vpmdvi = jnp.zeros((3, 2))
                 vpmdvi = vpmdvi.at[axis, 1].add(eps_arr[axis])
                 vpmdvi = vpmdvi.at[axis, 0].subtract(eps_arr[axis])
 
                 F = np.zeros((2,))
                 for jj in range(2):
-                    self.set_initial_position_and_velocity(r_arr, vpmdvi[:, jj])
+                    self.set_initial_position_and_velocity(
+                        r_arr, vpmdvi[:, jj]
+                    )
                     f = self.find_equilibrium_force(**kwargs)
 
                     assert f is not None
                     F[jj] = f[axis]
 
                 dF = jnp.diff(jnp.asarray(F))[0]
-                self.beta = self.beta.at[axis].set(-dF/(2*eps_arr[axis]))
+                self.beta = self.beta.at[axis].set(-dF / (2 * eps_arr[axis]))
             else:
                 self.beta = self.beta.at[axis].set(0)
 

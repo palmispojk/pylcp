@@ -5,6 +5,7 @@ A JAX-accelerated simulation package for laser cooling physics, providing tools
 for computing optical Bloch equations, rate equations, and heuristic models of
 atom-light interactions in the presence of laser beams and magnetic fields.
 """
+
 from . import hamiltonians
 from .atom import atom
 from .fields import (
