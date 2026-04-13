@@ -1142,6 +1142,106 @@ class TestEvolveMotion:
 
 
 # ---------------------------------------------------------------------------
+# TestEvolveMotionPhysics
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.slow
+class TestEvolveMotionPhysics:
+    """Physical correctness of OBE evolve_motion trajectories."""
+
+    @pytest.fixture
+    def single_beam_obe(self):
+        """OBE with a single +z beam for radiation pressure tests."""
+        ham = make_ham(mass=1.0, gamma=1.0, k=1.0)
+        beams = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 1.0, "delta": 0.0}])
+        B = constantMagneticField(jnp.array([0.0, 0.0, 0.0]))
+        o = obe(beams, B, ham, transform_into_re_im=True)
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.zeros(3))
+        o.set_initial_rho_from_rateeq()
+        return o
+
+    @pytest.fixture
+    def mot_obe(self):
+        """OBE with counter-propagating red-detuned beams (1D MOT config)."""
+        ham = make_ham(mass=1.0, gamma=1.0, k=1.0)
+        beams = laserBeams(
+            [
+                {"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.5, "delta": -1.0},
+                {"kvec": [0.0, 0.0, -1.0], "pol": -1, "s": 0.5, "delta": -1.0},
+            ]
+        )
+        B = constantMagneticField(jnp.array([0.0, 0.0, 0.0]))
+        o = obe(beams, B, ham, transform_into_re_im=True)
+        return o
+
+    def test_single_beam_accelerates_in_z(self, single_beam_obe):
+        """+z beam should push the atom in +z."""
+        o = single_beam_obe
+        o.evolve_motion([0, 10.0], n_points=101, freeze_axis=[True, True, False], backend="cpu")
+        assert float(o.sols[0].r[2, -1]) > 0.0, "Atom should move in +z"
+        assert float(o.sols[0].v[2, -1]) > 0.0, "Atom should have +z velocity"
+
+    def test_single_beam_no_transverse_motion(self, single_beam_obe):
+        """A pure +z beam should not cause x or y motion."""
+        o = single_beam_obe
+        o.evolve_motion([0, 10.0], n_points=101, freeze_axis=[True, True, False], backend="cpu")
+        assert np.allclose(o.sols[0].r[0], 0.0, atol=1e-10)
+        assert np.allclose(o.sols[0].r[1], 0.0, atol=1e-10)
+
+    def test_freeze_axis_prevents_motion(self, single_beam_obe):
+        """Freezing z should prevent motion even with a +z beam."""
+        o = single_beam_obe
+        o.evolve_motion([0, 10.0], n_points=101, freeze_axis=[False, False, True], backend="cpu")
+        assert np.allclose(o.sols[0].r[2], 0.0, atol=1e-10)
+        assert np.allclose(o.sols[0].v[2], 0.0, atol=1e-10)
+
+    def test_density_matrix_stays_physical(self, single_beam_obe):
+        """Trace of rho must stay 1 and diagonal elements non-negative."""
+        o = single_beam_obe
+        o.evolve_motion([0, 10.0], n_points=101, freeze_axis=[True, True, False], backend="cpu")
+        rho = np.array(o.sols[0].rho)
+        n_times = rho.shape[2]
+        for t_idx in range(n_times):
+            trace = np.real(np.trace(rho[:, :, t_idx]))
+            assert trace == pytest.approx(1.0, abs=1e-4), f"Trace = {trace} at t_idx={t_idx}"
+            diag = np.real(np.diag(rho[:, :, t_idx]))
+            assert np.all(diag >= -1e-6), f"Negative population at t_idx={t_idx}"
+
+    def test_molasses_decelerates(self, mot_obe):
+        """Counter-propagating red-detuned beams should decelerate a moving atom."""
+        o = mot_obe
+        v0 = 2.0
+        o.set_initial_position(jnp.zeros(3))
+        o.set_initial_velocity(jnp.array([0.0, 0.0, v0]))
+        o.set_initial_rho_from_rateeq()
+        o.evolve_motion([0, 20.0], n_points=201, freeze_axis=[True, True, False], backend="cpu")
+        vz_final = float(o.sols[0].v[2, -1])
+        assert vz_final < v0, "Molasses should decelerate the atom"
+
+    def test_no_nan_in_trajectory(self, single_beam_obe):
+        o = single_beam_obe
+        o.evolve_motion([0, 10.0], n_points=101, freeze_axis=[True, True, False], backend="cpu")
+        assert not np.any(np.isnan(o.sols[0].r))
+        assert not np.any(np.isnan(o.sols[0].v))
+        assert not np.any(np.isnan(o.sols[0].rho))
+
+    def test_random_recoil_runs(self, single_beam_obe):
+        """random_recoil=True should run without error."""
+        o = single_beam_obe
+        o.evolve_motion(
+            [0, 5.0],
+            n_points=51,
+            freeze_axis=[True, True, False],
+            random_recoil=True,
+            backend="cpu",
+        )
+        assert len(o.sols) == 1
+        assert not np.any(np.isnan(o.sols[0].r))
+
+
+# ---------------------------------------------------------------------------
 # TestBatchSize
 # ---------------------------------------------------------------------------
 
