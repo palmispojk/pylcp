@@ -2,10 +2,10 @@
 
 ## Setup
 
-Install dependencies with [Poetry](https://python-poetry.org/):
+Install dependencies with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-poetry install --with dev
+uv sync --group dev
 ```
 
 ## Code quality
@@ -15,13 +15,13 @@ This project uses [ruff](https://docs.astral.sh/ruff/) for linting and formattin
 ### Linting
 
 ```bash
-poetry run ruff check pylcp
+uv run ruff check pylcp
 ```
 
 ### Formatting
 
 ```bash
-poetry run ruff format pylcp
+uv run ruff format pylcp
 ```
 
 All code should be formatted with `ruff format` before committing. The formatter uses a line length of 100 (configured in `pyproject.toml`).
@@ -29,7 +29,7 @@ All code should be formatted with `ruff format` before committing. The formatter
 ### Type checking
 
 ```bash
-poetry run pyright
+uv run pyright
 ```
 
 Pyright is configured in basic mode and checks the `pylcp/` directory. The `gratings` module is excluded from type checking due to an optional `numba` dependency.
@@ -37,7 +37,7 @@ Pyright is configured in basic mode and checks the `pylcp/` directory. The `grat
 ## Running tests
 
 ```bash
-poetry run pytest
+uv run pytest
 ```
 
 GPU tests are skipped automatically when no CUDA device is available.

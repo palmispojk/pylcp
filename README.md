@@ -29,23 +29,16 @@ pip install pylcp
 ```
 
 To install the development version (v2.0, JAX backend), clone the repository
-and install with [Poetry](https://python-poetry.org/):
+and install with [uv](https://docs.astral.sh/uv/):
 ```
 git clone https://github.com/palmispojk/pylcp/
 cd pylcp
-poetry install
+uv sync
 ```
 
 To also install development and documentation dependencies:
 ```
-poetry install --with dev,docs
-```
-
-Alternatively, you can install with pip (not recommended — Poetry is preferred
-for consistent dependency resolution):
-```
-pip install -e .
-pip install -e . --group dev --group docs
+uv sync --group dev --group docs
 ```
 
 Basic Usage
