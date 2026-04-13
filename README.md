@@ -1,7 +1,7 @@
 pylcp
 =================================
 
-[![Documentation Status](https://readthedocs.org/projects/python-laser-cooling-physics/badge/?version=latest)](https://python-laser-cooling-physics.readthedocs.io/en/latest/?badge=latest) [![GitHub version](https://badge.fury.io/gh/jqiAMO%2Fpylcp.svg)](https://badge.fury.io/gh/jqiAMO%2Fpylcp) [![PyPI version](https://badge.fury.io/py/pylcp.svg)](https://badge.fury.io/py/pylcp) [![Google group : SSFAM News](https://img.shields.io/badge/Google%20Group-pylcp-blue.svg)](https://groups.google.com/g/pylcp)
+[![Documentation Status](https://readthedocs.org/projects/python-laser-cooling-physics/badge/?version=latest)](https://python-laser-cooling-physics.readthedocs.io/en/latest/?badge=latest) [![Tests](https://github.com/JQIamo/pylcp/actions/workflows/tests.yml/badge.svg)](https://github.com/JQIamo/pylcp/actions/workflows/tests.yml) [![codecov](https://codecov.io/gh/JQIamo/pylcp/branch/master/graph/badge.svg)](https://codecov.io/gh/JQIamo/pylcp) [![GitHub version](https://badge.fury.io/gh/jqiAMO%2Fpylcp.svg)](https://badge.fury.io/gh/jqiAMO%2Fpylcp) [![PyPI version](https://badge.fury.io/py/pylcp.svg)](https://badge.fury.io/py/pylcp) [![Google group : SSFAM News](https://img.shields.io/badge/Google%20Group-pylcp-blue.svg)](https://groups.google.com/g/pylcp)
 
 `pylcp` is a Python package for calculating laser cooling physics.
 It automatically generates optical Bloch equations (or approximations thereof)
@@ -34,6 +34,11 @@ and install with [uv](https://docs.astral.sh/uv/):
 git clone https://github.com/palmispojk/pylcp/
 cd pylcp
 uv sync
+```
+
+For GPU-accelerated simulations (requires a CUDA-capable GPU):
+```
+uv sync --extra cuda
 ```
 
 To also install development and documentation dependencies:

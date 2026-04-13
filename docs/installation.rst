@@ -4,32 +4,64 @@ Installation instructions
 Prerequisites
 -------------
 
-Install python packages and packages for scientific computing in python.
-Specifically, `pylcp` uses `numpy`, `scipy`, `numba`.  We recommend installing
-python and the supporting packages via the Anaconda distribution; `pylcp` has
-been tested and found to work with Anaconda versions 2020.02+ (python 3.7).
+``pylcp`` requires Python >= 3.11.
 
-Recommended installation: via Python pip
-----------------------------------------
+As of v2.0, ``pylcp`` uses `JAX <https://github.com/jax-ml/jax>`_ and
+`Diffrax <https://github.com/patrick-kidger/diffrax>`_ as its numerical backend.
 
-Install via pip::
+Stable release (v1.x)
+----------------------
+
+The stable release is available on PyPI::
 
   pip install pylcp
 
-This automatically install `pylcp` into your python installation.  Please report
-issues to the GitHub page if you have any problems.
+.. note::
 
-Manual installation
--------------------
+   The PyPI version (1.x) still uses the original scipy backend. v2.0 has not
+   yet been released on PyPI.
 
-One can also manually check out the package from GitHub, navigate to the
-directory, and use::
+Development version (v2.0, JAX backend)
+---------------------------------------
 
-  python setup.py install
+Using `uv <https://docs.astral.sh/uv/>`_ (recommended)::
 
-If one wishes to participate in development, one should use::
+  git clone https://github.com/palmispojk/pylcp/
+  cd pylcp
+  uv sync
 
-  python setup.py develop
+Or using pip::
 
-which does the standard thing and puts an entry for pylcp in your easy_path.pth
-in your python installation.
+  git clone https://github.com/palmispojk/pylcp/
+  cd pylcp
+  pip install .
+
+GPU support
+-----------
+
+For GPU-accelerated simulations (requires a CUDA-capable GPU):
+
+Using uv::
+
+  uv sync --extra cuda
+
+Using pip::
+
+  pip install ".[cuda]"
+
+This installs JAX with CUDA 12 support. GPU tests in the test suite are
+automatically skipped when no GPU is detected.
+
+Development setup
+-----------------
+
+To install development and documentation dependencies::
+
+  uv sync --group dev --group docs
+
+Run the test suite with::
+
+  uv run pytest
+
+See `CONTRIBUTING.md <https://github.com/JQIamo/pylcp/blob/master/CONTRIBUTING.md>`_
+for code style and linting instructions.

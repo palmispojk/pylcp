@@ -10,7 +10,11 @@ already present in XLA_FLAGS, so user-specified values are respected.
 """
 import os
 
+import jax
+
 # Must happen before JAX is imported anywhere.
+jax.config.update("jax_enable_x64", True)
+
 _existing = os.environ.get("XLA_FLAGS", "")
 if "--xla_force_host_platform_device_count" not in _existing:
     os.environ["XLA_FLAGS"] = f"{_existing} --xla_force_host_platform_device_count=4".strip()

@@ -26,7 +26,6 @@ import pytest
 import numpy as np
 
 import jax
-jax.config.update("jax_enable_x64", True)
 import jax.numpy as jnp
 
 import pylcp.integration_tools_gpu as itg
