@@ -143,25 +143,19 @@ class transition:
 
         # Saturation intensity from Fermi's Golden Rule (SI), then convert
         # from W/m^2 to mW/cm^2 (multiply by 1000/1e4 = 0.1):
-        self.Isat = (
-            cts.hbar * self.omega**3 * state2.gamma / (12 * np.pi * cts.c**2)
-        )  # W/m^2
+        self.Isat = cts.hbar * self.omega**3 * state2.gamma / (12 * np.pi * cts.c**2)  # W/m^2
         self.Isat *= 1000 / 1e4  # -> mW/cm^2
 
         # Maximum scattering-force acceleration: a0 = hbar*k*gamma / (2*mass).
         # The factor 2*pi*100 converts k from cm^{-1} to rad/m.
-        self.a0 = (
-            cts.hbar * (2 * np.pi * 100 * self.k) * state2.gamma / 2 / mass
-        )  # m/s^2
+        self.a0 = cts.hbar * (2 * np.pi * 100 * self.k) * state2.gamma / 2 / mass  # m/s^2
         # Doppler velocity: v0 = gamma / k (in matching CGS-like units)
         self.v0 = state2.gamma / (2 * np.pi * 100 * self.k)  # m/s
         self.x0 = self.v0**2 / self.a0  # characteristic length scale
         self.t0 = self.v0 / self.a0  # characteristic time scale
 
         # Magnetic field that produces a Zeeman shift equal to one linewidth:
-        self.Bgamma = (
-            state2.gammaHz / cts.value("Bohr magneton in Hz/T") / 1e-4
-        )
+        self.Bgamma = state2.gammaHz / cts.value("Bohr magneton in Hz/T") / 1e-4
 
 
 class atom:
@@ -662,6 +656,4 @@ class atom:
         self.transition = []
         for ii, state_i in enumerate(self.state):
             if ii > 0:
-                self.transition.append(
-                    transition(self.state[0], state_i, self.mass)
-                )
+                self.transition.append(transition(self.state[0], state_i, self.mass))

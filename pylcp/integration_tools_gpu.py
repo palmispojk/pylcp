@@ -16,9 +16,7 @@ import time
 
 import numpy as np
 
-os.environ.setdefault(
-    "TF_CPP_MIN_LOG_LEVEL", "2"
-)  # suppress XLA Triton tiling warnings
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")  # suppress XLA Triton tiling warnings
 import jax
 
 jax.config.update("jax_enable_x64", True)
@@ -225,9 +223,7 @@ class RandomOdeResult:
         self._cache["success"] = bool(bs["t"][i] >= self._tf)
         self._cache["status"] = 0 if self._cache["success"] else -1
         self._cache["message"] = (
-            "Success"
-            if self._cache["success"]
-            else "Terminated early (did not reach tf)."
+            "Success" if self._cache["success"] else "Terminated early (did not reach tf)."
         )
         self._cache["nfev"] = int(bs["nfev"][i])
 
@@ -267,9 +263,7 @@ def _make_run_group(func, random_func, solver_type):
 
     term = ODETerm(_ensure_3arg(func))
 
-    @functools.partial(
-        jax.jit, static_argnames=("rtol", "atol", "max_step_global")
-    )
+    @functools.partial(jax.jit, static_argnames=("rtol", "atol", "max_step_global"))
     def _run_group(carry_batch, max_step_global, rtol, atol, args):
         def _single_group(carry):
             def cond_fn(s):
@@ -315,9 +309,7 @@ def _make_run_group(func, random_func, solver_type):
                     "key": key_new,
                     "step_idx": s["step_idx"] + 1,
                     "nfev": s["nfev"] + nfev_add,
-                    "last_t_random": jnp.where(
-                        n_scatters > 0, t_next, s["last_t_random"]
-                    ),
+                    "last_t_random": jnp.where(n_scatters > 0, t_next, s["last_t_random"]),
                     "last_n_random": jnp.where(
                         n_scatters > 0,
                         jnp.int32(n_scatters),
@@ -388,9 +380,7 @@ def _batched_random_trajectories(
     _tmpdir = output_dir or tempfile.gettempdir()
 
     def _make_mmap(name, shape, dtype):
-        fd, path = tempfile.mkstemp(
-            prefix=f"pylcp_{name}_", suffix=".mmap", dir=_tmpdir
-        )
+        fd, path = tempfile.mkstemp(prefix=f"pylcp_{name}_", suffix=".mmap", dir=_tmpdir)
         os.close(fd)
         mm = np.memmap(path, dtype=dtype, mode="w+", shape=shape)
         # Unlink immediately: on Linux the file stays accessible via the
@@ -425,8 +415,7 @@ def _batched_random_trajectories(
             m, s = divmod(int(eta), 60)
             h, m = divmod(m, 60)
             print(
-                f"\r  [{_gi}/{n_points}] {100 * _gi / n_points:.0f}%  "
-                f"ETA {h}h{m:02d}m{s:02d}s",
+                f"\r  [{_gi}/{n_points}] {100 * _gi / n_points:.0f}%  ETA {h}h{m:02d}m{s:02d}s",
                 end="",
                 flush=True,
             )
@@ -444,9 +433,7 @@ def _batched_random_trajectories(
                 **carry,
                 "last_t_random": jnp.zeros(N, dtype=jnp.float64),
                 "last_n_random": jnp.zeros(N, dtype=jnp.int32),
-                "t_save_next": jnp.full(
-                    N, t_save_grid[_gi + 2], dtype=jnp.float64
-                ),
+                "t_save_next": jnp.full(N, t_save_grid[_gi + 2], dtype=jnp.float64),
             }
 
     if progress:
@@ -703,10 +690,7 @@ def _probe_throughput_cap(state_dim, threshold=1.15, max_n=131072, n_groups=5):
         prev_spa = spa
         n *= 2
 
-    _log.info(
-        f"[_probe_throughput_cap] state_dim={state_dim}, "
-        f"throughput knee at N={knee_n}"
-    )
+    _log.info(f"[_probe_throughput_cap] state_dim={state_dim}, throughput knee at N={knee_n}")
     return knee_n
 
 
@@ -914,9 +898,7 @@ def solve_ivp_random(
         )
         tf_float = float(tf)
         return [
-            RandomOdeResult(
-                _batched_state=batched_state, _index=i, _tf=tf_float
-            )
+            RandomOdeResult(_batched_state=batched_state, _index=i, _tf=tf_float)
             for i in range(chunk_N)
         ]
 
@@ -932,9 +914,7 @@ def solve_ivp_random(
     results = []
     for start in range(0, N, batch_size):
         end = min(start + batch_size, N)
-        results.extend(
-            _run_chunk(y0_batch[start:end], keys_batch[start:end], end - start)
-        )
+        results.extend(_run_chunk(y0_batch[start:end], keys_batch[start:end], end - start))
     return results
 
 
@@ -991,8 +971,7 @@ def _batched_dense_trajectories(
         solver = Kvaerno5()
     else:
         raise ValueError(
-            f"Solver '{solver_type}' not recognised. "
-            f"Use 'Dopri5', 'Bosh3', or 'Kvaerno5'."
+            f"Solver '{solver_type}' not recognised. Use 'Dopri5', 'Bosh3', or 'Kvaerno5'."
         )
 
     term = ODETerm(_ensure_3arg(func))

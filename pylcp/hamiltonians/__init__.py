@@ -195,12 +195,7 @@ def fine_structure_uncoupled(
         if S > 0 and L > 0:
             H_0[ii, ii] += (
                 mL * mI * (L + S) * a_orb / L
-                + mS
-                * mI
-                * (3 * mL**2 - L * (L + 1))
-                * (L + S)
-                * a_dip
-                / (1 * S * (2 * L - 1))
+                + mS * mI * (3 * mL**2 - L * (L + 1)) * (L + S) * a_dip / (1 * S * (2 * L - 1))
                 + mL * mS * xi
             )
 
@@ -208,16 +203,16 @@ def fine_structure_uncoupled(
         if mL + 1 <= L and mS - 1 >= -S and L > 0:
             t1 = np.sqrt((L - mL) * (L + mL + 1) * (S + mS) * (S - mS + 1))
             drow = int(np.round(2 * S * (2 * I + 1)))
-            H_0[ii + drow, ii] += t1 * xi / 2 + t1 * 3 * (2 * mL + 1) * mI * (
-                L + S
-            ) * a_dip / (4 * L * S * (2 * L - 1))
+            H_0[ii + drow, ii] += t1 * xi / 2 + t1 * 3 * (2 * mL + 1) * mI * (L + S) * a_dip / (
+                4 * L * S * (2 * L - 1)
+            )
 
         if mS + 1 <= S and mL - 1 >= -L and L > 0:
             t1 = np.sqrt((S - mS) * (S + mS + 1) * (L + mL) * (L - mL + 1))
             drow = int(np.round(-2 * S * (2 * I + 1)))
-            H_0[ii + drow, ii] += t1 * xi / 2 + t1 * 3 * (2 * mL - 1) * mI * (
-                L + S
-            ) * a_dip / (4 * L * S * (2 * L - 1))
+            H_0[ii + drow, ii] += t1 * xi / 2 + t1 * 3 * (2 * mL - 1) * mI * (L + S) * a_dip / (
+                4 * L * S * (2 * L - 1)
+            )
 
         # (III)
         if mS + 1 <= S and mI - 1 >= -I:
@@ -227,11 +222,7 @@ def fine_structure_uncoupled(
                 H_0[ii + drow, ii] += t1 * (L + S) * a_c / 2 / S
             if L > 0 and np.abs(a_dip) > 0.0:
                 H_0[ii + drow, ii] += (
-                    -t1
-                    * (3 * mL**2 - L * (L + 1))
-                    * (L + S)
-                    * a_dip
-                    / (4 * L * S * (2 * L - 1))
+                    -t1 * (3 * mL**2 - L * (L + 1)) * (L + S) * a_dip / (4 * L * S * (2 * L - 1))
                 )
 
         if mI + 1 <= I and mS - 1 >= -S:
@@ -241,37 +232,23 @@ def fine_structure_uncoupled(
                 H_0[ii + drow, ii] += t1 * (L + S) * a_c / 2 / S
             if L > 0 and np.abs(a_dip) > 0.0:
                 H_0[ii + drow, ii] += (
-                    -t1
-                    * (3 * mL**2 - L * (L + 1))
-                    * (L + S)
-                    * a_dip
-                    / (4 * L * S * (2 * L - 1))
+                    -t1 * (3 * mL**2 - L * (L + 1)) * (L + S) * a_dip / (4 * L * S * (2 * L - 1))
                 )
 
         # (IV)
-        if (
-            mL + 1 <= L
-            and mI - 1 >= -I
-            and L > 0
-            and (np.abs(a_orb) > 0.0 or np.abs(a_dip) > 0.0)
-        ):
+        if mL + 1 <= L and mI - 1 >= -I and L > 0 and (np.abs(a_orb) > 0.0 or np.abs(a_dip) > 0.0):
             t1 = np.sqrt((L - mL) * (L + mL + 1) * (I + mI) * (I - mI + 1))
             drow = int((2 * I + 1) * (2 * S + 1) - 1)
-            H_0[ii + drow, ii] += t1 * (1 + S) * a_orb / 2 / L + t1 * 3 * (
-                2 * mL + 1
-            ) * mS * (1 + S) * a_dip / (4 * L * S * (2 * L - 1))
+            H_0[ii + drow, ii] += t1 * (1 + S) * a_orb / 2 / L + t1 * 3 * (2 * mL + 1) * mS * (
+                1 + S
+            ) * a_dip / (4 * L * S * (2 * L - 1))
 
-        if (
-            mI + 1 <= I
-            and mL - 1 >= -L
-            and L > 0
-            and (np.abs(a_orb) > 0.0 or np.abs(a_dip) > 0.0)
-        ):
+        if mI + 1 <= I and mL - 1 >= -L and L > 0 and (np.abs(a_orb) > 0.0 or np.abs(a_dip) > 0.0):
             t1 = np.sqrt((I - mI) * (I + mI + 1) * (L + mL) * (L - mL + 1))
             drow = int(1 - (2 * I + 1) * (2 * S + 1))
-            H_0[ii + drow, ii] += t1 * (1 + S) * a_orb / 2 / L + t1 * 3 * (
-                2 * mL - 1
-            ) * mS * (1 + S) * a_dip / (4 * L * S * (2 * L - 1))
+            H_0[ii + drow, ii] += t1 * (1 + S) * a_orb / 2 / L + t1 * 3 * (2 * mL - 1) * mS * (
+                1 + S
+            ) * a_dip / (4 * L * S * (2 * L - 1))
 
         # (V)
         if (
@@ -293,17 +270,8 @@ def fine_structure_uncoupled(
                 * (I - mI + 1)
             )
             drow = int(2 * (2 * I + 1) * (2 * S + 1) - (2 * I + 1) - 1)
-            H_0[ii + drow, ii] += (
-                t1 * 3 * (1 + S) * a_dip / (4 * L * S * (2 * L - 1))
-            )
-        if (
-            mL - 2 >= -L
-            and mS + 1 <= S
-            and mI + 1 <= I
-            and np.abs(a_dip) > 0.0
-            and L > 0
-            and S > 0
-        ):
+            H_0[ii + drow, ii] += t1 * 3 * (1 + S) * a_dip / (4 * L * S * (2 * L - 1))
+        if mL - 2 >= -L and mS + 1 <= S and mI + 1 <= I and np.abs(a_dip) > 0.0 and L > 0 and S > 0:
             t1 = np.sqrt(
                 (L + mL)
                 * (L + mL - 1)
@@ -315,9 +283,7 @@ def fine_structure_uncoupled(
                 * (I + mI + 1)
             )
             drow = int(-2 * (2 * I + 1) * (2 * S + 1) + (2 * I + 1) + 1)
-            H_0[ii + drow, ii] += (
-                t1 * 3 * (1 + S) * a_dip / (4 * L * S * (2 * L - 1))
-            )
+            H_0[ii + drow, ii] += t1 * 3 * (1 + S) * a_dip / (4 * L * S * (2 * L - 1))
 
     H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
     mu_q_jax = jnp.asarray(mu_q, dtype=jnp.complex128)
@@ -416,9 +382,7 @@ def hyperfine_uncoupled(
                 for mI in np.arange(-I, I + 0.1, 1):
                     for mIp in np.arange(-I, I + 0.1, 1):
                         if mIp == mI:
-                            mu_q[
-                                kk, index(J, I, mJ, mI), index(J, I, mJp, mIp)
-                            ] += (
+                            mu_q[kk, index(J, I, mJ, mI), index(J, I, mJp, mIp)] += (
                                 gJ
                                 * muB
                                 * (-1) ** (J - mJ)
@@ -426,9 +390,7 @@ def hyperfine_uncoupled(
                                 * np.sqrt(J * (J + 1) * (2 * J + 1))
                             )
                         if mJ == mJp:
-                            mu_q[
-                                kk, index(J, I, mJ, mI), index(J, I, mJp, mIp)
-                            ] -= (
+                            mu_q[kk, index(J, I, mJ, mI), index(J, I, mJp, mIp)] -= (
                                 gI
                                 * muB
                                 * (-1) ** (I - mI)
@@ -445,26 +407,18 @@ def hyperfine_uncoupled(
     for mJ in np.arange(-J, J, 1):
         for mI in np.arange(-I + 1, I + 1, 1):
             H_0[index(J, I, mJ + 1, mI - 1), index(J, I, mJ, mI)] += (
-                0.5
-                * Ahfs
-                * np.sqrt((J - mJ) * (J + mJ + 1))
-                * np.sqrt((I + mI) * (I - mI + 1))
+                0.5 * Ahfs * np.sqrt((J - mJ) * (J + mJ + 1)) * np.sqrt((I + mI) * (I - mI + 1))
             )
 
     # Now, go through and do the J_-I_+ term:
     for mJ in np.arange(-J + 1, J + 1, 1):
         for mI in np.arange(-I, I, 1):
             H_0[index(J, I, mJ - 1, mI + 1), index(J, I, mJ, mI)] += (
-                0.5
-                * Ahfs
-                * np.sqrt((J + mJ) * (J - mJ + 1))
-                * np.sqrt((I - mI) * (I + mI + 1))
+                0.5 * Ahfs * np.sqrt((J + mJ) * (J - mJ + 1)) * np.sqrt((I - mI) * (I + mI + 1))
             )
 
     if Bhfs != 0:
-        Bhfs = Bhfs / (
-            2 * I * (2 * I - 1) * J * (2 * J - 1)
-        )  # rescale, include the denominator
+        Bhfs = Bhfs / (2 * I * (2 * I - 1) * J * (2 * J - 1))  # rescale, include the denominator
         # Next, do the J_zI_z diagonal elements\
         for mJ in np.arange(-J, J + 1, 1):
             for mI in np.arange(-I, I + 1, 1):
@@ -473,16 +427,10 @@ def hyperfine_uncoupled(
                     3 * mJ**2 * mI**2
                     +
                     # J_-J_+I_+I_- from (I\cdotJ)^2
-                    3
-                    / 4
-                    * (J * (J + 1) - mJ**2 - mJ)
-                    * (I * (I + 1) - mI**2 + mI)
+                    3 / 4 * (J * (J + 1) - mJ**2 - mJ) * (I * (I + 1) - mI**2 + mI)
                     +
                     # J_+J_-I_-I_+ from (I\cdotJ)^2
-                    3
-                    / 4
-                    * (J * (J + 1) - mJ**2 + mJ)
-                    * (I * (I + 1) - mI**2 - mI)
+                    3 / 4 * (J * (J + 1) - mJ**2 + mJ) * (I * (I + 1) - mI**2 - mI)
                     +
                     # J_zI_z from (I\cdotJ)
                     3 / 2 * mJ * mI
@@ -494,47 +442,29 @@ def hyperfine_uncoupled(
         # Now, go through and do the J_+I_- terms:
         for mJ in np.arange(-J, J, 1):
             for mI in np.arange(-I + 1, I + 1, 1):
-                H_0[index(J, I, mJ + 1, mI - 1), index(J, I, mJ, mI)] += (
-                    Bhfs
-                    * (
-                        # J_z I_z J_+I_- + J_+I_-J_z I_z term form 3(I\cdotJ)^2:
-                        3
-                        / 2
-                        * ((mJ + 1) * (mI - 1) + mJ * mI)
-                        * np.sqrt(
-                            (J - mJ) * (J + mJ + 1) * (I + mI) * (I - mI + 1)
-                        )
-                        +
-                        # J_+I_- term form 3/2(I\cdotJ):
-                        3
-                        / 4
-                        * np.sqrt(
-                            (J - mJ) * (J + mJ + 1) * (I + mI) * (I - mI + 1)
-                        )
-                    )
+                H_0[index(J, I, mJ + 1, mI - 1), index(J, I, mJ, mI)] += Bhfs * (
+                    # J_z I_z J_+I_- + J_+I_-J_z I_z term form 3(I\cdotJ)^2:
+                    3
+                    / 2
+                    * ((mJ + 1) * (mI - 1) + mJ * mI)
+                    * np.sqrt((J - mJ) * (J + mJ + 1) * (I + mI) * (I - mI + 1))
+                    +
+                    # J_+I_- term form 3/2(I\cdotJ):
+                    3 / 4 * np.sqrt((J - mJ) * (J + mJ + 1) * (I + mI) * (I - mI + 1))
                 )
 
         # Now, go through and do the J_-I_+ terms:
         for mJ in np.arange(-J + 1, J + 1, 1):
             for mI in np.arange(-I, I, 1):
-                H_0[index(J, I, mJ - 1, mI + 1), index(J, I, mJ, mI)] += (
-                    Bhfs
-                    * (
-                        # J_z I_z J_-I_+ + J_-I_+J_z I_z term form 3(I\cdotJ)^2:
-                        3
-                        / 2
-                        * ((mJ - 1) * (mI + 1) + mJ * mI)
-                        * np.sqrt(
-                            (J + mJ) * (J - mJ + 1) * (I - mI) * (I + mI + 1)
-                        )
-                        +
-                        # J_+I_- term form 3/2(I\cdotJ):
-                        3
-                        / 4
-                        * np.sqrt(
-                            (J + mJ) * (J - mJ + 1) * (I - mI) * (I + mI + 1)
-                        )
-                    )
+                H_0[index(J, I, mJ - 1, mI + 1), index(J, I, mJ, mI)] += Bhfs * (
+                    # J_z I_z J_-I_+ + J_-I_+J_z I_z term form 3(I\cdotJ)^2:
+                    3
+                    / 2
+                    * ((mJ - 1) * (mI + 1) + mJ * mI)
+                    * np.sqrt((J + mJ) * (J - mJ + 1) * (I - mI) * (I + mI + 1))
+                    +
+                    # J_+I_- term form 3/2(I\cdotJ):
+                    3 / 4 * np.sqrt((J + mJ) * (J - mJ + 1) * (I - mI) * (I + mI + 1))
                 )
 
         # Now, go through and do the J_-J_-I_+I_+ terms:
@@ -544,12 +474,8 @@ def hyperfine_uncoupled(
                     3
                     / 4
                     * Bhfs
-                    * np.sqrt(
-                        (J + mJ - 1) * (J + mJ) * (J - mJ + 1) * (J - mJ + 2)
-                    )
-                    * np.sqrt(
-                        (I - mI - 1) * (I - mI) * (I + mI + 1) * (I + mI + 2)
-                    )
+                    * np.sqrt((J + mJ - 1) * (J + mJ) * (J - mJ + 1) * (J - mJ + 2))
+                    * np.sqrt((I - mI - 1) * (I - mI) * (I + mI + 1) * (I + mI + 2))
                 )
 
         # Now, go through and do the J_+J_+I_-I_- terms:
@@ -559,12 +485,8 @@ def hyperfine_uncoupled(
                     3
                     / 4
                     * Bhfs
-                    * np.sqrt(
-                        (J - mJ - 1) * (J - mJ) * (J + mJ + 1) * (J + mJ + 2)
-                    )
-                    * np.sqrt(
-                        (I + mI - 1) * (I + mI) * (I - mI + 1) * (I - mI + 2)
-                    )
+                    * np.sqrt((J - mJ - 1) * (J - mJ) * (J + mJ + 1) * (J + mJ + 2))
+                    * np.sqrt((I + mI - 1) * (I + mI) * (I - mI + 1) * (I - mI + 2))
                 )
 
     H_0_jax = jnp.asarray(H_0, dtype=jnp.complex128)
@@ -692,13 +614,7 @@ def hyperfine_coupled(
             Chfs
             * (
                 5 * Ks**2 * (Ks / 4 + 1)
-                + Ks
-                * (
-                    I * (I + 1)
-                    + J * (J + 1)
-                    + 3
-                    - 3 * I * (I + 1) * J * (J + 1)
-                )
+                + Ks * (I * (I + 1) + J * (J + 1) + 3 - 3 * I * (I + 1) * J * (J + 1))
                 - 5 * I * (I + 1) * J * (J + 1)
             )
             / (I * (I - 1) * (2 * I - 1) * J * (J - 1) * (2 * J - 1))
@@ -897,9 +813,9 @@ def dqij_two_hyperfine_manifolds(J, Jp, I, normalize=True, return_basis=False):
                 for m_Fp in np.arange(-Fp, Fp + 0.5, 1):
                     m_F = m_Fp + q
                     if not np.abs(m_F) > F:
-                        dqij[
-                            ii, index(Fmin, F, m_F), index(Fpmin, Fp, m_Fp)
-                        ] = matrix_element(J, F, m_F, Jp, Fp, m_Fp, I, q)
+                        dqij[ii, index(Fmin, F, m_F), index(Fpmin, Fp, m_Fp)] = matrix_element(
+                            J, F, m_F, Jp, Fp, m_Fp, I, q
+                        )
 
     if normalize:
         dqij = dqij_norm(dqij)
@@ -955,9 +871,9 @@ def dqij_two_bare_hyperfine(F, Fp, normalize=True):
             # m_F1 takes on a q value:
             m_F = m_Fp + q
             if not np.abs(m_F) > F:
-                dqij[ii, index(F, m_F), index(Fp, m_Fp)] = (-1) ** (
-                    F - m_F
-                ) * wig3j(F, 1, Fp, -m_F, q, m_Fp)
+                dqij[ii, index(F, m_F), index(Fp, m_Fp)] = (-1) ** (F - m_F) * wig3j(
+                    F, 1, Fp, -m_F, q, m_Fp
+                )
 
     # Normalization involves normalzing each transition |g>->|e> to the norm of
     # all the transitions from the excited state sum(|e>->|g>).   That means

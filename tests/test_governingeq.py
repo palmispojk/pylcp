@@ -1,17 +1,18 @@
 """
 Tests for pylcp/governingeq.py
 """
-import pytest
-import numpy as np
+
 import jax.numpy as jnp
+import numpy as np
+import pytest
 
+from pylcp.fields import constantMagneticField, laserBeam, laserBeams
 from pylcp.governingeq import governingeq
-from pylcp.fields import laserBeams, laserBeam, magField, constantMagneticField
-
 
 # ---------------------------------------------------------------------------
 # Minimal concrete subclasses
 # ---------------------------------------------------------------------------
+
 
 class _LinearForceGovEq(governingeq):
     """F = -k*r  (restoring — simple harmonic trap)."""
@@ -28,8 +29,7 @@ class _LinearForceGovEq(governingeq):
 class _VelocityDampedGovEq(governingeq):
     """F = -k*r - b*v  (restoring + velocity damping)."""
 
-    def __init__(self, laserBeams_arg, magField_arg, k=1.0, beta=2.0,
-                 mass=1.0, **kwargs):
+    def __init__(self, laserBeams_arg, magField_arg, k=1.0, beta=2.0, mass=1.0, **kwargs):
         super().__init__(laserBeams_arg, magField_arg, **kwargs)
         self.k = k
         self._beta = beta
@@ -43,14 +43,15 @@ class _VelocityDampedGovEq(governingeq):
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def simple_beams():
-    return laserBeams([{'kvec': [0., 0., 1.], 'pol': +1, 's': 1.0, 'delta': -2.0}])
+    return laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 1.0, "delta": -2.0}])
 
 
 @pytest.fixture
 def zero_magfield():
-    return constantMagneticField(jnp.array([0., 0., 0.]))
+    return constantMagneticField(jnp.array([0.0, 0.0, 0.0]))
 
 
 @pytest.fixture
@@ -60,30 +61,30 @@ def linear_geq(simple_beams, zero_magfield):
 
 @pytest.fixture
 def damped_geq(simple_beams, zero_magfield):
-    return _VelocityDampedGovEq(simple_beams, zero_magfield, k=1.0, beta=2.0,
-                                 mass=1.0)
+    return _VelocityDampedGovEq(simple_beams, zero_magfield, k=1.0, beta=2.0, mass=1.0)
 
 
 # ---------------------------------------------------------------------------
 # TestGoverningEqInit
 # ---------------------------------------------------------------------------
 
+
 class TestGoverningEqInit:
     def test_list_of_beams_stored_under_g_to_e(self, zero_magfield):
-        beam_list = [laserBeam(kvec=[0., 0., 1.], pol=+1, s=1.0, delta=0.)]
+        beam_list = [laserBeam(kvec=[0.0, 0.0, 1.0], pol=+1, s=1.0, delta=0.0)]
         geq = _LinearForceGovEq(beam_list, zero_magfield)
-        assert 'g->e' in geq.laserBeams
-        assert geq.laserBeams['g->e'].num_of_beams == 1
+        assert "g->e" in geq.laserBeams
+        assert geq.laserBeams["g->e"].num_of_beams == 1
 
     def test_laserbeams_object_stored_under_g_to_e(self, simple_beams, zero_magfield):
         geq = _LinearForceGovEq(simple_beams, zero_magfield)
-        assert 'g->e' in geq.laserBeams
-        assert geq.laserBeams['g->e'].num_of_beams == 1
+        assert "g->e" in geq.laserBeams
+        assert geq.laserBeams["g->e"].num_of_beams == 1
 
     def test_dict_of_laserbeams_stored(self, simple_beams, zero_magfield):
-        lb_dict = {'g->e': simple_beams}
+        lb_dict = {"g->e": simple_beams}
         geq = _LinearForceGovEq(lb_dict, zero_magfield)
-        assert 'g->e' in geq.laserBeams
+        assert "g->e" in geq.laserBeams
 
     def test_invalid_laserbeams_type_raises(self, zero_magfield):
         with pytest.raises(TypeError):
@@ -91,20 +92,19 @@ class TestGoverningEqInit:
 
     def test_invalid_dict_value_raises(self, zero_magfield):
         with pytest.raises(TypeError):
-            _LinearForceGovEq({'g->e': "not_a_laserbeams"}, zero_magfield)
+            _LinearForceGovEq({"g->e": "not_a_laserbeams"}, zero_magfield)
 
     def test_callable_magfield_wrapped(self, simple_beams):
-        geq = _LinearForceGovEq(simple_beams,
-                                 lambda R, t: jnp.array([0., 0., 0.]))
-        assert hasattr(geq.magField, 'Field')
+        geq = _LinearForceGovEq(simple_beams, lambda R, t: jnp.array([0.0, 0.0, 0.0]))
+        assert hasattr(geq.magField, "Field")
 
     def test_magfield_object_stored(self, simple_beams, zero_magfield):
         geq = _LinearForceGovEq(simple_beams, zero_magfield)
-        assert hasattr(geq.magField, 'Field')
+        assert hasattr(geq.magField, "Field")
 
     def test_array_magfield_wrapped(self, simple_beams):
-        geq = _LinearForceGovEq(simple_beams, np.array([0., 1., 0.]))
-        assert hasattr(geq.magField, 'Field')
+        geq = _LinearForceGovEq(simple_beams, np.array([0.0, 1.0, 0.0]))
+        assert hasattr(geq.magField, "Field")
 
     def test_invalid_magfield_type_raises(self, simple_beams):
         with pytest.raises(TypeError):
@@ -112,14 +112,13 @@ class TestGoverningEqInit:
 
     def test_wrong_accel_size_raises(self, simple_beams, zero_magfield):
         with pytest.raises(ValueError):
-            _LinearForceGovEq(simple_beams, zero_magfield,
-                               a=jnp.array([0., 0.]))
+            _LinearForceGovEq(simple_beams, zero_magfield, a=jnp.array([0.0, 0.0]))
 
     def test_default_accel_is_zero(self, linear_geq):
         assert jnp.allclose(linear_geq.constant_accel, jnp.zeros(3))
 
     def test_custom_accel_stored(self, simple_beams, zero_magfield):
-        g = jnp.array([0., 0., -9.8])
+        g = jnp.array([0.0, 0.0, -9.8])
         geq = _LinearForceGovEq(simple_beams, zero_magfield, a=g)
         assert jnp.allclose(geq.constant_accel, g)
 
@@ -140,9 +139,10 @@ class TestGoverningEqInit:
 # TestSetPositionVelocity
 # ---------------------------------------------------------------------------
 
+
 class TestSetPositionVelocity:
     def test_set_initial_position_updates_r0(self, linear_geq):
-        r_new = jnp.array([1., 2., 3.])
+        r_new = jnp.array([1.0, 2.0, 3.0])
         linear_geq.set_initial_position(r_new)
         assert jnp.allclose(linear_geq.r0, r_new)
 
@@ -162,14 +162,14 @@ class TestSetPositionVelocity:
         assert linear_geq.sol is None
 
     def test_set_position_and_velocity_together(self, linear_geq):
-        r = jnp.array([1., 0., 0.])
-        v = jnp.array([0., 1., 0.])
+        r = jnp.array([1.0, 0.0, 0.0])
+        v = jnp.array([0.0, 1.0, 0.0])
         linear_geq.set_initial_position_and_velocity(r, v)
         assert jnp.allclose(linear_geq.r0, r)
         assert jnp.allclose(linear_geq.v0, v)
 
     def test_r0_stored_as_jax_array(self, linear_geq):
-        linear_geq.set_initial_position(np.array([1., 2., 3.]))
+        linear_geq.set_initial_position(np.array([1.0, 2.0, 3.0]))
         assert isinstance(linear_geq.r0, jnp.ndarray)
 
     def test_v0_stored_as_jax_array(self, linear_geq):
@@ -181,6 +181,7 @@ class TestSetPositionVelocity:
 # TestFindEquilibriumPosition
 # ---------------------------------------------------------------------------
 
+
 class TestFindEquilibriumPosition:
     """Find the position r⃗_eq where the net force vanishes: F⃗(r⃗_eq) = 0⃗.
 
@@ -189,8 +190,7 @@ class TestFindEquilibriumPosition:
 
     def test_single_axis_finds_zero(self, linear_geq):
         # F = -k*r, equilibrium at r=0 for any k>0
-        r_eq = linear_geq.find_equilibrium_position(
-            [0], bracket=[-2., 2.], method='brentq')
+        r_eq = linear_geq.find_equilibrium_position([0], bracket=[-2.0, 2.0], method="brentq")
         assert float(r_eq[0]) == pytest.approx(0.0, abs=1e-6)
 
     def test_two_axes_find_zero(self, linear_geq):
@@ -199,8 +199,7 @@ class TestFindEquilibriumPosition:
         assert float(r_eq[1]) == pytest.approx(0.0, abs=1e-4)
 
     def test_r_eq_stored_on_object(self, linear_geq):
-        linear_geq.find_equilibrium_position([2], bracket=[-2., 2.],
-                                              method='brentq')
+        linear_geq.find_equilibrium_position([2], bracket=[-2.0, 2.0], method="brentq")
         assert linear_geq.r_eq is not None
         assert linear_geq.r_eq.shape == (3,)
 
@@ -208,6 +207,7 @@ class TestFindEquilibriumPosition:
 # ---------------------------------------------------------------------------
 # TestTrappingFrequencies
 # ---------------------------------------------------------------------------
+
 
 class TestTrappingFrequencies:
     """Trapping frequency ω from the force gradient: ω = √(−∂F/∂r / m).
@@ -245,6 +245,7 @@ class TestTrappingFrequencies:
 # ---------------------------------------------------------------------------
 # TestDampingCoeff
 # ---------------------------------------------------------------------------
+
 
 class TestDampingCoeff:
     """Velocity damping coefficient β = −∂F/∂v.

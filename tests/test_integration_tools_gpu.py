@@ -10,31 +10,36 @@ Test organisation:
   - Cross-device tests (TestCPUvsGPUDense, TestCPUvsGPURandom): verify that
     CPU and GPU produce identical results.  Also skipped without a GPU.
 """
+
 import functools
 import math
-import pytest
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
+from conftest import HAS_GPU, requires_gpu
 
 from pylcp.integration_tools_gpu import (
     RandomOdeResult,
     solve_ivp_dense,
+)
+from pylcp.integration_tools_gpu import (
     solve_ivp_random as _solve_ivp_random,
 )
-from conftest import HAS_GPU, requires_gpu
 
 # CPU tests would take minutes with a large n_points; use a small fixed value.
 # GPU tests are all skipped on CPU so this override is harmless.
 solve_ivp_random = functools.partial(_solve_ivp_random, n_points=20)
 
-CPU_DEVICE = jax.devices('cpu')[0]
-GPU_DEVICE = jax.devices('gpu')[0] if HAS_GPU else None
+CPU_DEVICE = jax.devices("cpu")[0]
+GPU_DEVICE = jax.devices("gpu")[0] if HAS_GPU else None
 
 
 # ---------------------------------------------------------------------------
 # Shared ODE definitions
 # ---------------------------------------------------------------------------
+
 
 def exp_decay(t, y, args):
     """dy/dt = -y  ->  y(t) = y0 * exp(-t)."""
@@ -61,12 +66,14 @@ def always_scatter(t, y, dt, key, args=None):
 # TestRandomOdeResult
 # ---------------------------------------------------------------------------
 
+
 class TestRandomOdeResult:
     def _make(self):
-        t = jnp.linspace(0., 1., 10)
+        t = jnp.linspace(0.0, 1.0, 10)
         y = jnp.ones((2, 10))
         return RandomOdeResult(
-            t=t, y=y,
+            t=t,
+            y=y,
             t_random=jnp.array([0.5]),
             n_random=jnp.array([1]),
             inds_random=jnp.zeros(10, dtype=bool).at[5].set(True),
@@ -77,19 +84,19 @@ class TestRandomOdeResult:
         )
 
     def test_has_t(self):
-        assert hasattr(self._make(), 't')
+        assert hasattr(self._make(), "t")
 
     def test_has_y(self):
-        assert hasattr(self._make(), 'y')
+        assert hasattr(self._make(), "y")
 
     def test_has_t_random(self):
-        assert hasattr(self._make(), 't_random')
+        assert hasattr(self._make(), "t_random")
 
     def test_has_n_random(self):
-        assert hasattr(self._make(), 'n_random')
+        assert hasattr(self._make(), "n_random")
 
     def test_has_inds_random(self):
-        assert hasattr(self._make(), 'inds_random')
+        assert hasattr(self._make(), "inds_random")
 
     def test_success_true(self):
         assert self._make().success is True
@@ -108,6 +115,7 @@ class TestRandomOdeResult:
 # TestSolveIvpDenseCPU
 # ---------------------------------------------------------------------------
 
+
 class TestSolveIvpDenseCPU:
     """Deterministic ODE solver on CPU.
 
@@ -120,109 +128,104 @@ class TestSolveIvpDenseCPU:
 
     def test_ts_shape(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, _ = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=50)
+        ts, _ = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=50)
         assert ts.shape == (50,)
 
     def test_ys_shape_single(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=50)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=50)
         assert ys.shape == (1, 50, 1)
 
     def test_ys_shape_batch(self):
         y0 = jax.device_put(jnp.array([[1.0], [2.0], [3.0]]), CPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=21)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=21)
         assert ys.shape == (3, 21, 1)
 
     def test_ys_shape_2d_state(self):
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), CPU_DEVICE)
-        _, ys = solve_ivp_dense(harmonic, [0., 1.], y0, n_points=11)
+        _, ys = solve_ivp_dense(harmonic, [0.0, 1.0], y0, n_points=11)
         assert ys.shape == (1, 11, 2)
 
     def test_ts_starts_at_t0(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, _ = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=11)
+        ts, _ = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=11)
         assert float(ts[0]) == pytest.approx(0.0)
 
     def test_ts_ends_at_tf(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, _ = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=11)
+        ts, _ = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=11)
         assert float(ts[-1]) == pytest.approx(1.0)
 
     def test_ts_monotonically_increasing(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, _ = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=20)
+        ts, _ = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=20)
         assert jnp.all(jnp.diff(ts) > 0)
 
     # --- numerical correctness ---
 
     def test_exponential_decay_accuracy(self):
         y0 = jax.device_put(jnp.array([[2.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 2.], y0, n_points=101)
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 2.0], y0, n_points=101)
         expected = 2.0 * jnp.exp(-ts)
         assert jnp.allclose(ys[0, :, 0], expected, atol=1e-4)
 
     def test_batch_scales_linearly(self):
         """y0 doubled -> solution doubled at all times."""
         y0 = jax.device_put(jnp.array([[1.0], [2.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51)
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51)
         ratio = ys[1, :, 0] / ys[0, :, 0]
         assert jnp.allclose(ratio, jnp.full_like(ratio, 2.0), atol=1e-5)
 
     def test_harmonic_half_period(self):
         """x(pi) ~ 0 for harmonic oscillator starting at x=0, v=1."""
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(harmonic, [0., jnp.pi], y0, n_points=101)
+        ts, ys = solve_ivp_dense(harmonic, [0.0, jnp.pi], y0, n_points=101)
         assert float(ys[0, -1, 0]) == pytest.approx(0.0, abs=1e-3)
 
     def test_energy_conservation_harmonic(self):
         """E = 0.5*(x^2 + v^2) must remain constant."""
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(harmonic, [0., 4 * jnp.pi], y0,
-                                 n_points=201, rtol=1e-8, atol=1e-8)
+        ts, ys = solve_ivp_dense(
+            harmonic, [0.0, 4 * jnp.pi], y0, n_points=201, rtol=1e-8, atol=1e-8
+        )
         energy = 0.5 * (ys[0, :, 0] ** 2 + ys[0, :, 1] ** 2)
         assert jnp.allclose(energy, jnp.full_like(energy, 0.5), atol=1e-5)
 
     def test_no_nan_in_output(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=50)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=50)
         assert not jnp.any(jnp.isnan(ys))
 
     # --- solver types ---
 
     def test_solver_dopri5(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51,
-                                 solver_type='Dopri5')
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51, solver_type="Dopri5")
         assert jnp.allclose(ys[0, :, 0], jnp.exp(-ts), atol=1e-4)
 
     def test_solver_bosh3(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51,
-                                 solver_type='Bosh3')
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51, solver_type="Bosh3")
         assert jnp.allclose(ys[0, :, 0], jnp.exp(-ts), atol=1e-3)
 
     def test_solver_kvaerno5(self):
         """Kvaerno5 is a stiff solver; verify it runs without error."""
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51,
-                                 solver_type='Kvaerno5')
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51, solver_type="Kvaerno5")
         assert not jnp.any(jnp.isnan(ys))
-        assert float(ys[0, -1, 0]) == pytest.approx(math.exp(-1.), abs=1e-3)
+        assert float(ys[0, -1, 0]) == pytest.approx(math.exp(-1.0), abs=1e-3)
 
     def test_invalid_solver_raises(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
         with pytest.raises(Exception):
-            solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=10,
-                            solver_type='NotASolver')
+            solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=10, solver_type="NotASolver")
 
     # --- tolerance effect ---
 
     def test_tighter_tolerance_more_accurate(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        _, ys_lo = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=11,
-                                   rtol=1e-3, atol=1e-3)
-        _, ys_hi = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=11,
-                                   rtol=1e-9, atol=1e-9)
+        _, ys_lo = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=11, rtol=1e-3, atol=1e-3)
+        _, ys_hi = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=11, rtol=1e-9, atol=1e-9)
         exact = math.exp(-1.0)
         err_lo = abs(float(ys_lo[0, -1, 0]) - exact)
         err_hi = abs(float(ys_hi[0, -1, 0]) - exact)
@@ -233,13 +236,14 @@ class TestSolveIvpDenseCPU:
     def test_long_span_no_nan(self):
         """dt0 scaling fix: a span of [0, 100] should not produce NaN."""
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 100.], y0, n_points=51)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 100.0], y0, n_points=51)
         assert not jnp.any(jnp.isnan(ys))
 
 
 # ---------------------------------------------------------------------------
 # TestSolveIvpRandomCPU
 # ---------------------------------------------------------------------------
+
 
 class TestSolveIvpRandomCPU:
     """Stochastic ODE solver on CPU.
@@ -258,14 +262,14 @@ class TestSolveIvpRandomCPU:
         keys4 = jax.device_put(jax.random.split(key, 4), CPU_DEVICE)
         y0_1 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
         y0_4 = jax.device_put(jnp.ones((4, 1)), CPU_DEVICE)
-        cls._sol = solve_ivp_random(
-            exp_decay, dummy_random, [0., 1.], y0_1, keys1)[0]
+        cls._sol = solve_ivp_random(exp_decay, dummy_random, [0.0, 1.0], y0_1, keys1)[0]
         cls._sol_full = solve_ivp_random(
-            exp_decay, dummy_random, [0., 1.], y0_1, keys1, max_steps=10000)[0]
-        cls._results4 = solve_ivp_random(
-            exp_decay, dummy_random, [0., 1.], y0_4, keys4)
+            exp_decay, dummy_random, [0.0, 1.0], y0_1, keys1, max_steps=10000
+        )[0]
+        cls._results4 = solve_ivp_random(exp_decay, dummy_random, [0.0, 1.0], y0_4, keys4)
         cls._scatter_sol = solve_ivp_random(
-            exp_decay, always_scatter, [0., 0.5], y0_1, keys1, max_steps=2000)[0]
+            exp_decay, always_scatter, [0.0, 0.5], y0_1, keys1, max_steps=2000
+        )[0]
 
     def _keys(self, n, seed=42):
         key = jax.device_put(jax.random.PRNGKey(seed), CPU_DEVICE)
@@ -277,22 +281,22 @@ class TestSolveIvpRandomCPU:
         assert len(self._results4) == 4
 
     def test_result_has_t(self):
-        assert hasattr(self._sol, 't')
+        assert hasattr(self._sol, "t")
 
     def test_result_has_y(self):
-        assert hasattr(self._sol, 'y')
+        assert hasattr(self._sol, "y")
 
     def test_result_has_t_random(self):
-        assert hasattr(self._sol, 't_random')
+        assert hasattr(self._sol, "t_random")
 
     def test_result_has_n_random(self):
-        assert hasattr(self._sol, 'n_random')
+        assert hasattr(self._sol, "n_random")
 
     def test_result_has_inds_random(self):
-        assert hasattr(self._sol, 'inds_random')
+        assert hasattr(self._sol, "inds_random")
 
     def test_result_has_success(self):
-        assert hasattr(self._sol, 'success')
+        assert hasattr(self._sol, "success")
 
     # --- time array properties ---
 
@@ -303,7 +307,7 @@ class TestSolveIvpRandomCPU:
         assert float(self._sol_full.t[-1]) == pytest.approx(1.0, abs=1e-6)
 
     def test_t_monotonically_increasing(self):
-        assert jnp.all(jnp.diff(self._sol.t) >= 0.)
+        assert jnp.all(jnp.diff(self._sol.t) >= 0.0)
 
     # --- y array properties ---
 
@@ -312,8 +316,9 @@ class TestSolveIvpRandomCPU:
 
     def test_y_state_dim_correct(self):
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(harmonic, dummy_random, [0., 1.],
-                               y0, self._keys(1), max_steps=5000)[0]
+        sol = solve_ivp_random(
+            harmonic, dummy_random, [0.0, 1.0], y0, self._keys(1), max_steps=5000
+        )[0]
         assert sol.y.shape[0] == 2
 
     def test_no_nan_in_y(self):
@@ -324,9 +329,16 @@ class TestSolveIvpRandomCPU:
     def test_exponential_decay_accuracy(self):
         """Without scattering, result matches analytical exp(-t)."""
         y0 = jax.device_put(jnp.array([[2.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1),
-                               max_steps=10000, rtol=1e-6, atol=1e-6)[0]
+        sol = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0,
+            self._keys(1),
+            max_steps=10000,
+            rtol=1e-6,
+            atol=1e-6,
+        )[0]
         y_final = float(sol.y[0, -1])
         expected = 2.0 * math.exp(-1.0)
         assert y_final == pytest.approx(expected, rel=1e-3)
@@ -358,16 +370,24 @@ class TestSolveIvpRandomCPU:
     def test_multi_atom_all_succeed(self):
         N = 3
         y0 = jax.device_put(jnp.ones((N, 1)), CPU_DEVICE)
-        results = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                   y0, self._keys(N), max_steps=5000)
+        results = solve_ivp_random(
+            exp_decay, dummy_random, [0.0, 0.5], y0, self._keys(N), max_steps=5000
+        )
         assert all(sol.success for sol in results)
 
     def test_different_y0_batch_independent(self):
         """Two atoms with different y0 should give proportionally scaled y."""
         y0 = jax.device_put(jnp.array([[1.0], [2.0]]), CPU_DEVICE)
-        results = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                   y0, self._keys(2),
-                                   max_steps=10000, rtol=1e-7, atol=1e-7)
+        results = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0,
+            self._keys(2),
+            max_steps=10000,
+            rtol=1e-7,
+            atol=1e-7,
+        )
         y1_final = float(results[0].y[0, -1])
         y2_final = float(results[1].y[0, -1])
         assert y2_final == pytest.approx(2.0 * y1_final, rel=1e-4)
@@ -376,9 +396,15 @@ class TestSolveIvpRandomCPU:
 
     def test_solver_bosh3(self):
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1),
-                               solver_type='Bosh3', max_steps=10000)[0]
+        sol = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0,
+            self._keys(1),
+            solver_type="Bosh3",
+            max_steps=10000,
+        )[0]
         assert sol.success
 
     # --- dt0 scaling fix ---
@@ -386,8 +412,9 @@ class TestSolveIvpRandomCPU:
     def test_long_span_no_nan(self):
         """dt0 scaling fix: span [0, 500] should not produce NaN or hang."""
         y0 = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 500.],
-                               y0, self._keys(1), max_steps=50000)[0]
+        sol = solve_ivp_random(
+            exp_decay, dummy_random, [0.0, 500.0], y0, self._keys(1), max_steps=50000
+        )[0]
         assert not jnp.any(jnp.isnan(sol.y))
 
 
@@ -395,77 +422,77 @@ class TestSolveIvpRandomCPU:
 # TestSolveIvpDenseGPU
 # ---------------------------------------------------------------------------
 
+
 @requires_gpu
 class TestSolveIvpDenseGPU:
     """Deterministic ODE solver on GPU.  Mirrors key CPU tests."""
 
     def test_ts_shape(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        ts, _ = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=50)
+        ts, _ = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=50)
         assert ts.shape == (50,)
 
     def test_ys_shape_batch(self):
         y0 = jax.device_put(jnp.array([[1.0], [2.0], [3.0]]), GPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=21)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=21)
         assert ys.shape == (3, 21, 1)
 
     def test_exponential_decay_accuracy(self):
         y0 = jax.device_put(jnp.array([[2.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 2.], y0, n_points=101)
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 2.0], y0, n_points=101)
         expected = 2.0 * jnp.exp(-ts)
         assert jnp.allclose(ys[0, :, 0], expected, atol=1e-4)
 
     def test_batch_scales_linearly(self):
         y0 = jax.device_put(jnp.array([[1.0], [2.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51)
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51)
         ratio = ys[1, :, 0] / ys[0, :, 0]
         assert jnp.allclose(ratio, jnp.full_like(ratio, 2.0), atol=1e-5)
 
     def test_harmonic_half_period(self):
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(harmonic, [0., jnp.pi], y0, n_points=101)
+        ts, ys = solve_ivp_dense(harmonic, [0.0, jnp.pi], y0, n_points=101)
         assert float(ys[0, -1, 0]) == pytest.approx(0.0, abs=1e-3)
 
     def test_energy_conservation_harmonic(self):
         y0 = jax.device_put(jnp.array([[0.0, 1.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(harmonic, [0., 4 * jnp.pi], y0,
-                                 n_points=201, rtol=1e-8, atol=1e-8)
+        ts, ys = solve_ivp_dense(
+            harmonic, [0.0, 4 * jnp.pi], y0, n_points=201, rtol=1e-8, atol=1e-8
+        )
         energy = 0.5 * (ys[0, :, 0] ** 2 + ys[0, :, 1] ** 2)
         assert jnp.allclose(energy, jnp.full_like(energy, 0.5), atol=1e-5)
 
     def test_no_nan_in_output(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=50)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=50)
         assert not jnp.any(jnp.isnan(ys))
 
     def test_solver_dopri5(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51,
-                                 solver_type='Dopri5')
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51, solver_type="Dopri5")
         assert jnp.allclose(ys[0, :, 0], jnp.exp(-ts), atol=1e-4)
 
     def test_solver_bosh3(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51,
-                                 solver_type='Bosh3')
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51, solver_type="Bosh3")
         assert jnp.allclose(ys[0, :, 0], jnp.exp(-ts), atol=1e-3)
 
     def test_solver_kvaerno5(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        ts, ys = solve_ivp_dense(exp_decay, [0., 1.], y0, n_points=51,
-                                 solver_type='Kvaerno5')
+        ts, ys = solve_ivp_dense(exp_decay, [0.0, 1.0], y0, n_points=51, solver_type="Kvaerno5")
         assert not jnp.any(jnp.isnan(ys))
-        assert float(ys[0, -1, 0]) == pytest.approx(math.exp(-1.), abs=1e-3)
+        assert float(ys[0, -1, 0]) == pytest.approx(math.exp(-1.0), abs=1e-3)
 
     def test_long_span_no_nan(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        _, ys = solve_ivp_dense(exp_decay, [0., 100.], y0, n_points=51)
+        _, ys = solve_ivp_dense(exp_decay, [0.0, 100.0], y0, n_points=51)
         assert not jnp.any(jnp.isnan(ys))
 
 
 # ---------------------------------------------------------------------------
 # TestSolveIvpRandomGPU
 # ---------------------------------------------------------------------------
+
 
 @requires_gpu
 class TestSolveIvpRandomGPU:
@@ -478,27 +505,33 @@ class TestSolveIvpRandomGPU:
         keys4 = jax.device_put(jax.random.split(key, 4), GPU_DEVICE)
         y0_1 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
         y0_4 = jax.device_put(jnp.ones((4, 1)), GPU_DEVICE)
-        cls._sol = solve_ivp_random(
-            exp_decay, dummy_random, [0., 1.], y0_1, keys1)[0]
+        cls._sol = solve_ivp_random(exp_decay, dummy_random, [0.0, 1.0], y0_1, keys1)[0]
         cls._sol_full = solve_ivp_random(
-            exp_decay, dummy_random, [0., 1.], y0_1, keys1, max_steps=10000)[0]
-        cls._results4 = solve_ivp_random(
-            exp_decay, dummy_random, [0., 1.], y0_4, keys4)
+            exp_decay, dummy_random, [0.0, 1.0], y0_1, keys1, max_steps=10000
+        )[0]
+        cls._results4 = solve_ivp_random(exp_decay, dummy_random, [0.0, 1.0], y0_4, keys4)
         cls._scatter_sol = solve_ivp_random(
-            exp_decay, always_scatter, [0., 0.5], y0_1, keys1, max_steps=2000)[0]
+            exp_decay, always_scatter, [0.0, 0.5], y0_1, keys1, max_steps=2000
+        )[0]
 
     def _keys(self, n, seed=42):
-        return jax.device_put(jax.random.split(jax.random.PRNGKey(seed), n),
-                              GPU_DEVICE)
+        return jax.device_put(jax.random.split(jax.random.PRNGKey(seed), n), GPU_DEVICE)
 
     def test_list_length_matches_batch(self):
         assert len(self._results4) == 4
 
     def test_exponential_decay_accuracy(self):
         y0 = jax.device_put(jnp.array([[2.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1),
-                               max_steps=10000, rtol=1e-6, atol=1e-6)[0]
+        sol = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0,
+            self._keys(1),
+            max_steps=10000,
+            rtol=1e-6,
+            atol=1e-6,
+        )[0]
         y_final = float(sol.y[0, -1])
         expected = 2.0 * math.exp(-1.0)
         assert y_final == pytest.approx(expected, rel=1e-3)
@@ -518,36 +551,52 @@ class TestSolveIvpRandomGPU:
     def test_multi_atom_all_succeed(self):
         N = 3
         y0 = jax.device_put(jnp.ones((N, 1)), GPU_DEVICE)
-        results = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                   y0, self._keys(N), max_steps=5000)
+        results = solve_ivp_random(
+            exp_decay, dummy_random, [0.0, 0.5], y0, self._keys(N), max_steps=5000
+        )
         assert all(sol.success for sol in results)
 
     def test_different_y0_batch_independent(self):
         y0 = jax.device_put(jnp.array([[1.0], [2.0]]), GPU_DEVICE)
-        results = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                   y0, self._keys(2),
-                                   max_steps=10000, rtol=1e-7, atol=1e-7)
+        results = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0,
+            self._keys(2),
+            max_steps=10000,
+            rtol=1e-7,
+            atol=1e-7,
+        )
         y1_final = float(results[0].y[0, -1])
         y2_final = float(results[1].y[0, -1])
         assert y2_final == pytest.approx(2.0 * y1_final, rel=1e-4)
 
     def test_solver_bosh3(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                               y0, self._keys(1),
-                               solver_type='Bosh3', max_steps=10000)[0]
+        sol = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0,
+            self._keys(1),
+            solver_type="Bosh3",
+            max_steps=10000,
+        )[0]
         assert sol.success
 
     def test_long_span_no_nan(self):
         y0 = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-        sol = solve_ivp_random(exp_decay, dummy_random, [0., 500.],
-                               y0, self._keys(1), max_steps=50000)[0]
+        sol = solve_ivp_random(
+            exp_decay, dummy_random, [0.0, 500.0], y0, self._keys(1), max_steps=50000
+        )[0]
         assert not jnp.any(jnp.isnan(sol.y))
 
 
 # ---------------------------------------------------------------------------
 # TestCPUvsGPUDense — verify CPU and GPU produce identical results
 # ---------------------------------------------------------------------------
+
 
 @requires_gpu
 class TestCPUvsGPUDense:
@@ -556,51 +605,52 @@ class TestCPUvsGPUDense:
     def test_exponential_decay_matches(self):
         y0_cpu = jax.device_put(jnp.array([[2.0]]), CPU_DEVICE)
         y0_gpu = jax.device_put(jnp.array([[2.0]]), GPU_DEVICE)
-        ts_cpu, ys_cpu = solve_ivp_dense(exp_decay, [0., 2.], y0_cpu,
-                                         n_points=101)
-        ts_gpu, ys_gpu = solve_ivp_dense(exp_decay, [0., 2.], y0_gpu,
-                                         n_points=101)
-        np.testing.assert_allclose(np.array(ts_cpu), np.array(ts_gpu),
-                                   atol=1e-12)
-        np.testing.assert_allclose(np.array(ys_cpu), np.array(ys_gpu),
-                                   atol=1e-10)
+        ts_cpu, ys_cpu = solve_ivp_dense(exp_decay, [0.0, 2.0], y0_cpu, n_points=101)
+        ts_gpu, ys_gpu = solve_ivp_dense(exp_decay, [0.0, 2.0], y0_gpu, n_points=101)
+        np.testing.assert_allclose(np.array(ts_cpu), np.array(ts_gpu), atol=1e-12)
+        np.testing.assert_allclose(np.array(ys_cpu), np.array(ys_gpu), atol=1e-10)
 
     def test_harmonic_energy_matches(self):
         y0_cpu = jax.device_put(jnp.array([[0.0, 1.0]]), CPU_DEVICE)
         y0_gpu = jax.device_put(jnp.array([[0.0, 1.0]]), GPU_DEVICE)
-        _, ys_cpu = solve_ivp_dense(harmonic, [0., 4 * jnp.pi], y0_cpu,
-                                    n_points=201, rtol=1e-8, atol=1e-8)
-        _, ys_gpu = solve_ivp_dense(harmonic, [0., 4 * jnp.pi], y0_gpu,
-                                    n_points=201, rtol=1e-8, atol=1e-8)
-        np.testing.assert_allclose(np.array(ys_cpu), np.array(ys_gpu),
-                                   atol=1e-10)
+        _, ys_cpu = solve_ivp_dense(
+            harmonic, [0.0, 4 * jnp.pi], y0_cpu, n_points=201, rtol=1e-8, atol=1e-8
+        )
+        _, ys_gpu = solve_ivp_dense(
+            harmonic, [0.0, 4 * jnp.pi], y0_gpu, n_points=201, rtol=1e-8, atol=1e-8
+        )
+        np.testing.assert_allclose(np.array(ys_cpu), np.array(ys_gpu), atol=1e-10)
 
     def test_batch_matches(self):
         y0_cpu = jax.device_put(jnp.array([[1.0], [2.0], [3.0]]), CPU_DEVICE)
         y0_gpu = jax.device_put(jnp.array([[1.0], [2.0], [3.0]]), GPU_DEVICE)
-        _, ys_cpu = solve_ivp_dense(exp_decay, [0., 1.], y0_cpu, n_points=51)
-        _, ys_gpu = solve_ivp_dense(exp_decay, [0., 1.], y0_gpu, n_points=51)
-        np.testing.assert_allclose(np.array(ys_cpu), np.array(ys_gpu),
-                                   atol=1e-10)
+        _, ys_cpu = solve_ivp_dense(exp_decay, [0.0, 1.0], y0_cpu, n_points=51)
+        _, ys_gpu = solve_ivp_dense(exp_decay, [0.0, 1.0], y0_gpu, n_points=51)
+        np.testing.assert_allclose(np.array(ys_cpu), np.array(ys_gpu), atol=1e-10)
 
     def test_solvers_match(self):
         """All solver types produce the same result on CPU and GPU."""
-        for solver in ('Dopri5', 'Bosh3', 'Kvaerno5'):
+        for solver in ("Dopri5", "Bosh3", "Kvaerno5"):
             y0_cpu = jax.device_put(jnp.array([[1.0]]), CPU_DEVICE)
             y0_gpu = jax.device_put(jnp.array([[1.0]]), GPU_DEVICE)
-            _, ys_cpu = solve_ivp_dense(exp_decay, [0., 1.], y0_cpu,
-                                        n_points=51, solver_type=solver)
-            _, ys_gpu = solve_ivp_dense(exp_decay, [0., 1.], y0_gpu,
-                                        n_points=51, solver_type=solver)
+            _, ys_cpu = solve_ivp_dense(
+                exp_decay, [0.0, 1.0], y0_cpu, n_points=51, solver_type=solver
+            )
+            _, ys_gpu = solve_ivp_dense(
+                exp_decay, [0.0, 1.0], y0_gpu, n_points=51, solver_type=solver
+            )
             np.testing.assert_allclose(
-                np.array(ys_cpu), np.array(ys_gpu), atol=1e-10,
-                err_msg=f"CPU vs GPU mismatch for solver {solver}"
+                np.array(ys_cpu),
+                np.array(ys_gpu),
+                atol=1e-10,
+                err_msg=f"CPU vs GPU mismatch for solver {solver}",
             )
 
 
 # ---------------------------------------------------------------------------
 # TestCPUvsGPURandom — verify CPU and GPU produce identical results
 # ---------------------------------------------------------------------------
+
 
 @requires_gpu
 class TestCPUvsGPURandom:
@@ -618,14 +668,27 @@ class TestCPUvsGPURandom:
         keys_cpu = jax.device_put(keys, CPU_DEVICE)
         keys_gpu = jax.device_put(keys, GPU_DEVICE)
 
-        sol_cpu = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                   y0_cpu, keys_cpu,
-                                   max_steps=10000, rtol=1e-6, atol=1e-6)[0]
-        sol_gpu = solve_ivp_random(exp_decay, dummy_random, [0., 1.],
-                                   y0_gpu, keys_gpu,
-                                   max_steps=10000, rtol=1e-6, atol=1e-6)[0]
-        np.testing.assert_allclose(np.array(sol_cpu.y), np.array(sol_gpu.y),
-                                   atol=1e-10)
+        sol_cpu = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0_cpu,
+            keys_cpu,
+            max_steps=10000,
+            rtol=1e-6,
+            atol=1e-6,
+        )[0]
+        sol_gpu = solve_ivp_random(
+            exp_decay,
+            dummy_random,
+            [0.0, 1.0],
+            y0_gpu,
+            keys_gpu,
+            max_steps=10000,
+            rtol=1e-6,
+            atol=1e-6,
+        )[0]
+        np.testing.assert_allclose(np.array(sol_cpu.y), np.array(sol_gpu.y), atol=1e-10)
 
     def test_batch_matches(self):
         seed = 123
@@ -637,15 +700,18 @@ class TestCPUvsGPURandom:
         keys_cpu = jax.device_put(keys, CPU_DEVICE)
         keys_gpu = jax.device_put(keys, GPU_DEVICE)
 
-        sols_cpu = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                    y0_cpu, keys_cpu, max_steps=5000)
-        sols_gpu = solve_ivp_random(exp_decay, dummy_random, [0., 0.5],
-                                    y0_gpu, keys_gpu, max_steps=5000)
+        sols_cpu = solve_ivp_random(
+            exp_decay, dummy_random, [0.0, 0.5], y0_cpu, keys_cpu, max_steps=5000
+        )
+        sols_gpu = solve_ivp_random(
+            exp_decay, dummy_random, [0.0, 0.5], y0_gpu, keys_gpu, max_steps=5000
+        )
         for i in range(N):
             np.testing.assert_allclose(
-                np.array(sols_cpu[i].y), np.array(sols_gpu[i].y),
+                np.array(sols_cpu[i].y),
+                np.array(sols_gpu[i].y),
                 atol=1e-10,
-                err_msg=f"CPU vs GPU mismatch for atom {i}"
+                err_msg=f"CPU vs GPU mismatch for atom {i}",
             )
 
     def test_scatter_events_match(self):
@@ -658,11 +724,13 @@ class TestCPUvsGPURandom:
         keys_cpu = jax.device_put(keys, CPU_DEVICE)
         keys_gpu = jax.device_put(keys, GPU_DEVICE)
 
-        sol_cpu = solve_ivp_random(exp_decay, always_scatter, [0., 0.5],
-                                   y0_cpu, keys_cpu, max_steps=2000)[0]
-        sol_gpu = solve_ivp_random(exp_decay, always_scatter, [0., 0.5],
-                                   y0_gpu, keys_gpu, max_steps=2000)[0]
-        np.testing.assert_array_equal(np.array(sol_cpu.n_random),
-                                      np.array(sol_gpu.n_random))
-        np.testing.assert_allclose(np.array(sol_cpu.t_random),
-                                   np.array(sol_gpu.t_random), atol=1e-12)
+        sol_cpu = solve_ivp_random(
+            exp_decay, always_scatter, [0.0, 0.5], y0_cpu, keys_cpu, max_steps=2000
+        )[0]
+        sol_gpu = solve_ivp_random(
+            exp_decay, always_scatter, [0.0, 0.5], y0_gpu, keys_gpu, max_steps=2000
+        )[0]
+        np.testing.assert_array_equal(np.array(sol_cpu.n_random), np.array(sol_gpu.n_random))
+        np.testing.assert_allclose(
+            np.array(sol_cpu.t_random), np.array(sol_gpu.t_random), atol=1e-12
+        )

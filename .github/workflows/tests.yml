@@ -7,6 +7,30 @@ on:
     branches: [master]
 
 jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.14
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Ruff check
+        run: uv run ruff check pylcp/ tests/ --exclude pylcp/gratings.py
+
+      - name: Ruff format check
+        run: uv run ruff format --check pylcp/ tests/ --exclude pylcp/gratings.py
+
+      - name: Pyright
+        run: uv run pyright
+
   test:
     runs-on: ubuntu-latest
     strategy:

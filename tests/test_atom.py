@@ -1,17 +1,18 @@
 """
 Tests for pylcp/atom.py
 """
-import pytest
+
 import numpy as np
-from numpy import pi
+import pytest
 import scipy.constants as cts
+from numpy import pi
 
-from pylcp.atom import state, transition, atom
-
+from pylcp.atom import atom, state, transition
 
 # ---------------------------------------------------------------------------
 # state
 # ---------------------------------------------------------------------------
+
 
 class TestState:
     """Atomic energy level with quantum numbers (n, S, L, J) and spectroscopic data.
@@ -30,7 +31,7 @@ class TestState:
         assert s.energy == pytest.approx(12345.0)
 
     def test_ground_state_lam_inf(self):
-        s = state(n=1, S=1/2, L=0, J=1/2, lam=np.inf, tau=np.inf)
+        s = state(n=1, S=1 / 2, L=0, J=1 / 2, lam=np.inf, tau=np.inf)
         assert s.energy == pytest.approx(0.0, abs=1e-30)
 
     def test_missing_lam_and_E_raises(self):
@@ -44,24 +45,24 @@ class TestState:
 
     def test_gamma_from_tau(self):
         tau = 27e-9
-        s = state(n=1, S=1/2, L=0, J=1/2, lam=780e-9, tau=tau)
+        s = state(n=1, S=1 / 2, L=0, J=1 / 2, lam=780e-9, tau=tau)
         assert s.gamma == pytest.approx(1 / tau, rel=1e-10)
 
     def test_gammaHz(self):
         tau = 27e-9
-        s = state(n=1, S=1/2, L=0, J=1/2, lam=780e-9, tau=tau)
+        s = state(n=1, S=1 / 2, L=0, J=1 / 2, lam=780e-9, tau=tau)
         assert s.gammaHz == pytest.approx(s.gamma / (2 * pi), rel=1e-10)
 
     def test_infinite_tau_gives_zero_gamma(self):
-        s = state(n=1, S=1/2, L=0, J=1/2, lam=np.inf, tau=np.inf)
+        s = state(n=1, S=1 / 2, L=0, J=1 / 2, lam=np.inf, tau=np.inf)
         assert s.gamma == 0.0
 
     def test_quantum_numbers_stored(self):
-        s = state(n=5, S=1/2, L=1, J=3/2, lam=780e-9)
+        s = state(n=5, S=1 / 2, L=1, J=3 / 2, lam=780e-9)
         assert s.n == 5
-        assert s.S == 1/2
+        assert s.S == 1 / 2
         assert s.L == 1
-        assert s.J == 3/2
+        assert s.J == 3 / 2
 
     def test_hfs_defaults_zero(self):
         s = state(n=1, S=0, L=0, J=0, lam=500e-9)
@@ -70,8 +71,9 @@ class TestState:
         assert s.Chfs == 0
 
     def test_hfs_stored(self):
-        s = state(n=1, S=1/2, L=0, J=1/2, lam=np.inf, tau=np.inf,
-                  Ahfs=3.4e9, Bhfs=1.2e6, Chfs=0.5e3)
+        s = state(
+            n=1, S=1 / 2, L=0, J=1 / 2, lam=np.inf, tau=np.inf, Ahfs=3.4e9, Bhfs=1.2e6, Chfs=0.5e3
+        )
         assert s.Ahfs == pytest.approx(3.4e9)
         assert s.Bhfs == pytest.approx(1.2e6)
         assert s.Chfs == pytest.approx(0.5e3)
@@ -86,6 +88,7 @@ class TestState:
 # transition
 # ---------------------------------------------------------------------------
 
+
 class TestTransition:
     """Optical transition connecting two atomic states.
 
@@ -96,16 +99,15 @@ class TestTransition:
     characteristic time t₀ = v₀/a₀, and magnetic field scale B_Γ."""
 
     def setup_method(self):
-        self.ground = state(n=5, S=1/2, L=0, J=1/2, lam=np.inf, tau=np.inf,
-                            gJ=2.0023)
-        self.excited = state(n=5, S=1/2, L=1, J=3/2,
-                             lam=780.241209686e-9, tau=26.2348e-9, gJ=1.3362)
-        self.mass = 86.909180527 * cts.value('atomic mass constant')
+        self.ground = state(n=5, S=1 / 2, L=0, J=1 / 2, lam=np.inf, tau=np.inf, gJ=2.0023)
+        self.excited = state(
+            n=5, S=1 / 2, L=1, J=3 / 2, lam=780.241209686e-9, tau=26.2348e-9, gJ=1.3362
+        )
+        self.mass = 86.909180527 * cts.value("atomic mass constant")
         self.tr = transition(self.ground, self.excited, self.mass)
 
     def test_k_is_energy_difference(self):
-        assert self.tr.k == pytest.approx(
-            self.excited.energy - self.ground.energy, rel=1e-10)
+        assert self.tr.k == pytest.approx(self.excited.energy - self.ground.energy, rel=1e-10)
 
     def test_lam_from_k(self):
         assert self.tr.lam == pytest.approx(0.01 / self.tr.k, rel=1e-10)
@@ -174,8 +176,7 @@ class TestAtomConstruction:
         a = atom(species)
         energies = [s.energy for s in a.state]
         for i in range(1, len(energies)):
-            assert energies[i] > energies[i - 1], \
-                f"{species}: state {i} energy not > state {i-1}"
+            assert energies[i] > energies[i - 1], f"{species}: state {i} energy not > state {i - 1}"
 
     @pytest.mark.parametrize("species", ALL_SPECIES)
     def test_ground_state_zero_energy(self, species):
@@ -204,22 +205,22 @@ class TestAtomPhysicalValues:
     and fine-structure quantum numbers J=1/2 (P₁/₂) vs J=3/2 (P₃/₂)."""
 
     def test_7Li_nuclear_spin(self):
-        assert atom("7Li").I == 3/2
+        assert atom("7Li").I == 3 / 2
 
     def test_6Li_nuclear_spin(self):
         assert atom("6Li").I == 1
 
     def test_87Rb_nuclear_spin(self):
-        assert atom("87Rb").I == 3/2
+        assert atom("87Rb").I == 3 / 2
 
     def test_40K_nuclear_spin(self):
         assert atom("40K").I == 4
 
     def test_133Cs_nuclear_spin(self):
-        assert atom("133Cs").I == 7/2
+        assert atom("133Cs").I == 7 / 2
 
     def test_87Rb_mass(self):
-        expected = 86.909180527 * cts.value('atomic mass constant')
+        expected = 86.909180527 * cts.value("atomic mass constant")
         assert atom("87Rb").mass == pytest.approx(expected, rel=1e-6)
 
     def test_87Rb_D2_wavelength(self):
@@ -242,12 +243,12 @@ class TestAtomPhysicalValues:
     def test_85Rb_D1_J_half(self):
         a = atom("85Rb")
         # state[1] is D1 (5P_{1/2})
-        assert a.state[1].J == 1/2
+        assert a.state[1].J == 1 / 2
 
     def test_85Rb_D2_J_3half(self):
         a = atom("85Rb")
         # state[2] is D2 (5P_{3/2})
-        assert a.state[2].J == 3/2
+        assert a.state[2].J == 3 / 2
 
     def test_transition_lam_matches_state_lam(self):
         a = atom("87Rb")

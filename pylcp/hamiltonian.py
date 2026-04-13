@@ -98,9 +98,7 @@ class hamiltonian:
         def check_diagonality(self, M: jax.Array) -> bool:
             """Return True if M is diagonal (square with zero off-diagonals)."""
             if M.shape[0] == M.shape[1]:
-                return bool(
-                    jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0
-                )
+                return bool(jnp.count_nonzero(M - jnp.diag(jnp.diagonal(M))) == 0)
             else:
                 return False  # Cannot be diagonal, cause not square.
 
@@ -131,18 +129,14 @@ class hamiltonian:
         def check_diagonality(self, M: jax.Array) -> bool:
             """Return True if each q-component slice is diagonal."""
             if M.shape[1] == M.shape[2]:
-                return bool(
-                    jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0
-                )
+                return bool(jnp.count_nonzero(M[1] - jnp.diag(jnp.diagonal(M[1]))) == 0)
             else:
                 return False  # Cannot be diagonal, cause not square.
 
         def return_block_in_place(self, i: int, j: int, N: int) -> jax.Array:
             """Embed this block into a 3xNxN zero array at position (i, j)."""
             super_M = jnp.zeros((3, N, N), dtype=jnp.complex128)
-            return super_M.at[:, i : i + self.n, j : j + self.m].set(
-                self.matrix
-            )
+            return super_M.at[:, i : i + self.n, j : j + self.m].set(self.matrix)
 
     def __init__(
         self,
@@ -168,9 +162,7 @@ class hamiltonian:
         elif len(args) > 2:
             raise ValueError("Unknown number of arguments.")
         elif len(args) > 0:
-            raise NotImplementedError(
-                "Not yet programmed for %d arguments." % len(args)
-            )
+            raise NotImplementedError("Not yet programmed for %d arguments." % len(args))
 
     def print_structure(self) -> None:
         """Print structure of the Hamiltonian."""
@@ -204,9 +196,7 @@ class hamiltonian:
                         ind = (ii, jj)
                         break
                 elif isinstance(element, tuple):
-                    if np.any(
-                        [element_i.label == label for element_i in element]
-                    ):
+                    if np.any([element_i.label == label for element_i in element]):
                         ind = (ii, jj)
                         break
 
@@ -215,9 +205,7 @@ class hamiltonian:
     def __make_elem_label(self, type, state_label):
         if type == "H_0" or type == "mu_q":
             if not isinstance(state_label, str):
-                raise TypeError(
-                    f"For type {type}, state label {state_label} must be a string."
-                )
+                raise TypeError(f"For type {type}, state label {state_label} must be a string.")
             return f"<{state_label}|{type}|{state_label}>"
         elif type == "d_q":
             if not isinstance(state_label, list):
@@ -255,12 +243,8 @@ class hamiltonian:
         if H_0.shape[0] != H_0.shape[1]:
             raise ValueError("H_0 must be square.")
 
-        ind_H_0 = self.__search_elem_label(
-            self.__make_elem_label("H_0", state_label)
-        )
-        ind_mu_q = self.__search_elem_label(
-            self.__make_elem_label("mu_q", state_label)
-        )
+        ind_H_0 = self.__search_elem_label(self.__make_elem_label("H_0", state_label))
+        ind_mu_q = self.__search_elem_label(self.__make_elem_label("mu_q", state_label))
 
         label = self.__make_elem_label("H_0", state_label)
         if not ind_H_0 and not ind_mu_q:
@@ -272,9 +256,7 @@ class hamiltonian:
             existing_mu_q = self.blocks[ind_mu_q]
             assert isinstance(existing_mu_q, hamiltonian.block)
             if H_0.shape[0] != existing_mu_q.n:
-                raise ValueError(
-                    "Element %s is not the right shape to match mu_q." % label
-                )
+                raise ValueError("Element %s is not the right shape to match mu_q." % label)
             self.blocks[ind_mu_q] = (self.block(label, H_0), existing_mu_q)
         else:
             raise ValueError("H_0 already added.")
@@ -282,9 +264,7 @@ class hamiltonian:
         self.__recompute_number_of_states()
         self.__check_diagonal_submatrices_are_themselves_diagonal()
 
-    def add_mu_q_block(
-        self, state_label: str, mu_q: npt.ArrayLike, muB: float = 1
-    ) -> None:
+    def add_mu_q_block(self, state_label: str, mu_q: npt.ArrayLike, muB: float = 1) -> None:
         r"""
         Add a new :math:`\\mu_q` block to the hamiltonian.
 
@@ -300,12 +280,8 @@ class hamiltonian:
         if mu_q.shape[0] != 3 or mu_q.shape[1] != mu_q.shape[2]:
             raise ValueError("mu_q must 3xnxn, where n is an integer.")
 
-        ind_H_0 = self.__search_elem_label(
-            self.__make_elem_label("H_0", state_label)
-        )
-        ind_mu_q = self.__search_elem_label(
-            self.__make_elem_label("mu_q", state_label)
-        )
+        ind_H_0 = self.__search_elem_label(self.__make_elem_label("H_0", state_label))
+        ind_mu_q = self.__search_elem_label(self.__make_elem_label("mu_q", state_label))
 
         label = self.__make_elem_label("mu_q", state_label)
         new_block = self.vector_block(label, mu_q)
@@ -318,9 +294,7 @@ class hamiltonian:
             self.ns.append(mu_q.shape[1])
         elif ind_H_0:
             if mu_q.shape[1] != self.blocks[ind_H_0].n:
-                raise ValueError(
-                    "Element %s is not the right shape to match H_0." % label
-                )
+                raise ValueError("Element %s is not the right shape to match H_0." % label)
             self.blocks[ind_H_0] = (self.blocks[ind_H_0], new_block)
         else:
             raise ValueError("mu_q already added.")
@@ -356,12 +330,8 @@ class hamiltonian:
         """
         d_q = jnp.asarray(d_q, dtype=jnp.complex128)
 
-        ind_H_0 = self.__search_elem_label(
-            self.__make_elem_label("H_0", label1)
-        )
-        ind_mu_q = self.__search_elem_label(
-            self.__make_elem_label("mu_q", label1)
-        )
+        ind_H_0 = self.__search_elem_label(self.__make_elem_label("H_0", label1))
+        ind_mu_q = self.__search_elem_label(self.__make_elem_label("mu_q", label1))
 
         if ind_H_0 is None and ind_mu_q is None:
             raise ValueError("Label %s not found." % label1)
@@ -380,12 +350,8 @@ class hamiltonian:
             ind1 = ind_H_0[0]
             n = self.blocks[ind_H_0][0].n
 
-        ind_H_0 = self.__search_elem_label(
-            self.__make_elem_label("H_0", label2)
-        )
-        ind_mu_q = self.__search_elem_label(
-            self.__make_elem_label("mu_q", label2)
-        )
+        ind_H_0 = self.__search_elem_label(self.__make_elem_label("H_0", label2))
+        ind_mu_q = self.__search_elem_label(self.__make_elem_label("mu_q", label2))
 
         if ind_H_0 is None and ind_mu_q is None:
             raise ValueError("Label %s not found." % label2)
@@ -436,9 +402,7 @@ class hamiltonian:
 
     def make_full_matrices(
         self,
-    ) -> tuple[
-        jax.Array, jax.Array, dict[str, jax.Array], dict[str, jax.Array]
-    ]:
+    ) -> tuple[jax.Array, jax.Array, dict[str, jax.Array], dict[str, jax.Array]]:
         """
         Return the full matrices that define the Hamiltonian.
 
@@ -469,18 +433,18 @@ class hamiltonian:
         # First, return H_0 and mu_q:
         for diag_block in np.diag(self.blocks):
             if isinstance(diag_block, self.vector_block):
-                self.mu_q += diag_block.parameters[
-                    "mu_B"
-                ] * diag_block.return_block_in_place(n, n, self.n)
+                self.mu_q += diag_block.parameters["mu_B"] * diag_block.return_block_in_place(
+                    n, n, self.n
+                )
                 n += diag_block.n
             elif isinstance(diag_block, self.block):
                 self.H_0 += diag_block.return_block_in_place(n, n, self.n)
                 n += diag_block.n
             else:
                 self.H_0 += diag_block[0].return_block_in_place(n, n, self.n)
-                self.mu_q += diag_block[1].parameters["mu_B"] * diag_block[
-                    1
-                ].return_block_in_place(n, n, self.n)
+                self.mu_q += diag_block[1].parameters["mu_B"] * diag_block[1].return_block_in_place(
+                    n, n, self.n
+                )
                 n += diag_block[0].n
 
         self.d_q_bare = {}
@@ -491,9 +455,9 @@ class hamiltonian:
                     key = self.state_labels[ii] + "->" + self.state_labels[jj]
                     nstart = int(np.sum(self.ns[:ii]))
                     mstart = int(np.sum(self.ns[:jj]))
-                    self.d_q_bare[key] = self.blocks[
-                        ii, jj
-                    ].return_block_in_place(nstart, mstart, self.n)
+                    self.d_q_bare[key] = self.blocks[ii, jj].return_block_in_place(
+                        nstart, mstart, self.n
+                    )
 
         self.d_q_star = {}
         for key in self.d_q_bare.keys():
@@ -515,10 +479,7 @@ class hamiltonian:
 
     def return_full_H(
         self,
-        Eq: np.ndarray
-        | jax.Array
-        | list
-        | dict[str, np.ndarray | jax.Array | list],
+        Eq: np.ndarray | jax.Array | list | dict[str, np.ndarray | jax.Array | list],
         Bq: npt.ArrayLike,
     ) -> jax.Array:
         """
@@ -560,11 +521,9 @@ class hamiltonian:
 
         for key in eq_dict.keys():
             for ii, q in enumerate(np.arange(-1.0, 2.0, 1.0)):
-                H -= 0.5 * (-1.0) ** q * self.d_q_bare[key][ii] * eq_dict[key][
-                    2 - ii
-                ] + 0.5 * (-1.0) ** q * self.d_q_star[key][ii] * jnp.conjugate(
-                    eq_dict[key][2 - ii]
-                )
+                H -= 0.5 * (-1.0) ** q * self.d_q_bare[key][ii] * eq_dict[key][2 - ii] + 0.5 * (
+                    -1.0
+                ) ** q * self.d_q_star[key][ii] * jnp.conjugate(eq_dict[key][2 - ii])
 
         return H
 
@@ -573,9 +532,7 @@ class hamiltonian:
 
         for ii, diag_block in enumerate(np.diag(self.blocks)):
             if isinstance(diag_block, tuple):
-                self.diagonal[ii] = (
-                    diag_block[0].diagonal and diag_block[1].diagonal
-                )
+                self.diagonal[ii] = diag_block[0].diagonal and diag_block[1].diagonal
             else:
                 self.diagonal[ii] = diag_block.diagonal
 
@@ -616,9 +573,7 @@ class hamiltonian:
             for ii, block in enumerate(np.diagonal(self.blocks)):
                 self.rotated_hamiltonian.add_H_0_block(
                     self.state_labels[ii],
-                    jnp.zeros(
-                        (self.ns[ii], self.ns[ii]), dtype=jnp.complex128
-                    ),
+                    jnp.zeros((self.ns[ii], self.ns[ii]), dtype=jnp.complex128),
                 )
             for ii, block_row in enumerate(self.blocks):
                 for jj, block in enumerate(block_row):
@@ -669,9 +624,7 @@ class hamiltonian:
                     # Verify the diagonalization produced only real eigenvalues
                     # (as expected for a Hermitian Hamiltonian block):
                     if jnp.allclose(jnp.imag(Es), 0.0):
-                        self.rotated_hamiltonian.blocks[
-                            ii, ii
-                        ].matrix = jnp.diag(jnp.real(Es))
+                        self.rotated_hamiltonian.blocks[ii, ii].matrix = jnp.diag(jnp.real(Es))
                     else:
                         raise ValueError("You broke the Hamiltonian!")
                 else:  # It is diagonal:
@@ -680,13 +633,9 @@ class hamiltonian:
                             diag_block[0].matrix - B * diag_block[1].matrix[1]
                         )
                     elif isinstance(diag_block, self.vector_block):
-                        self.rotated_hamiltonian.blocks[ii, ii].matrix = (
-                            -B * diag_block.matrix[1]
-                        )
+                        self.rotated_hamiltonian.blocks[ii, ii].matrix = -B * diag_block.matrix[1]
                     else:
-                        self.rotated_hamiltonian.blocks[
-                            ii, ii
-                        ].matrix = diag_block.matrix
+                        self.rotated_hamiltonian.blocks[ii, ii].matrix = diag_block.matrix
 
             # Now, rotate the d_q:
             for ii in range(self.blocks.shape[0]):
@@ -696,19 +645,11 @@ class hamiltonian:
                     ):
                         new_matrix = []
                         for kk in range(3):
-                            val = (
-                                self.U[ii].T
-                                @ self.blocks[ii, jj].matrix[kk]
-                                @ self.U[jj]
-                            )
+                            val = self.U[ii].T @ self.blocks[ii, jj].matrix[kk] @ self.U[jj]
                             new_matrix.append(val)
 
-                        self.rotated_hamiltonian.blocks[
-                            ii, jj
-                        ].matrix = jnp.array(new_matrix)
-                        self.rotated_hamiltonian.blocks[
-                            jj, ii
-                        ].matrix = jnp.array(
+                        self.rotated_hamiltonian.blocks[ii, jj].matrix = jnp.array(new_matrix)
+                        self.rotated_hamiltonian.blocks[jj, ii].matrix = jnp.array(
                             [jnp.conjugate(m.T) for m in new_matrix]
                         )
 
@@ -725,9 +666,7 @@ class hamiltonian:
                         -B * diag_block.matrix[1]
                     )
                 else:
-                    self.rotated_hamiltonian.blocks[ii, ii].matrix = jnp.real(
-                        diag_block.matrix
-                    )
+                    self.rotated_hamiltonian.blocks[ii, ii].matrix = jnp.real(diag_block.matrix)
 
         return self.rotated_hamiltonian
 

@@ -111,9 +111,7 @@ class parallelIntegrator(object):
         elif "(t" in str(signature(func)):
             self.func = lambda t, y: func(t)
         else:
-            raise ValueError(
-                "signature %s for func not recognized" % str(signature(func))
-            )
+            raise ValueError("signature %s for func not recognized" % str(signature(func)))
 
         self.t0 = None
         self.tlast = None
@@ -199,9 +197,7 @@ class parallelIntegrator(object):
 
         # Did we go to a value smaller than our initial value, given the
         # direction?
-        elif (t < self.t0 and self.direction == +1) or (
-            t > self.t0 and self.direction == -1
-        ):
+        elif (t < self.t0 and self.direction == +1) or (t > self.t0 and self.direction == -1):
             # Reset the integrator.
             self.t0 = None
             self.tlast = None
@@ -557,12 +553,8 @@ def solve_ivp_random(
     >>> plt.title('Lotka-Volterra System')
     >>> plt.show()
     """
-    if method not in METHODS and not (
-        inspect.isclass(method) and issubclass(method, OdeSolver)
-    ):
-        raise ValueError(
-            "`method` must be one of {} or OdeSolver class.".format(METHODS)
-        )
+    if method not in METHODS and not (inspect.isclass(method) and issubclass(method, OdeSolver)):
+        raise ValueError("`method` must be one of {} or OdeSolver class.".format(METHODS))
 
     t0, tf = float(t_span[0]), float(t_span[1])
 
@@ -659,9 +651,7 @@ def solve_ivp_random(
             status = -1
             break
 
-        (random_event_number, max_step) = random_func(
-            solver.t, solver.y, solver.step_size
-        )
+        (random_event_number, max_step) = random_func(solver.t, solver.y, solver.step_size)
         if max_step is not None:
             solver.max_step = np.min([max_step, max_step_global])  # pyright: ignore[reportAttributeAccessIssue]
 
@@ -790,9 +780,7 @@ if __name__ == "__main__":
         else:
             return (0, max(0.1, np.abs(y[1])))
 
-    sol = solve_ivp_random(
-        dydt, func2, [0, 10 * np.pi], [0.0, 1.0], max_step=0.1, method="RK45"
-    )
+    sol = solve_ivp_random(dydt, func2, [0, 10 * np.pi], [0.0, 1.0], max_step=0.1, method="RK45")
 
     plt.figure()
 

@@ -174,14 +174,7 @@ def Xstate(
             * (-1) ** (NN + J + S + 1)
             * __wig6j(S, Jp, NN, J, S, 1)
             * np.sqrt(
-                (2 * J + 1)
-                * (2 * Jp + 1)
-                * I
-                * (I + 1)
-                * (2 * I + 1)
-                * S
-                * (S + 1)
-                * (2 * S + 1)
+                (2 * J + 1) * (2 * Jp + 1) * I * (I + 1) * (2 * I + 1) * S * (S + 1) * (2 * S + 1)
             )
             * (l == lp)
             * (NN == NNp)
@@ -230,16 +223,7 @@ def Xstate(
     # Brown and Carrington 9.88; rotattion
     def rotation(l, NN, J, F, m, P, lp, NNp, Jp, Fp, mp, Pp):
         """Return rotational energy matrix element (Brown & Carrington 9.88)."""
-        return (
-            B
-            * NN
-            * (NN + 1)
-            * (NN == NNp)
-            * (J == Jp)
-            * (F == Fp)
-            * (m == mp)
-            * (P == Pp)
-        )
+        return B * NN * (NN + 1) * (NN == NNp) * (J == Jp) * (F == Fp) * (m == mp) * (P == Pp)
 
     # Brown and Carrington 9.53, adapted to Hund's case b
     # see also Brown and Carrington 9.94 (Electronic quadrupole interaction)
@@ -251,9 +235,7 @@ def Xstate(
             * (-1) ** (NNp + S + J)
             * __wig6j(J, NN, S, NN, Jp, 2)
             * (-1) ** (NN - l)
-            * np.sqrt(
-                (2 * J + 1) * (2 * Jp + 1) * (2 * NN + 1) * (2 * NNp + 1)
-            )
+            * np.sqrt((2 * J + 1) * (2 * Jp + 1) * (2 * NN + 1) * (2 * NNp + 1))
             / __wig3j(I, 2, I, -I, 0, I)
             * (NN == NNp)
             * (J == Jp)
@@ -262,11 +244,7 @@ def Xstate(
             * (m == mp)
             * (
                 q0 / 4 * __wig3j(NN, 2, NNp, -l, 2, lp)
-                + q2
-                / (4 * np.sqrt(6))
-                * (-1) ** (J - S)
-                * P
-                * __wig3j(NN, 2, NNp, -l, 2, -lp)
+                + q2 / (4 * np.sqrt(6)) * (-1) ** (J - S) * P * __wig3j(NN, 2, NNp, -l, 2, -lp)
             )
         )
 
@@ -369,9 +347,7 @@ def Xstate(
             inds = mF_i == basis["mF"]
             if sum(inds) > 1:
                 inds = np.where(inds)[0]
-                E[inds], U[np.ix_(inds, inds)] = np.linalg.eigh(
-                    H0[np.ix_(inds, inds)]
-                )
+                E[inds], U[np.ix_(inds, inds)] = np.linalg.eigh(H0[np.ix_(inds, inds)])
             else:
                 E[inds] = H0[inds, inds]
                 U[inds, inds] = 1
@@ -525,20 +501,14 @@ def Astate(
                 for mF in np.arange(-F, F + 1, 1):
                     basis = np.append(
                         basis,
-                        np.array(
-                            [(Lambda, S, J, O, I, F, mF, P)], dtype=basis.dtype
-                        ),
+                        np.array([(Lambda, S, J, O, I, F, mF, P)], dtype=basis.dtype),
                     )
 
     # Brown and Carrington, 6.196:
     def rotation(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
         """Return rotational energy matrix element (Brown & Carrington 6.196)."""
         return (
-            (
-                B * J * (J + 1)
-                - D * J**2 * (J + 1) ** 2
-                + H * J**3 * (J + 1) ** 3
-            )
+            (B * J * (J + 1) - D * J**2 * (J + 1) ** 2 + H * J**3 * (J + 1) ** 3)
             * (L == Lp)
             * (S == Sp)
             * (J == Jp)
@@ -551,9 +521,7 @@ def Astate(
 
     # Only correct for $^2\Pi_{1/2}$ states, see table on page 531 of Brown
     # and Carrington. See 8.401 for full Lambda doubling Hamiltonian.
-    def lambda_doubling(
-        L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp
-    ):
+    def lambda_doubling(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
         """Return Lambda-doubling matrix element (Brown & Carrington 8.401)."""
         return (
             -P
@@ -572,9 +540,7 @@ def Astate(
         )
 
     # Brown and Carrington 8.372
-    def nuclearspinorbit(
-        L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp
-    ):
+    def nuclearspinorbit(L, S, J, O, I, F, mF, P, Lp, Sp, Jp, Op, Ip, Fp, mFp, Pp):
         """Return nuclear spin-orbit matrix element (Brown & Carrington 8.372)."""
         return (
             a
@@ -601,14 +567,7 @@ def Astate(
             * (-1) ** (Jp + F + I + J - O + S - (O - L))
             * __wig6j(I, Jp, F, J, I, 1)
             * np.sqrt(
-                I
-                * (I + 1)
-                * (2 * I + 1)
-                * (2 * J + 1)
-                * (2 * Jp + 1)
-                * S
-                * (S + 1)
-                * (2 * S + 1)
+                I * (I + 1) * (2 * I + 1) * (2 * J + 1) * (2 * Jp + 1) * S * (S + 1) * (2 * S + 1)
             )
             * (S == Sp)
             * (I == Ip)
@@ -618,8 +577,7 @@ def Astate(
             * (-1) ** (J + S - 2 * O + L)
             * 0.5
             * (
-                __wig3j(J, 1, Jp, -O, -1, Op)
-                * __wig3j(S, 1, Sp, -(O - L), -1, (Op - Lp))
+                __wig3j(J, 1, Jp, -O, -1, Op) * __wig3j(S, 1, Sp, -(O - L), -1, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, -1, Op)
@@ -633,8 +591,7 @@ def Astate(
                 * (-1) ** (J - S + Jp - Sp)
                 * __wig3j(J, 1, Jp, +O, -1, -Op)
                 * __wig3j(S, 1, Sp, +(O - L), -1, -(Op - Lp))
-                + __wig3j(J, 1, Jp, -O, 0, Op)
-                * __wig3j(S, 1, Sp, -(O - L), 0, (Op - Lp))
+                + __wig3j(J, 1, Jp, -O, 0, Op) * __wig3j(S, 1, Sp, -(O - L), 0, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, 0, Op)
@@ -648,8 +605,7 @@ def Astate(
                 * (-1) ** (J - S + Jp - Sp)
                 * __wig3j(J, 1, Jp, +O, 0, -Op)
                 * __wig3j(S, 1, Sp, +(O - L), 0, -(Op - Lp))
-                + __wig3j(J, 1, Jp, -O, 1, Op)
-                * __wig3j(S, 1, Sp, -(O - L), 1, (Op - Lp))
+                + __wig3j(J, 1, Jp, -O, 1, Op) * __wig3j(S, 1, Sp, -(O - L), 1, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, 1, Op)
@@ -715,13 +671,7 @@ def Astate(
             * (-1) ** (Fp + J + I + 1 + J - O + S - (O - L))
             * __wig6j(J, F, I, Fp, Jp, 1)
             * np.sqrt(
-                (2 * F + 1)
-                * (2 * Fp + 1)
-                * (2 * J + 1)
-                * (2 * Jp + 1)
-                * S
-                * (S + 1)
-                * (2 * S + 1)
+                (2 * F + 1) * (2 * Fp + 1) * (2 * J + 1) * (2 * Jp + 1) * S * (S + 1) * (2 * S + 1)
             )
             * (L == Lp)
             * (S == Sp)
@@ -729,8 +679,7 @@ def Astate(
             * (P == Pp)
             * 0.5
             * (
-                __wig3j(J, 1, Jp, -O, -1, Op)
-                * __wig3j(S, 1, Sp, -(O - L), -1, (Op - Lp))
+                __wig3j(J, 1, Jp, -O, -1, Op) * __wig3j(S, 1, Sp, -(O - L), -1, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, -1, Op)
@@ -744,8 +693,7 @@ def Astate(
                 * (-1) ** (J - S + Jp - Sp)
                 * __wig3j(J, 1, Jp, +O, -1, -Op)
                 * __wig3j(S, 1, Sp, +(O - L), -1, -(Op - Lp))
-                + __wig3j(J, 1, Jp, -O, 0, Op)
-                * __wig3j(S, 1, Sp, -(O - L), 0, (Op - Lp))
+                + __wig3j(J, 1, Jp, -O, 0, Op) * __wig3j(S, 1, Sp, -(O - L), 0, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, 0, Op)
@@ -759,8 +707,7 @@ def Astate(
                 * (-1) ** (J - S + Jp - Sp)
                 * __wig3j(J, 1, Jp, +O, 0, -Op)
                 * __wig3j(S, 1, Sp, +(O - L), 0, -(Op - Lp))
-                + __wig3j(J, 1, Jp, -O, 1, Op)
-                * __wig3j(S, 1, Sp, -(O - L), 1, (Op - Lp))
+                + __wig3j(J, 1, Jp, -O, 1, Op) * __wig3j(S, 1, Sp, -(O - L), 1, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, 1, Op)
@@ -831,18 +778,11 @@ def Astate(
             * __wig6j(J, F, I, Fp, Jp, 1)
             * __wig3j(J, 1, Jp, -O, 0, Op)
             * np.sqrt(
-                (2 * F + 1)
-                * (2 * Fp + 1)
-                * (2 * J + 1)
-                * (2 * Jp + 1)
-                * S
-                * (S + 1)
-                * (2 * S + 1)
+                (2 * F + 1) * (2 * Fp + 1) * (2 * J + 1) * (2 * Jp + 1) * S * (S + 1) * (2 * S + 1)
             )
             * 0.5
             * (
-                __wig3j(J, 1, Jp, -O, +1, Op)
-                * __wig3j(S, 1, Sp, -(O - L), -1, (Op - Lp))
+                __wig3j(J, 1, Jp, -O, +1, Op) * __wig3j(S, 1, Sp, -(O - L), -1, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, +1, Op)
@@ -856,8 +796,7 @@ def Astate(
                 * (-1) ** (J - S + Jp - Sp)
                 * __wig3j(J, 1, Jp, +O, +1, -Op)
                 * __wig3j(S, 1, Sp, +(O - L), -1, -(Op - Lp))
-                + __wig3j(J, 1, Jp, -O, -1, Op)
-                * __wig3j(S, 1, Sp, -(O - L), +1, (Op - Lp))
+                + __wig3j(J, 1, Jp, -O, -1, Op) * __wig3j(S, 1, Sp, -(O - L), +1, (Op - Lp))
                 + P
                 * (-1) ** (J - S)
                 * __wig3j(J, 1, Jp, +O, -1, Op)
@@ -894,9 +833,7 @@ def Astate(
                 H_0[ii, jj] += lambda_doubling(*args)
             if I >= 1:
                 H_0[ii, jj] += quadrupole(*args)
-            if (
-                Js.size >= 2
-            ):  # if only considering a single J, ignore energy offset due to rotation
+            if Js.size >= 2:  # if only considering a single J, ignore energy offset due to rotation
                 H_0[ii, jj] += rotation(*args)
 
     mu_p = np.zeros((3, basis.shape[0], basis.shape[0]))
@@ -911,9 +848,7 @@ def Astate(
     return H_0_jax, mu_p_jax, basis
 
 
-def dipoleXandAstates(
-    xbasis, abasis, I=1 / 2, S=1 / 2, UX=[], return_intermediate=False
-):
+def dipoleXandAstates(xbasis, abasis, I=1 / 2, S=1 / 2, UX=[], return_intermediate=False):
     r"""
     Calculate the oscillator strengths between the X and A states.
 
@@ -942,9 +877,7 @@ def dipoleXandAstates(
     """
     dijq = np.zeros((3, xbasis.shape[0], abasis.shape[0]))
 
-    def dipole_matrix_element(
-        L, Sig, O, J, F, mF, Lp, Sigp, Op, Jp, Fp, mFp, q
-    ):
+    def dipole_matrix_element(L, Sig, O, J, F, mF, Lp, Sigp, Op, Jp, Fp, mFp, q):
         """
         Compute the dipole matrix element (less reduced X-A element).
 
@@ -961,9 +894,7 @@ def dipoleXandAstates(
             * (__wig3j(J, 1, Jp, -O, -1, Op) + __wig3j(J, 1, Jp, -O, +1, Op))
         )
 
-    def elements_transform_a_to_b(
-        L, Sig, O, J, F, mF, Lp, Np, Jp, Fp, mFp, Pp
-    ):
+    def elements_transform_a_to_b(L, Sig, O, J, F, mF, Lp, Np, Jp, Fp, mFp, Pp):
         """Matrix elements to transform for Hund's case (a) to (b) (Norrgard thesis, pg.)."""
         return (
             (-1) ** (J + Sig + L)
@@ -975,22 +906,12 @@ def dipoleXandAstates(
             * (mF == mFp)
         )
 
-    def elements_transform_a_to_p(
-        L, S, J, O, I, F, mF, P, Lp, Sigp, Op, Jp, Fp, mFp
-    ):
+    def elements_transform_a_to_p(L, S, J, O, I, F, mF, P, Lp, Sigp, Op, Jp, Fp, mFp):
         """Matrix elements to transform for Hund's case (a) to to parity Eq. 6.234."""
         if Lp > 0:
             el = 1 / np.sqrt(2) * (J == Jp) * (F == Fp) * (mF == mFp)
         else:
-            el = (
-                1
-                / np.sqrt(2)
-                * P
-                * (-1) ** (J - S)
-                * (J == Jp)
-                * (F == Fp)
-                * (mF == mFp)
-            )
+            el = 1 / np.sqrt(2) * P * (-1) ** (J - S) * (J == Jp) * (F == Fp) * (mF == mFp)
         return el
 
     """ Now, we need to sum over all states to transform between Hund's case (a)
@@ -1027,9 +948,7 @@ def dipoleXandAstates(
     T_ba = np.zeros((xbasis.shape[0], intbasis_ba.shape[0]))
     for ii, xbasis_i in enumerate(xbasis):
         for jj, intbasis_ba_i in enumerate(intbasis_ba):
-            T_ba[ii, jj] = elements_transform_a_to_b(
-                *(tuple(intbasis_ba_i) + tuple(xbasis_i))
-            )
+            T_ba[ii, jj] = elements_transform_a_to_b(*(tuple(intbasis_ba_i) + tuple(xbasis_i)))
 
     """ Now, we need to sum over all states to transform between Hund's case (a)
     and parity states.  """
@@ -1067,9 +986,7 @@ def dipoleXandAstates(
     T_pa = np.zeros((abasis.shape[0], intbasis_ap.shape[0]))
     for ii, abasis_i in enumerate(abasis):
         for jj, intbasis_ap_i in enumerate(intbasis_ap):
-            T_pa[ii, jj] = elements_transform_a_to_p(
-                *(tuple(abasis_i) + tuple(intbasis_ap_i))
-            )
+            T_pa[ii, jj] = elements_transform_a_to_p(*(tuple(abasis_i) + tuple(intbasis_ap_i)))
 
     T_ap = T_pa.T
 

@@ -159,9 +159,7 @@ class heuristiceq(governingeq):
         F = jnp.sum(F_laser_ge, axis=1)  # (3,)
         return F, {"g->e": F_laser_ge}
 
-    def evolve_motion(
-        self, t_span, freeze_axis=[False, False, False], **kwargs
-    ):
+    def evolve_motion(self, t_span, freeze_axis=[False, False, False], **kwargs):
         """
         Evolve the motion of a single atom using scipy.
 
@@ -269,9 +267,7 @@ class heuristiceq(governingeq):
                 y0_batch.shape[0],
             )
 
-        free_axes = jnp.asarray(
-            [not f for f in freeze_axis], dtype=jnp.float64
-        )
+        free_axes = jnp.asarray([not f for f in freeze_axis], dtype=jnp.float64)
         mass = self.mass
         constant_accel = self.constant_accel
 
@@ -289,10 +285,7 @@ class heuristiceq(governingeq):
             phi = 2.0 * jnp.pi * jax.random.uniform(key_phi)
             z = 2.0 * jax.random.uniform(key_z) - 1.0
             r_xy = jnp.sqrt(1.0 - z**2)
-            return (
-                jnp.array([r_xy * jnp.cos(phi), r_xy * jnp.sin(phi), z])
-                * free_axes
-            )
+            return jnp.array([r_xy * jnp.cos(phi), r_xy * jnp.sin(phi), z]) * free_axes
 
         def random_recoil_fn(t, y, dt, key, args=None):
             """Apply a stochastic photon recoil kick if a scattering event occurs."""
@@ -304,16 +297,10 @@ class heuristiceq(governingeq):
             key, key_dice, key_v1, key_v2 = jax.random.split(key, 4)
             did_scatter = jax.random.uniform(key_dice) < total_P
 
-            kick = (
-                self.k
-                / mass
-                * (_random_unit_vector(key_v1) + _random_unit_vector(key_v2))
-            )
+            kick = self.k / mass * (_random_unit_vector(key_v1) + _random_unit_vector(key_v2))
             y_jump = jnp.where(did_scatter, y.at[:3].add(kick), y)
             n_scatters = jnp.where(did_scatter, 1, 0)
-            new_dt_max = jnp.where(
-                total_P > 0, max_scatter_probability / total_P * dt, jnp.inf
-            )
+            new_dt_max = jnp.where(total_P > 0, max_scatter_probability / total_P * dt, jnp.inf)
             return y_jump, n_scatters, new_dt_max, key
 
         def dummy_recoil(t, y, dt, key, args=None):
@@ -402,9 +389,7 @@ class heuristiceq(governingeq):
         V_jnp = jnp.asarray(V).reshape(3, -1).T  # (N, 3)
 
         # Evaluate force for all (r, v) pairs in parallel
-        F_all, F_laser_all = jax.vmap(
-            lambda r_i, v_i: self.force(r_i, v_i, t)
-        )(R_jnp, V_jnp)
+        F_all, F_laser_all = jax.vmap(lambda r_i, v_i: self.force(r_i, v_i, t))(R_jnp, V_jnp)
         # F_all: (N, 3),  F_laser_all: {'g->e': (N, 3, n_beams)}
 
         # Write results back in bulk (reshape flat arrays to grid shape)
@@ -412,8 +397,6 @@ class heuristiceq(governingeq):
         for key in F_laser_all:
             # F_laser_all[key]: (N, 3, n_beams) → (3, ..grid.., n_beams)
             f_flat = F_laser_all[key].reshape(grid_shape + (3, -1))
-            self.profile[name].f[key] = jnp.moveaxis(
-                f_flat, len(grid_shape), 0
-            )
+            self.profile[name].f[key] = jnp.moveaxis(f_flat, len(grid_shape), 0)
 
         return self.profile[name]

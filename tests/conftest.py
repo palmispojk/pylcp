@@ -12,6 +12,7 @@
 The XLA flag is only added when no --xla_force_host_platform_device_count
 is already present in XLA_FLAGS, so user-specified values are respected.
 """
+
 import os
 import warnings
 
@@ -27,9 +28,8 @@ import pytest
 jax.config.update("jax_enable_x64", True)
 
 import pylcp.hamiltonians as hamiltonians
+from pylcp.fields import constantMagneticField, laserBeams
 from pylcp.hamiltonian import hamiltonian
-from pylcp.fields import laserBeams, constantMagneticField
-
 
 # ---------------------------------------------------------------------------
 # GPU detection
@@ -50,37 +50,40 @@ requires_gpu = pytest.mark.skipif(not HAS_GPU, reason="No GPU available")
 # Shared helpers
 # ---------------------------------------------------------------------------
 
+
 def make_ham(gamma=1.0, k=1.0, mass=1.0):
     """Minimal F=0 -> F'=1 Hamiltonian (1 ground + 3 excited states)."""
     H0_g, mu_g = hamiltonians.singleF(F=0, gF=0)
     H0_e, mu_e = hamiltonians.singleF(F=1, gF=1)
     d_q = hamiltonians.dqij_two_bare_hyperfine(0, 1)
-    return hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q,
-                       mass=mass, gamma=gamma, k=k)
+    return hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q, mass=mass, gamma=gamma, k=k)
 
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def zero_B():
-    return constantMagneticField(jnp.array([0., 0., 0.]))
+    return constantMagneticField(jnp.array([0.0, 0.0, 0.0]))
 
 
 @pytest.fixture
 def single_beam():
     """One sigma+ beam along +z, on resonance, weak saturation."""
-    return laserBeams([{'kvec': [0., 0., 1.], 'pol': +1, 's': 0.1, 'delta': 0.}])
+    return laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.1, "delta": 0.0}])
 
 
 @pytest.fixture
 def symmetric_beams():
     """Two counter-propagating sigma+/sigma- beams along z, equal intensity."""
-    return laserBeams([
-        {'kvec': [0., 0.,  1.], 'pol': +1, 's': 0.5, 'delta': -1.0},
-        {'kvec': [0., 0., -1.], 'pol': -1, 's': 0.5, 'delta': -1.0},
-    ])
+    return laserBeams(
+        [
+            {"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.5, "delta": -1.0},
+            {"kvec": [0.0, 0.0, -1.0], "pol": -1, "s": 0.5, "delta": -1.0},
+        ]
+    )
 
 
 @pytest.fixture

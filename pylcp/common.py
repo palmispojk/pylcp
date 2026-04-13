@@ -106,14 +106,8 @@ class progressBar(object):
             Completion fraction in [0, 1].
         """
         toc = time.time()
-        if (
-            percentage > 0
-            and percentage < 1
-            and (toc - self.last_update) > self.update_rate
-        ):
-            percent = ("{0:." + str(self.decimals) + "f}").format(
-                100 * percentage
-            )
+        if percentage > 0 and percentage < 1 and (toc - self.last_update) > self.update_rate:
+            percent = ("{0:." + str(self.decimals) + "f}").format(100 * percentage)
             filledLength = int(self.length * percentage)
             bar = self.fill * filledLength + "-" * (self.length - filledLength)
 
@@ -178,9 +172,7 @@ def spherical_dot(A: jax.Array, B: jax.Array) -> jax.Array:
     The metric tensor in this basis introduces alternating signs:
     A·B = -A_{-1}B_{+1} + A_0 B_0 - A_{+1}B_{-1}.
     """
-    return jnp.tensordot(
-        A, jnp.array([-1.0, 1.0, -1.0]) * B[::-1], axes=(0, 0)
-    )
+    return jnp.tensordot(A, jnp.array([-1.0, 1.0, -1.0]) * B[::-1], axes=(0, 0))
 
 
 class base_force_profile:
@@ -235,9 +227,7 @@ class base_force_profile:
 
         self.f = {}
         for key in laserBeams:
-            self.f[key] = jnp.zeros(
-                R.shape + (len(laserBeams[key].beam_vector),)
-            )
+            self.f[key] = jnp.zeros(R.shape + (len(laserBeams[key].beam_vector),))
 
         self.f_mag = jnp.zeros(R.shape)
 
@@ -277,9 +267,7 @@ class base_force_profile:
             self.f_mag = self.f_mag.at[(jj,) + ind].set(F_mag[jj])
 
 
-def random_vector(
-    key: jax.Array, free_axes: Sequence[bool] = [True, True, True]
-) -> jax.Array:
+def random_vector(key: jax.Array, free_axes: Sequence[bool] = [True, True, True]) -> jax.Array:
     """
     Return a random vector in either 1D, 2D, or 3D.
 

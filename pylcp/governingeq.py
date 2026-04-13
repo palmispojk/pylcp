@@ -69,9 +69,7 @@ class governingeq(object):
         v0: npt.ArrayLike = jnp.array([0.0, 0.0, 0.0]),
     ) -> None:
 
-        a = jnp.asarray(
-            a, dtype=jnp.float64
-        )  # cast to jax if not already given
+        a = jnp.asarray(a, dtype=jnp.float64)  # cast to jax if not already given
         r0 = jnp.asarray(r0, dtype=jnp.float64)
         v0 = jnp.asarray(v0, dtype=jnp.float64)
 
@@ -88,8 +86,7 @@ class governingeq(object):
             for key in laserBeams.keys():
                 if not isinstance(laserBeams[key], laserBeamsObject):
                     raise TypeError(
-                        "Key %s in dictionary laserBeams " % key
-                        + "is not of type laserBeams."
+                        "Key %s in dictionary laserBeams " % key + "is not of type laserBeams."
                     )
             self.laserBeams = copy.copy(laserBeams)
         else:
@@ -104,8 +101,7 @@ class governingeq(object):
             self.magField = copy.copy(magField)
         else:
             raise TypeError(
-                "The magnetic field must be either a lambda "
-                + "function or a magField object."
+                "The magnetic field must be either a lambda " + "function or a magField object."
             )
 
         # Add the Hamiltonian:
@@ -140,9 +136,7 @@ class governingeq(object):
                     + "Hamiltonian d_q."
                 )
 
-    def set_initial_position_and_velocity(
-        self, r0: npt.ArrayLike, v0: npt.ArrayLike
-    ) -> None:
+    def set_initial_position_and_velocity(self, r0: npt.ArrayLike, v0: npt.ArrayLike) -> None:
         """
         Set the initial position and velocity.
 
@@ -234,9 +228,7 @@ class governingeq(object):
         """
         pass
 
-    def find_equilibrium_position(
-        self, axes: Sequence[int], **kwargs: Any
-    ) -> jax.Array:
+    def find_equilibrium_position(self, axes: Sequence[int], **kwargs: Any) -> jax.Array:
         r"""
         Find the equilibrium position.
 
@@ -334,20 +326,12 @@ class governingeq(object):
             3,
         )
 
-        eps_arr: jax.Array = (
-            jnp.array([eps] * 3)
-            if isinstance(eps, float)
-            else jnp.asarray(eps)
-        )
+        eps_arr: jax.Array = jnp.array([eps] * 3) if isinstance(eps, float) else jnp.asarray(eps)
 
         if r is None and self.r_eq is None:
             r = jnp.array([0.0, 0.0, 0.0])
         elif r is None:
-            r = (
-                self.r_eq
-                if self.r_eq is not None
-                else jnp.array([0.0, 0.0, 0.0])
-            )
+            r = self.r_eq if self.r_eq is not None else jnp.array([0.0, 0.0, 0.0])
 
         assert r is not None
         r_arr: jax.Array = jnp.asarray(r)
@@ -364,9 +348,7 @@ class governingeq(object):
 
                 F = np.zeros((2,))
                 for jj in range(2):
-                    self.set_initial_position_and_velocity(
-                        rpmdri[:, jj], jnp.zeros((3,))
-                    )
+                    self.set_initial_position_and_velocity(rpmdri[:, jj], jnp.zeros((3,)))
                     f = self.find_equilibrium_force(**kwargs)
 
                     assert f is not None
@@ -374,9 +356,7 @@ class governingeq(object):
 
                 dF = jnp.diff(jnp.array(F))[0]
                 if dF < 0:
-                    self.omega = self.omega.at[axis].set(
-                        jnp.sqrt(-dF / (2 * eps_arr[axis] * mass))
-                    )
+                    self.omega = self.omega.at[axis].set(jnp.sqrt(-dF / (2 * eps_arr[axis] * mass)))
                 else:
                     self.omega = self.omega.at[axis].set(0.0)
             else:
@@ -427,20 +407,12 @@ class governingeq(object):
             3,
         )
 
-        eps_arr: jax.Array = (
-            jnp.array([eps] * 3)
-            if isinstance(eps, float)
-            else jnp.asarray(eps)
-        )
+        eps_arr: jax.Array = jnp.array([eps] * 3) if isinstance(eps, float) else jnp.asarray(eps)
 
         if r is None and self.r_eq is None:
             r = jnp.array([0.0, 0.0, 0.0])
         elif r is None:
-            r = (
-                self.r_eq
-                if self.r_eq is not None
-                else jnp.array([0.0, 0.0, 0.0])
-            )
+            r = self.r_eq if self.r_eq is not None else jnp.array([0.0, 0.0, 0.0])
 
         assert r is not None
         r_arr: jax.Array = jnp.asarray(r)
@@ -453,9 +425,7 @@ class governingeq(object):
 
                 F = np.zeros((2,))
                 for jj in range(2):
-                    self.set_initial_position_and_velocity(
-                        r_arr, vpmdvi[:, jj]
-                    )
+                    self.set_initial_position_and_velocity(r_arr, vpmdvi[:, jj])
                     f = self.find_equilibrium_force(**kwargs)
 
                     assert f is not None

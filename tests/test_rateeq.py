@@ -1,20 +1,21 @@
 """
 Tests for pylcp/rateeq.py
 """
-import pytest
-import numpy as np
+
 import jax
 import jax.numpy as jnp
-
-from pylcp.hamiltonian import hamiltonian
-from pylcp.fields import laserBeams, laserBeam, constantMagneticField, magField
-from pylcp.rateeq import rateeq, force_profile
+import numpy as np
+import pytest
 from conftest import make_ham
 
+from pylcp.fields import laserBeams, magField
+from pylcp.hamiltonian import hamiltonian
+from pylcp.rateeq import force_profile, rateeq
 
 # ---------------------------------------------------------------------------
 # Local fixtures (shared ones live in conftest.py)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def req(single_beam, zero_B, ham):
@@ -29,6 +30,7 @@ def req_sym(symmetric_beams, zero_B, ham):
 # ---------------------------------------------------------------------------
 # TestForceProfile
 # ---------------------------------------------------------------------------
+
 
 class TestForceProfile:
     def test_construction_2d_grid(self, req):
@@ -48,7 +50,7 @@ class TestForceProfile:
         R = np.zeros((3, 3))
         V = np.zeros((3, 3))
         fp = force_profile(R, V, req.laserBeams, req.hamiltonian)
-        assert 'g->e' in fp.Rijl
+        assert "g->e" in fp.Rijl
 
     def test_Neq_shape(self, req):
         R = np.zeros((3, 5))
@@ -61,6 +63,7 @@ class TestForceProfile:
 # ---------------------------------------------------------------------------
 # TestRateeqInit
 # ---------------------------------------------------------------------------
+
 
 class TestRateeqInit:
     def test_hamiltonian_stored(self, req, ham):
@@ -81,10 +84,10 @@ class TestRateeqInit:
         assert r.svd_eps == pytest.approx(1e-8)
 
     def test_recoil_velocity_key_present(self, req):
-        assert 'g->e' in req.recoil_velocity
+        assert "g->e" in req.recoil_velocity
 
     def test_recoil_velocity_positive(self, req):
-        assert req.recoil_velocity['g->e'] > 0
+        assert req.recoil_velocity["g->e"] > 0
 
     def test_profile_starts_empty(self, req):
         assert req.profile == {}
@@ -98,7 +101,7 @@ class TestRateeqInit:
     def test_Rev_decay_precomputed_for_diagonal_ham(self, req, ham):
         # F=0->F=1 with singleF gives a diagonal hamiltonian
         assert np.all(ham.diagonal)
-        assert hasattr(req, 'Rev_decay')
+        assert hasattr(req, "Rev_decay")
         assert req.Rev_decay.shape == (ham.n, ham.n)
 
 
@@ -106,29 +109,30 @@ class TestRateeqInit:
 # TestSetInitialPop
 # ---------------------------------------------------------------------------
 
+
 class TestSetInitialPop:
     def test_wrong_length_raises(self, req):
         with pytest.raises(ValueError):
-            req.set_initial_pop(jnp.array([1., 0., 0.]))  # too short (3 vs 4)
+            req.set_initial_pop(jnp.array([1.0, 0.0, 0.0]))  # too short (3 vs 4)
 
     def test_nan_raises(self, req, ham):
-        bad = jnp.array([float('nan')] + [0.] * (ham.n - 1))
+        bad = jnp.array([float("nan")] + [0.0] * (ham.n - 1))
         with pytest.raises(ValueError):
             req.set_initial_pop(bad)
 
     def test_inf_raises(self, req, ham):
-        bad = jnp.array([float('inf')] + [0.] * (ham.n - 1))
+        bad = jnp.array([float("inf")] + [0.0] * (ham.n - 1))
         with pytest.raises(ValueError):
             req.set_initial_pop(bad)
 
     def test_valid_pop_stored(self, req, ham):
-        N0 = jnp.zeros(ham.n).at[0].set(1.)
+        N0 = jnp.zeros(ham.n).at[0].set(1.0)
         req.set_initial_pop(N0)
         assert jnp.allclose(req.N0, N0)
 
     def test_set_from_equilibrium(self, req):
         req.set_initial_pop_from_equilibrium()
-        assert hasattr(req, 'N0')
+        assert hasattr(req, "N0")
         assert jnp.allclose(jnp.sum(req.N0), 1.0, atol=1e-6)
         assert jnp.all(req.N0 >= 0)
 
@@ -136,6 +140,7 @@ class TestSetInitialPop:
 # ---------------------------------------------------------------------------
 # TestConstructEvolutionMatrix
 # ---------------------------------------------------------------------------
+
 
 class TestConstructEvolutionMatrix:
     """Rate evolution matrix Rev for the population vector dN/dt = Rev·N.
@@ -150,47 +155,40 @@ class TestConstructEvolutionMatrix:
     - Higher laser intensity → larger off-diagonal pumping rates."""
 
     def test_returns_matrix_and_rijl(self, req, ham):
-        Rev, Rijl = req.construct_evolution_matrix(
-            jnp.zeros(3), jnp.zeros(3), t=0.)
+        Rev, Rijl = req.construct_evolution_matrix(jnp.zeros(3), jnp.zeros(3), t=0.0)
         assert Rev.shape == (ham.n, ham.n)
-        assert 'g->e' in Rijl
+        assert "g->e" in Rijl
 
     def test_column_sums_are_zero(self, req, ham):
         """Probability conservation: columns of Rev must sum to zero."""
-        Rev, _ = req.construct_evolution_matrix(
-            jnp.zeros(3), jnp.zeros(3), t=0.)
+        Rev, _ = req.construct_evolution_matrix(jnp.zeros(3), jnp.zeros(3), t=0.0)
         col_sums = jnp.sum(Rev, axis=0)
         assert jnp.allclose(col_sums, jnp.zeros(ham.n), atol=1e-10)
 
     def test_diagonal_negative_or_zero(self, req, ham):
         """Diagonal entries of Rev must be ≤ 0 (decay/pump out)."""
-        Rev, _ = req.construct_evolution_matrix(
-            jnp.zeros(3), jnp.zeros(3), t=0.)
+        Rev, _ = req.construct_evolution_matrix(jnp.zeros(3), jnp.zeros(3), t=0.0)
         assert jnp.all(jnp.diag(Rev) <= 0)
 
     def test_off_diagonal_non_negative(self, req, ham):
         """Off-diagonal entries of Rev must be ≥ 0 (rates in)."""
-        Rev, _ = req.construct_evolution_matrix(
-            jnp.zeros(3), jnp.zeros(3), t=0.)
+        Rev, _ = req.construct_evolution_matrix(jnp.zeros(3), jnp.zeros(3), t=0.0)
         n = ham.n
         for i in range(n):
             for j in range(n):
                 if i != j:
-                    assert float(Rev[i, j]) >= -1e-12, \
-                        f"Off-diagonal Rev[{i},{j}] = {float(Rev[i,j])} < 0"
+                    assert float(Rev[i, j]) >= -1e-12, (
+                        f"Off-diagonal Rev[{i},{j}] = {float(Rev[i, j])} < 0"
+                    )
 
     def test_pumping_increases_with_intensity(self, zero_B, ham):
         """Higher intensity → larger off-diagonal pumping rates."""
-        beams_lo = laserBeams([{'kvec': [0., 0., 1.], 'pol': +1,
-                                 's': 0.01, 'delta': 0.}])
-        beams_hi = laserBeams([{'kvec': [0., 0., 1.], 'pol': +1,
-                                 's': 1.0,  'delta': 0.}])
+        beams_lo = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.01, "delta": 0.0}])
+        beams_hi = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 1.0, "delta": 0.0}])
         req_lo = rateeq(beams_lo, zero_B, make_ham())
         req_hi = rateeq(beams_hi, zero_B, make_ham())
-        Rev_lo, _ = req_lo.construct_evolution_matrix(
-            jnp.zeros(3), jnp.zeros(3))
-        Rev_hi, _ = req_hi.construct_evolution_matrix(
-            jnp.zeros(3), jnp.zeros(3))
+        Rev_lo, _ = req_lo.construct_evolution_matrix(jnp.zeros(3), jnp.zeros(3))
+        Rev_hi, _ = req_hi.construct_evolution_matrix(jnp.zeros(3), jnp.zeros(3))
         # σ+ beam drives mF=0 → mF=+1, which is index 3 in the excited manifold.
         # Pumping Rev[3,0] should be larger for higher intensity.
         assert float(Rev_hi[3, 0]) > float(Rev_lo[3, 0])
@@ -200,6 +198,7 @@ class TestConstructEvolutionMatrix:
 # TestEquilibriumPopulations
 # ---------------------------------------------------------------------------
 
+
 class TestEquilibriumPopulations:
     """Steady-state populations Neq satisfying Rev·Neq = 0.
 
@@ -208,31 +207,28 @@ class TestEquilibriumPopulations:
     (the only dark state).  Populations must sum to 1 and be non-negative."""
 
     def test_populations_sum_to_one(self, req):
-        Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.)
+        Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.0)
         assert float(jnp.sum(Neq)) == pytest.approx(1.0, abs=1e-6)
 
     def test_populations_non_negative(self, req):
-        Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.)
+        Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.0)
         assert jnp.all(Neq >= -1e-10)
 
     def test_return_details_gives_tuple(self, req):
-        result = req.equilibrium_populations(
-            jnp.zeros(3), jnp.zeros(3), t=0., return_details=True)
+        result = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.0, return_details=True)
         assert len(result) == 3  # (Neq, Rev, Rijl)
 
     def test_ground_state_has_population(self, req):
         """At weak saturation the ground state should hold most population."""
-        Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.)
+        Neq = req.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.0)
         # Ground state is index 0 (1 state), excited are 1-3 (3 states)
         assert float(Neq[0]) > 0.0
 
     def test_zero_intensity_gives_all_ground(self, zero_B, ham):
         """With no laser, all population stays in the ground state."""
-        no_beams = laserBeams([{'kvec': [0., 0., 1.], 'pol': +1,
-                                 's': 0., 'delta': 0.}])
+        no_beams = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.0, "delta": 0.0}])
         req_dark = rateeq(no_beams, zero_B, make_ham())
-        Neq = req_dark.equilibrium_populations(
-            jnp.zeros(3), jnp.zeros(3), t=0.)
+        Neq = req_dark.equilibrium_populations(jnp.zeros(3), jnp.zeros(3), t=0.0)
         # Ground state (index 0) should have all population
         assert float(Neq[0]) == pytest.approx(1.0, abs=1e-6)
 
@@ -240,6 +236,7 @@ class TestEquilibriumPopulations:
 # ---------------------------------------------------------------------------
 # TestFindEquilibriumForce
 # ---------------------------------------------------------------------------
+
 
 class TestFindEquilibriumForce:
     def test_returns_shape_3(self, req):
@@ -266,10 +263,8 @@ class TestFindEquilibriumForce:
 
     def test_force_scale_with_intensity(self, zero_B, ham):
         """Force should increase with laser intensity."""
-        beams_lo = laserBeams([{'kvec': [0., 0., 1.], 'pol': +1,
-                                 's': 0.1, 'delta': 0.}])
-        beams_hi = laserBeams([{'kvec': [0., 0., 1.], 'pol': +1,
-                                 's': 2.0, 'delta': 0.}])
+        beams_lo = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.1, "delta": 0.0}])
+        beams_hi = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 2.0, "delta": 0.0}])
         req_lo = rateeq(beams_lo, zero_B, make_ham())
         req_hi = rateeq(beams_hi, zero_B, make_ham())
         req_lo.set_initial_pop_from_equilibrium()
@@ -288,6 +283,7 @@ class TestFindEquilibriumForce:
 # ---------------------------------------------------------------------------
 # Test1DMOTForceProfile – regression tests for magnetic field gradient
 # ---------------------------------------------------------------------------
+
 
 class Test1DMOTForceProfile:
     """1D MOT with linear B-field gradient: force profile must be restoring.
@@ -310,16 +306,19 @@ class Test1DMOTForceProfile:
         at x = ±x_res, i.e.  alpha * x_res * mu_z_per_state = |delta|.
         """
         from pylcp.fields import magField
+
         ham = make_ham(gamma=1.0, k=1.0, mass=1.0)
         # mu_z per excited mF state (physical units)
         mu_val = 1399624.49171  # |diag(mu_e[1])[0]|
         delta = -4.0
         x_res = 5.0  # resonance position
         alpha = abs(delta) / (x_res * mu_val)
-        beams = laserBeams([
-            {'kvec': [1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': delta},
-            {'kvec': [-1., 0., 0.], 'pol': -1, 's': 1.0, 'delta': delta},
-        ])
+        beams = laserBeams(
+            [
+                {"kvec": [1.0, 0.0, 0.0], "pol": -1, "s": 1.0, "delta": delta},
+                {"kvec": [-1.0, 0.0, 0.0], "pol": -1, "s": 1.0, "delta": delta},
+            ]
+        )
         B = magField(lambda R: -alpha * R)
         req = rateeq(beams, B, ham)
         x = np.linspace(-10, 10, 21) * x_res / 10.0
@@ -337,15 +336,15 @@ class Test1DMOTForceProfile:
         """By symmetry the force at x=0 (where B=0) must vanish."""
         fp, x = mot_fp
         origin_idx = np.argmin(np.abs(x))
-        assert float(fp.F[0, origin_idx]) == pytest.approx(0., abs=1e-10)
+        assert float(fp.F[0, origin_idx]) == pytest.approx(0.0, abs=1e-10)
 
     def test_force_is_restoring(self, mot_fp):
         """For x>0 the force must point in -x (restoring), and vice versa."""
         fp, x = mot_fp
         pos_mask = x > 1.0
         neg_mask = x < -1.0
-        assert np.all(fp.F[0, pos_mask] < 0.), "Force should be negative for x>0"
-        assert np.all(fp.F[0, neg_mask] > 0.), "Force should be positive for x<0"
+        assert np.all(fp.F[0, pos_mask] < 0.0), "Force should be negative for x>0"
+        assert np.all(fp.F[0, neg_mask] > 0.0), "Force should be positive for x<0"
 
     def test_force_is_antisymmetric(self, mot_fp):
         """F(x) ≈ -F(-x) for the symmetric 1D MOT."""
@@ -357,13 +356,14 @@ class Test1DMOTForceProfile:
         """Force must be non-zero near the resonance position."""
         fp, x = mot_fp
         # Pick a point away from origin but within the trapping region
-        idx = np.argmin(np.abs(x - x[len(x)//2 + len(x)//4]))
+        idx = np.argmin(np.abs(x - x[len(x) // 2 + len(x) // 4]))
         assert abs(float(fp.F[0, idx])) > 1e-6
 
 
 # ---------------------------------------------------------------------------
 # TestRandomRecoilKickDistribution
 # ---------------------------------------------------------------------------
+
 
 class TestRandomRecoilKickDistribution:
     """Verify random_recoil kicks use two independent random unit vectors.
@@ -379,8 +379,8 @@ class TestRandomRecoilKickDistribution:
         # Trigger internal setup by generating a force profile first
         R = np.zeros((3, 1))
         V = np.zeros((3, 1))
-        req.generate_force_profile(R, V, name='test')
-        free_axes = jnp.array([1., 1., 1.])
+        req.generate_force_profile(R, V, name="test")
+        free_axes = jnp.array([1.0, 1.0, 1.0])
         n_states = ham.n
         return req._make_random_recoil_func(n_states, free_axes, max_P=0.1)
 
@@ -394,12 +394,11 @@ class TestRandomRecoilKickDistribution:
         y = jnp.concatenate([N, v, r])
 
         magnitudes = []
-        key = jax.random.PRNGKey(0)
         dt = jnp.float64(10.0)  # large dt to guarantee scatters
         for i in range(200):
             key_i = jax.random.PRNGKey(i)
-            y_out, n_scat, _, _ = recoil_func(0., y, dt, key_i)
-            dv = y_out[n_states:n_states+3] - y[n_states:n_states+3]
+            y_out, n_scat, _, _ = recoil_func(0.0, y, dt, key_i)
+            dv = y_out[n_states : n_states + 3] - y[n_states : n_states + 3]
             mag = float(jnp.linalg.norm(dv))
             if mag > 0:
                 magnitudes.append(mag)
@@ -415,6 +414,7 @@ class TestRandomRecoilKickDistribution:
 # ---------------------------------------------------------------------------
 # Magnetic trap motion tests
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.slow
 class TestQuadrupoleTrapMotion:
@@ -435,15 +435,16 @@ class TestQuadrupoleTrapMotion:
     Adapted from tests/magnetic_traps/00_motion_rateeq.py.
     """
 
-    @pytest.fixture(scope='class')
+    @pytest.fixture(scope="class")
     def trap_rateeq(self):
         """Build a rate equation solver for a spin-1/2 atom in a quadrupole trap."""
         import pylcp.hamiltonians as hamiltonians
         from pylcp.hamiltonian import hamiltonian as ham_cls
-        H0, muq = hamiltonians.singleF(1/2, gF=2, muB=1)
+
+        H0, muq = hamiltonians.singleF(1 / 2, gF=2, muB=1)
         h = ham_cls()
-        h.add_H_0_block('g', H0)
-        h.add_mu_q_block('g', muq)
+        h.add_H_0_block("g", H0)
+        h.add_mu_q_block("g", muq)
         B = magField(lambda R: jnp.array([-0.5 * R[0], -0.5 * R[1], 1 * R[2]]))
         return h, B
 
@@ -452,15 +453,15 @@ class TestQuadrupoleTrapMotion:
         (return close to origin at some point)."""
         h, B = trap_rateeq
         req = rateeq({}, B, h, include_mag_forces=True)
-        req.set_initial_pop(jnp.array([0., 1.]))
-        req.set_initial_position(jnp.array([0., 0., 5.]))
+        req.set_initial_pop(jnp.array([0.0, 1.0]))
+        req.set_initial_position(jnp.array([0.0, 0.0, 5.0]))
         req.set_initial_velocity(jnp.zeros(3))
         req.evolve_motion([0, 500], n_points=201)
 
         z = np.array(req.sol.r[2])
         # The atom should cross zero at some point (oscillatory motion)
         assert np.any(z < 2.5), "Atom did not oscillate back toward origin"
-        assert np.any(z > 0.), "Position should remain physical"
+        assert np.any(z > 0.0), "Position should remain physical"
 
     def test_anisotropic_frequency(self, trap_rateeq):
         """Anisotropic oscillation: z and radial frequencies must differ.
@@ -476,16 +477,16 @@ class TestQuadrupoleTrapMotion:
 
         # z-oscillation
         req_z = rateeq({}, B, h, include_mag_forces=True)
-        req_z.set_initial_pop(jnp.array([0., 1.]))
-        req_z.set_initial_position(jnp.array([0., 0., z0]))
+        req_z.set_initial_pop(jnp.array([0.0, 1.0]))
+        req_z.set_initial_position(jnp.array([0.0, 0.0, z0]))
         req_z.set_initial_velocity(jnp.zeros(3))
         req_z.evolve_motion([0, 200], n_points=1001)
         z = np.array(req_z.sol.r[2])
 
         # x-oscillation (same displacement but along x)
         req_x = rateeq({}, B, h, include_mag_forces=True)
-        req_x.set_initial_pop(jnp.array([0., 1.]))
-        req_x.set_initial_position(jnp.array([z0, 0., 0.]))
+        req_x.set_initial_pop(jnp.array([0.0, 1.0]))
+        req_x.set_initial_position(jnp.array([z0, 0.0, 0.0]))
         req_x.set_initial_velocity(jnp.zeros(3))
         req_x.evolve_motion([0, 200], n_points=1001)
         x = np.array(req_x.sol.r[0])
@@ -510,8 +511,8 @@ class TestQuadrupoleTrapMotion:
         """Populations must remain between 0 and 1 and sum to 1."""
         h, B = trap_rateeq
         req = rateeq({}, B, h, include_mag_forces=True)
-        req.set_initial_pop(jnp.array([0., 1.]))
-        req.set_initial_position(jnp.array([0., 0., 5.]))
+        req.set_initial_pop(jnp.array([0.0, 1.0]))
+        req.set_initial_position(jnp.array([0.0, 0.0, 5.0]))
         req.set_initial_velocity(jnp.zeros(3))
         req.evolve_motion([0, 500], n_points=101)
 
@@ -526,6 +527,7 @@ class TestQuadrupoleTrapMotion:
 # TestEvolvePopulations
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.slow
 class TestEvolvePopulations:
     """Time evolution of populations at fixed position/velocity."""
@@ -533,8 +535,8 @@ class TestEvolvePopulations:
     def test_returns_sol_with_t_and_y(self, req):
         req.set_initial_pop_from_equilibrium()
         sol = req.evolve_populations([0, 10.0], n_points=101)
-        assert hasattr(sol, 't')
-        assert hasattr(sol, 'y')
+        assert hasattr(sol, "t")
+        assert hasattr(sol, "y")
 
     def test_output_shapes(self, req, ham):
         req.set_initial_pop_from_equilibrium()
@@ -555,9 +557,9 @@ class TestEvolvePopulations:
 
     def test_converges_to_equilibrium(self, req):
         """Starting from pure ground, populations should approach equilibrium."""
-        req.set_initial_pop(jnp.array([1., 0., 0., 0.]))
+        req.set_initial_pop(jnp.array([1.0, 0.0, 0.0, 0.0]))
         sol = req.evolve_populations([0, 50.0], n_points=501)
-        Neq = req.equilibrium_populations(req.r0, req.v0, t=0.)
+        Neq = req.equilibrium_populations(req.r0, req.v0, t=0.0)
         # Final populations should be close to equilibrium
         np.testing.assert_allclose(sol.y[:, -1], np.array(Neq), atol=1e-3)
 
@@ -565,6 +567,7 @@ class TestEvolvePopulations:
 # ---------------------------------------------------------------------------
 # TestEvolveMotion
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.slow
 class TestEvolveMotion:
@@ -580,10 +583,10 @@ class TestEvolveMotion:
 
     def test_returns_solution(self, req_mot):
         sol = req_mot.evolve_motion([0, 5.0], n_points=51)
-        assert hasattr(sol, 't')
-        assert hasattr(sol, 'N')
-        assert hasattr(sol, 'v')
-        assert hasattr(sol, 'r')
+        assert hasattr(sol, "t")
+        assert hasattr(sol, "N")
+        assert hasattr(sol, "v")
+        assert hasattr(sol, "r")
 
     def test_sol_stored_on_instance(self, req_mot):
         req_mot.evolve_motion([0, 5.0], n_points=51)
@@ -597,8 +600,8 @@ class TestEvolveMotion:
 
     def test_transverse_stays_zero(self, req_mot):
         sol = req_mot.evolve_motion([0, 5.0], n_points=51)
-        assert np.allclose(sol.r[0], 0., atol=1e-10)
-        assert np.allclose(sol.r[1], 0., atol=1e-10)
+        assert np.allclose(sol.r[0], 0.0, atol=1e-10)
+        assert np.allclose(sol.r[1], 0.0, atol=1e-10)
 
     def test_population_stays_physical(self, req_mot):
         sol = req_mot.evolve_motion([0, 10.0], n_points=101)
@@ -607,10 +610,9 @@ class TestEvolveMotion:
         np.testing.assert_allclose(pop_sum, np.ones_like(pop_sum), atol=1e-3)
 
     def test_freeze_axis(self, req_mot):
-        sol = req_mot.evolve_motion([0, 5.0], n_points=51,
-                                    freeze_axis=[False, False, True])
-        assert np.allclose(sol.r[2], 0., atol=1e-10)
-        assert np.allclose(sol.v[2], 0., atol=1e-10)
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51, freeze_axis=[False, False, True])
+        assert np.allclose(sol.r[2], 0.0, atol=1e-10)
+        assert np.allclose(sol.v[2], 0.0, atol=1e-10)
 
     def test_no_nan(self, req_mot):
         sol = req_mot.evolve_motion([0, 5.0], n_points=51)
@@ -622,18 +624,19 @@ class TestEvolveMotion:
         """random_recoil=True should run without error."""
         sol = req_mot.evolve_motion([0, 5.0], n_points=51, random_recoil=True)
         assert not np.any(np.isnan(sol.r))
-        assert hasattr(sol, 't_random')
+        assert hasattr(sol, "t_random")
 
     def test_random_force_runs(self, req_mot):
         """random_force=True should run without error."""
         sol = req_mot.evolve_motion([0, 5.0], n_points=51, random_force=True)
         assert not np.any(np.isnan(sol.r))
-        assert hasattr(sol, 't_random')
+        assert hasattr(sol, "t_random")
 
 
 # ---------------------------------------------------------------------------
 # TestEvolveMotionCPU — non-diagonal Hamiltonian CPU fallback
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.slow
 class TestEvolveMotionCPU:
@@ -651,9 +654,7 @@ class TestEvolveMotionCPU:
         d_q = d_q.at[1, 0, 0].set(1.0)
         ham = hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q, mass=1.0, gamma=1.0, k=1.0)
         assert not np.all(ham.diagonal), "H0 must be non-diagonal for this test"
-        beams = laserBeams([
-            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.5, 'delta': 0.}
-        ])
+        beams = laserBeams([{"kvec": [0.0, 0.0, 1.0], "pol": +1, "s": 0.5, "delta": 0.0}])
         r = rateeq(beams, zero_B, ham)
         r.set_initial_pop(jnp.array([0.5, 0.5, 0.0]))
         r.set_initial_position(jnp.zeros(3))
@@ -663,9 +664,9 @@ class TestEvolveMotionCPU:
     def test_cpu_fallback_runs(self, nondiag_req):
         """Non-diagonal Hamiltonian should use CPU path without error."""
         sol = nondiag_req.evolve_motion([0, 5.0], n_points=51)
-        assert hasattr(sol, 'N')
-        assert hasattr(sol, 'v')
-        assert hasattr(sol, 'r')
+        assert hasattr(sol, "N")
+        assert hasattr(sol, "v")
+        assert hasattr(sol, "r")
 
     def test_cpu_population_physical(self, nondiag_req):
         sol = nondiag_req.evolve_motion([0, 5.0], n_points=51)

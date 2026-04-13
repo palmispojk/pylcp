@@ -61,9 +61,7 @@ def input_int_single_point(
         # Is there a central hole?
         if center_hole > 0:
             # Then check to see if we are within the hole.
-            for cos_th_center, sin_th_center in zip(
-                cos_th_centers, sin_th_centers
-            ):
+            for cos_th_center, sin_th_center in zip(cos_th_centers, sin_th_centers):
                 if (R[0] * cos_th_center + R[1] * sin_th_center) > center_hole:
                     return 0.0
         else:
@@ -162,9 +160,7 @@ class infiniteGratingMOTBeams(laserBeams):
                 )
             )
 
-    def _calculate_reflected_kvecs_and_pol(
-        self, reflected_pol, reflected_pol_basis
-    ):
+    def _calculate_reflected_kvecs_and_pol(self, reflected_pol, reflected_pol_basis):
         # Preallocate memory for the polarizations (no need to store kvec or the
         # polarization because those are stored in the laser)
         kvec = np.zeros((3, self.nr))
@@ -175,10 +171,8 @@ class infiniteGratingMOTBeams(laserBeams):
         for ii in range(self.nr):  # Reflected beams
             kvec[:, ii] = np.array(
                 [
-                    -np.sin(self.thd)
-                    * np.cos(2 * np.pi * ii / self.nr + self.grating_angle),
-                    -np.sin(self.thd)
-                    * np.sin(2 * np.pi * ii / self.nr + self.grating_angle),
+                    -np.sin(self.thd) * np.cos(2 * np.pi * ii / self.nr + self.grating_angle),
+                    -np.sin(self.thd) * np.sin(2 * np.pi * ii / self.nr + self.grating_angle),
                     -np.cos(self.thd),
                 ]
             )
@@ -191,10 +185,8 @@ class infiniteGratingMOTBeams(laserBeams):
             )
             pvec[:, ii] = np.array(
                 [
-                    np.cos(self.thd)
-                    * np.cos(2 * np.pi * ii / self.nr + self.grating_angle),
-                    np.cos(self.thd)
-                    * np.sin(2 * np.pi * ii / self.nr + self.grating_angle),
+                    np.cos(self.thd) * np.cos(2 * np.pi * ii / self.nr + self.grating_angle),
+                    np.cos(self.thd) * np.sin(2 * np.pi * ii / self.nr + self.grating_angle),
                     -np.sin(self.thd),
                 ]
             )
@@ -202,20 +194,15 @@ class infiniteGratingMOTBeams(laserBeams):
             if reflected_pol_basis == "poincare":
                 pol_ref[:, ii] = np.sin(reflected_pol[0] / 2) * np.exp(
                     1j * reflected_pol[1] / 2
-                ) * (
-                    svec[:, ii] / np.sqrt(2) + 1j / np.sqrt(2) * pvec[:, ii]
-                ) + np.cos(reflected_pol[0] / 2) * np.exp(
-                    -1j * reflected_pol[1] / 2
-                ) * (svec[:, ii] / np.sqrt(2) - 1j / np.sqrt(2) * pvec[:, ii])
+                ) * (svec[:, ii] / np.sqrt(2) + 1j / np.sqrt(2) * pvec[:, ii]) + np.cos(
+                    reflected_pol[0] / 2
+                ) * np.exp(-1j * reflected_pol[1] / 2) * (
+                    svec[:, ii] / np.sqrt(2) - 1j / np.sqrt(2) * pvec[:, ii]
+                )
             elif reflected_pol_basis == "jones_vector":
-                pol_ref[:, ii] = (
-                    reflected_pol[0] * svec[:, ii]
-                    + reflected_pol[1] * pvec[:, ii]
-                )
+                pol_ref[:, ii] = reflected_pol[0] * svec[:, ii] + reflected_pol[1] * pvec[:, ii]
             elif reflected_pol_basis == "stokes_parameters":
-                raise NotImplementedError(
-                    "Stokes parameters not yet implemented."
-                )
+                raise NotImplementedError("Stokes parameters not yet implemented.")
             elif reflected_pol_basis == "waveplate":
                 svec_inp = -svec[:, ii]
                 pvec_inp = np.array(
@@ -235,13 +222,13 @@ class infiniteGratingMOTBeams(laserBeams):
                 that the slow and fast axes are defined relative to the input s and
                 p:
                 """
-                slow_axis = pvec_inp * np.cos(
+                slow_axis = pvec_inp * np.cos(reflected_pol[0]) + svec_inp * np.sin(
                     reflected_pol[0]
-                ) + svec_inp * np.sin(reflected_pol[0])
+                )
 
-                fast_axis = -pvec_inp * np.sin(
+                fast_axis = -pvec_inp * np.sin(reflected_pol[0]) + svec_inp * np.cos(
                     reflected_pol[0]
-                ) + svec_inp * np.cos(reflected_pol[0])
+                )
 
                 # Compute new polarization:
                 pol_after_waveplate = (
@@ -254,14 +241,12 @@ class infiniteGratingMOTBeams(laserBeams):
                 )
 
                 # Reproject onto s and p:
-                pol_ref[:, ii] = -pvec[:, ii] * np.dot(
-                    pol_after_waveplate, pvec_inp
-                ) + svec[:, ii] * np.dot(pol_after_waveplate, svec_inp)
+                pol_ref[:, ii] = -pvec[:, ii] * np.dot(pol_after_waveplate, pvec_inp) + svec[
+                    :, ii
+                ] * np.dot(pol_after_waveplate, svec_inp)
             else:
                 raise NotImplementedError(
-                    "{0:s} polarization basis not implemented.".format(
-                        reflected_pol_basis
-                    )
+                    "{0:s} polarization basis not implemented.".format(reflected_pol_basis)
                 )
 
             self.svec = svec
@@ -283,9 +268,7 @@ class infiniteGratingMOTBeams(laserBeams):
                 )
             else:
                 output.append(
-                    beam.jones_vector(
-                        np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), R=R, t=t
-                    )
+                    beam.jones_vector(np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), R=R, t=t)
                 )
 
         return output
@@ -304,9 +287,7 @@ class infiniteGratingMOTBeams(laserBeams):
                 )
             else:
                 output.append(
-                    beam.stokes_parameters(
-                        np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), R=R, t=t
-                    )
+                    beam.stokes_parameters(np.array([1.0, 0, 0]), np.array([0, 1.0, 0]), R=R, t=t)
                 )
 
         return output
@@ -355,9 +336,7 @@ class inputGaussianBeam(clippedGaussianBeam):
 
         self.center_hole = center_hole  # inscribed radius of center hole.
         self.zgrating = zgrating  # z position of the diffraction grating chip.
-        self.grating_angle = (
-            grating_angle  # azimuthal rotation of the grating.
-        )
+        self.grating_angle = grating_angle  # azimuthal rotation of the grating.
         self.nb = nr  # number of reflected beams.
 
         # Determine the center angle of each grating section:
@@ -400,13 +379,10 @@ class inputGaussianBeam(clippedGaussianBeam):
             else:
                 MASK = True
             # Add in the center hole:
-            for cos_th_center_i, sin_th_center_i in zip(
-                self.cos_th_center, self.sin_th_center
-            ):
+            for cos_th_center_i, sin_th_center_i in zip(self.cos_th_center, self.sin_th_center):
                 MASK = np.bitwise_and(
                     MASK,
-                    (R[0] * cos_th_center_i + R[1] * sin_th_center_i)
-                    <= self.center_hole,
+                    (R[0] * cos_th_center_i + R[1] * sin_th_center_i) <= self.center_hole,
                 )
             # Make sure that the mask only applies after the chip.
             MASK = np.bitwise_or(MASK, R[2] <= self.zgrating)
@@ -453,9 +429,7 @@ class reflectedGaussianBeam(clippedGaussianBeam):
         self.center_hole = center_hole  # inscribed radius of center hole.
         self.outer_radius = outer_radius  # outer radius of the grating.
         self.zgrating = zgrating  # z position of the diffraction grating chip.
-        self.grating_angle = (
-            grating_angle  # azimuthal rotation of the grating.
-        )
+        self.grating_angle = grating_angle  # azimuthal rotation of the grating.
         self.nb = nr  # number of reflected beams.
         # self.ii = ii # beam reflects from the iith grating.
         self.thd = thd  # 1st order diffraction angle.
@@ -517,28 +491,20 @@ class reflectedGaussianBeam(clippedGaussianBeam):
             if R[2] > self.zgrating:
                 return 0.0
             # Are we in the center hole?
-            elif (
-                Rp[0] * self.cos_th_center + Rp[1] * self.sin_th_center
-            ) < self.center_hole:
+            elif (Rp[0] * self.cos_th_center + Rp[1] * self.sin_th_center) < self.center_hole:
                 return 0.0
             elif np.sqrt(Rp[0] ** 2 + Rp[1] ** 2) > self.r_stop:
                 return 0.0
             # Are we in the right angular range?
-            elif self.th_upper < self.th_lower and (
-                THp > self.th_upper and THp < self.th_lower
-            ):
+            elif self.th_upper < self.th_lower and (THp > self.th_upper and THp < self.th_lower):
                 # We extend over the pi branch cut.
                 return 0.0
-            elif self.th_upper >= self.th_lower and (
-                THp > self.th_upper or THp < self.th_lower
-            ):
+            elif self.th_upper >= self.th_lower and (THp > self.th_upper or THp < self.th_lower):
                 return 0.0
             else:
                 return 1.0
         else:
-            if (
-                self.th_upper < self.th_lower
-            ):  # We extend over the pi branch cut:
+            if self.th_upper < self.th_lower:  # We extend over the pi branch cut:
                 MASK = np.bitwise_or(THp < self.th_upper, THp > self.th_lower)
             else:
                 MASK = np.bitwise_and(THp < self.th_upper, THp > self.th_lower)
@@ -548,10 +514,7 @@ class reflectedGaussianBeam(clippedGaussianBeam):
             MASK = np.bitwise_and(
                 MASK,
                 (
-                    (
-                        Rp[0] * np.cos(self.th_center)
-                        + Rp[1] * np.sin(self.th_center)
-                    )
+                    (Rp[0] * np.cos(self.th_center) + Rp[1] * np.sin(self.th_center))
                     >= self.center_hole
                 ),
             )
@@ -721,19 +684,15 @@ class maskedGaussianGratingMOTBeams(infiniteGratingMOTBeams):
             )
 
         if eta0 is not None:
-            raise NotImplementedError(
-                "Zeroth-order reflected beam has not been implemented yet."
-            )
+            raise NotImplementedError("Zeroth-order reflected beam has not been implemented yet.")
             # Should be free to choose s and p directions for normal incidence.
             # Make choice to match convention for 1st order beams.
             svec0 = np.array([0.0, 1.0, 0.0])
             pvec0 = np.array([1.0, 0.0, 0.0])
             if reflected_pol_basis == "poincare":
-                pol_0 = np.sin(reflected_pol[0] / 2) * np.exp(
-                    1j * reflected_pol[1] / 2
-                ) * (svec0 / np.sqrt(2) + 1j / np.sqrt(2) * pvec0) + np.cos(
-                    reflected_pol[0] / 2
-                ) * np.exp(-1j * reflected_pol[1] / 2) * (
+                pol_0 = np.sin(reflected_pol[0] / 2) * np.exp(1j * reflected_pol[1] / 2) * (
+                    svec0 / np.sqrt(2) + 1j / np.sqrt(2) * pvec0
+                ) + np.cos(reflected_pol[0] / 2) * np.exp(-1j * reflected_pol[1] / 2) * (
                     svec0 / np.sqrt(2) - 1j / np.sqrt(2) * pvec0
                 )
             else:

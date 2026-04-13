@@ -80,6 +80,7 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "pylcp/fields.py" = ["E501"]  # long LaTeX math in docstrings
+"tests/**" = ["D"]  # no docstring requirements for tests
 
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
@@ -87,6 +88,7 @@ convention = "numpy"
 [tool.pyright]
 include = ["pylcp"]
 typeCheckingMode = "basic"
+reportMissingImports = "warning"
 
 [tool.pytest.ini_options]
 addopts = "--cov=pylcp --cov-report=term-missing --cov-fail-under=60"

@@ -68,9 +68,7 @@ class force_profile(base_force_profile):
         self.iterations = np.zeros(self.R[0].shape, dtype="int64")
         self.fq = {}
         for key in laserBeams:
-            self.fq[key] = np.zeros(
-                self.R.shape + (3, len(laserBeams[key].beam_vector))
-            )
+            self.fq[key] = np.zeros(self.R.shape + (3, len(laserBeams[key].beam_vector)))
 
     def store_data(self, ind, Neq, F, F_laser, F_mag, iterations, F_laser_q):
         """Store force-profile results at a single grid index.
@@ -235,13 +233,9 @@ class obe(governingeq):
         for key in self.ev_mat:
             if isinstance(self.ev_mat[key], dict):
                 for subkey in self.ev_mat[key]:
-                    self.ev_mat[key][subkey] = jnp.asarray(
-                        self.ev_mat[key][subkey], dtype=dtype
-                    )
+                    self.ev_mat[key][subkey] = jnp.asarray(self.ev_mat[key][subkey], dtype=dtype)
             elif isinstance(self.ev_mat[key], list):
-                self.ev_mat[key] = [
-                    jnp.asarray(v, dtype=dtype) for v in self.ev_mat[key]
-                ]
+                self.ev_mat[key] = [jnp.asarray(v, dtype=dtype) for v in self.ev_mat[key]]
             else:
                 self.ev_mat[key] = jnp.asarray(self.ev_mat[key], dtype=dtype)
 
@@ -266,9 +260,7 @@ class obe(governingeq):
 
     # Is only used in construction so can remain in np
     def __build_coherent_ev(self):
-        self.ev_mat["H0"] = self.__build_coherent_ev_submatrix(
-            np.array(self.hamiltonian.H_0)
-        )
+        self.ev_mat["H0"] = self.__build_coherent_ev_submatrix(np.array(self.hamiltonian.H_0))
 
         b_list: list[Any] = [None] * 3
         self.ev_mat["B"] = b_list
@@ -280,21 +272,15 @@ class obe(governingeq):
         self.ev_mat["d_q"] = {}
         self.ev_mat["d_q*"] = {}
         for key in self.laserBeams.keys():
-            gamma = self.hamiltonian.blocks[
-                self.hamiltonian.laser_keys[key]
-            ].parameters["gamma"]
+            gamma = self.hamiltonian.blocks[self.hamiltonian.laser_keys[key]].parameters["gamma"]
             self.ev_mat["d_q"][key] = [None] * 3
             self.ev_mat["d_q*"][key] = [None] * 3
             for q in range(3):
-                self.ev_mat["d_q"][key][q] = (
-                    self.__build_coherent_ev_submatrix(
-                        gamma * self.hamiltonian.d_q_bare[key][q] / 4.0
-                    )
+                self.ev_mat["d_q"][key][q] = self.__build_coherent_ev_submatrix(
+                    gamma * self.hamiltonian.d_q_bare[key][q] / 4.0
                 )
-                self.ev_mat["d_q*"][key][q] = (
-                    self.__build_coherent_ev_submatrix(
-                        gamma * self.hamiltonian.d_q_star[key][q] / 4.0
-                    )
+                self.ev_mat["d_q*"][key][q] = self.__build_coherent_ev_submatrix(
+                    gamma * self.hamiltonian.d_q_star[key][q] / 4.0
                 )
             self.ev_mat["d_q"][key] = np.array(self.ev_mat["d_q"][key])
             self.ev_mat["d_q*"][key] = np.array(self.ev_mat["d_q*"][key])
@@ -324,9 +310,7 @@ class obe(governingeq):
                 (self.hamiltonian.n**2, self.hamiltonian.n**2),
                 dtype="complex128",
             )
-            gamma = self.hamiltonian.blocks[
-                self.hamiltonian.laser_keys[key]
-            ].parameters["gamma"]
+            gamma = self.hamiltonian.blocks[self.hamiltonian.laser_keys[key]].parameters["gamma"]
 
             # The first index we want to capture:
             for ii in range(self.hamiltonian.n):
@@ -341,35 +325,23 @@ class obe(governingeq):
                                 ev_mat[
                                     self.__density_index(ii, jj),
                                     self.__density_index(ll, jj),
-                                ] -= (
-                                    d_q_star[key][mm, ll, kk]
-                                    * d_q_bare[key][mm, kk, ii]
-                                )
+                                ] -= d_q_star[key][mm, ll, kk] * d_q_bare[key][mm, kk, ii]
                                 # first term in the commutator, second part:
                                 ev_mat[
                                     self.__density_index(ii, jj),
                                     self.__density_index(kk, ll),
-                                ] += (
-                                    d_q_star[key][mm, kk, ii]
-                                    * d_q_bare[key][mm, jj, ll]
-                                )
+                                ] += d_q_star[key][mm, kk, ii] * d_q_bare[key][mm, jj, ll]
 
                                 # second term in the commutator, first part:
                                 ev_mat[
                                     self.__density_index(ii, jj),
                                     self.__density_index(ll, kk),
-                                ] += (
-                                    d_q_star[key][mm, ll, ii]
-                                    * d_q_bare[key][mm, jj, kk]
-                                )
+                                ] += d_q_star[key][mm, ll, ii] * d_q_bare[key][mm, jj, kk]
                                 # second term in the commutator, second part:
                                 ev_mat[
                                     self.__density_index(ii, jj),
                                     self.__density_index(ii, ll),
-                                ] -= (
-                                    d_q_star[key][mm, jj, kk]
-                                    * d_q_bare[key][mm, kk, ll]
-                                )
+                                ] -= d_q_star[key][mm, jj, kk] * d_q_bare[key][mm, kk, ll]
 
             # Normalize:
             ev_mat = 0.5 * gamma * ev_mat
@@ -388,9 +360,7 @@ class obe(governingeq):
             )
 
             # These are useful for the random evolution part:
-            self.decay_rates_truncated[key] = self.decay_rates[key][
-                self.decay_rates[key] > 0
-            ]
+            self.decay_rates_truncated[key] = self.decay_rates[key][self.decay_rates[key] > 0]
             self.decay_rho_indices[key] = np.array(
                 [
                     self.__density_index(ii, ii)
@@ -399,9 +369,7 @@ class obe(governingeq):
                 ]
             )
             self.recoil_velocity[key] = (
-                self.hamiltonian.blocks[
-                    self.hamiltonian.laser_keys[key]
-                ].parameters["k"]
+                self.hamiltonian.blocks[self.hamiltonian.laser_keys[key]].parameters["k"]
                 / self.hamiltonian.mass
             )
 
@@ -411,52 +379,28 @@ class obe(governingeq):
 
     # is only ran in setup
     def __build_transform_matrices(self):
-        self.U = np.zeros(
-            (self.hamiltonian.n**2, self.hamiltonian.n**2), dtype="complex128"
-        )
-        self.Uinv = np.zeros(
-            (self.hamiltonian.n**2, self.hamiltonian.n**2), dtype="complex128"
-        )
+        self.U = np.zeros((self.hamiltonian.n**2, self.hamiltonian.n**2), dtype="complex128")
+        self.Uinv = np.zeros((self.hamiltonian.n**2, self.hamiltonian.n**2), dtype="complex128")
 
         for ii in range(self.hamiltonian.n):
-            self.U[
-                self.__density_index(ii, ii), self.__density_index(ii, ii)
-            ] = 1.0
-            self.Uinv[
-                self.__density_index(ii, ii), self.__density_index(ii, ii)
-            ] = 1.0
+            self.U[self.__density_index(ii, ii), self.__density_index(ii, ii)] = 1.0
+            self.Uinv[self.__density_index(ii, ii), self.__density_index(ii, ii)] = 1.0
 
         for ii in range(self.hamiltonian.n):
             for jj in range(ii + 1, self.hamiltonian.n):
-                self.U[
-                    self.__density_index(ii, jj), self.__density_index(ii, jj)
-                ] = 1.0
-                self.U[
-                    self.__density_index(ii, jj), self.__density_index(jj, ii)
-                ] = 1j
+                self.U[self.__density_index(ii, jj), self.__density_index(ii, jj)] = 1.0
+                self.U[self.__density_index(ii, jj), self.__density_index(jj, ii)] = 1j
 
-                self.U[
-                    self.__density_index(jj, ii), self.__density_index(ii, jj)
-                ] = 1.0
-                self.U[
-                    self.__density_index(jj, ii), self.__density_index(jj, ii)
-                ] = -1j
+                self.U[self.__density_index(jj, ii), self.__density_index(ii, jj)] = 1.0
+                self.U[self.__density_index(jj, ii), self.__density_index(jj, ii)] = -1j
 
         for ii in range(self.hamiltonian.n):
             for jj in range(ii + 1, self.hamiltonian.n):
-                self.Uinv[
-                    self.__density_index(ii, jj), self.__density_index(ii, jj)
-                ] = 0.5
-                self.Uinv[
-                    self.__density_index(ii, jj), self.__density_index(jj, ii)
-                ] = 0.5
+                self.Uinv[self.__density_index(ii, jj), self.__density_index(ii, jj)] = 0.5
+                self.Uinv[self.__density_index(ii, jj), self.__density_index(jj, ii)] = 0.5
 
-                self.Uinv[
-                    self.__density_index(jj, ii), self.__density_index(ii, jj)
-                ] = -0.5 * 1j
-                self.Uinv[
-                    self.__density_index(jj, ii), self.__density_index(jj, ii)
-                ] = +0.5 * 1j
+                self.Uinv[self.__density_index(jj, ii), self.__density_index(ii, jj)] = -0.5 * 1j
+                self.Uinv[self.__density_index(jj, ii), self.__density_index(jj, ii)] = +0.5 * 1j
 
     # is only ran in setup
     def __transform_ev_matrix(self, ev_mat):
@@ -482,8 +426,7 @@ class obe(governingeq):
             self.ev_mat["reE"][key] = np.array(
                 [
                     self.__transform_ev_matrix(
-                        self.ev_mat["d_q"][key][jj]
-                        + self.ev_mat["d_q*"][key][jj]
+                        self.ev_mat["d_q"][key][jj] + self.ev_mat["d_q*"][key][jj]
                     )
                     for jj in range(3)
                 ]
@@ -493,11 +436,7 @@ class obe(governingeq):
             self.ev_mat["imE"][key] = np.array(
                 [
                     self.__transform_ev_matrix(
-                        1j
-                        * (
-                            self.ev_mat["d_q"][key][jj]
-                            - self.ev_mat["d_q*"][key][jj]
-                        )
+                        1j * (self.ev_mat["d_q"][key][jj] - self.ev_mat["d_q*"][key][jj])
                     )
                     for jj in range(3)
                 ]
@@ -507,12 +446,7 @@ class obe(governingeq):
         self.ev_mat["B"] = spherical2cart(self.ev_mat["B"])
 
         self.ev_mat["B"] = np.real(
-            np.array(
-                [
-                    self.__transform_ev_matrix(self.ev_mat["B"][jj])
-                    for jj in range(3)
-                ]
-            )
+            np.array([self.__transform_ev_matrix(self.ev_mat["B"][jj]) for jj in range(3)])
         )
 
         del self.ev_mat["d_q"]
@@ -528,9 +462,7 @@ class obe(governingeq):
                     rho = np.dot(self.U, rho)
                 else:
                     rho = np.tensordot(self.U, rho, axes=([1], [0]))
-            rho = np.reshape(
-                rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:]
-            )
+            rho = np.reshape(rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:])
         else:
             rho = jnp.asarray(rho)
             if self.transform_into_re_im:
@@ -539,9 +471,7 @@ class obe(governingeq):
                     rho = jnp.dot(self.U, rho)
                 else:
                     rho = jnp.tensordot(self.U, rho, axes=([1], [0]))
-            rho = jnp.reshape(
-                rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:]
-            )
+            rho = jnp.reshape(rho, (self.hamiltonian.n, self.hamiltonian.n) + rho.shape[1:])
 
         """# If not:
         if self.transform_into_re_im:
@@ -605,15 +535,11 @@ class obe(governingeq):
         if self.transform_into_re_im:
             self.rho0 = jnp.zeros((self.hamiltonian.n**2,))
         else:
-            self.rho0 = jnp.zeros(
-                (self.hamiltonian.n**2,), dtype=jnp.complex128
-            )
+            self.rho0 = jnp.zeros((self.hamiltonian.n**2,), dtype=jnp.complex128)
 
         # only runs in initialization so is okay with for loop
         for jj in range(self.hamiltonian.ns[0]):
-            self.rho0 = self.rho0.at[self.__density_index(jj, jj)].set(
-                1 / self.hamiltonian.ns[0]
-            )
+            self.rho0 = self.rho0.at[self.__density_index(jj, jj)].set(1 / self.hamiltonian.ns[0])
 
     def set_initial_rho_from_populations(self, Npop):
         r"""
@@ -628,8 +554,7 @@ class obe(governingeq):
         Npop = jnp.asarray(Npop)
         if len(Npop) != self.hamiltonian.n:
             raise ValueError(
-                "Npop has only %d entries for %d states."
-                % (len(Npop), self.hamiltonian.n)
+                "Npop has only %d entries for %d states." % (len(Npop), self.hamiltonian.n)
             )
         if jnp.any(jnp.isnan(Npop)) or jnp.any(jnp.isinf(Npop)):
             raise ValueError("Npop has NaNs or Infs!")
@@ -637,9 +562,7 @@ class obe(governingeq):
         if self.transform_into_re_im:
             self.rho0 = jnp.zeros((self.hamiltonian.n**2,))
         else:
-            self.rho0 = jnp.zeros(
-                (self.hamiltonian.n**2,), dtype=jnp.complex128
-            )
+            self.rho0 = jnp.zeros((self.hamiltonian.n**2,), dtype=jnp.complex128)
 
         Npop = Npop / jnp.sum(Npop)  # Just make sure it is normalized.
         # okay with for loop for initialization function
@@ -654,9 +577,7 @@ class obe(governingeq):
         Uses the equilibrium populations as determined by pylcp.rateeq.
         """
         if not hasattr(self, "rateeq"):
-            self.rateeq = rateeq(
-                self.laserBeams, self.magField, self.hamiltonian
-            )
+            self.rateeq = rateeq(self.laserBeams, self.magField, self.hamiltonian)
         Neq = self.rateeq.equilibrium_populations(self.r0, self.v0, t=0)
         self.set_initial_rho_from_populations(Neq)
 
@@ -730,9 +651,7 @@ class obe(governingeq):
             else:
                 Eq = self.laserBeams[key].total_electric_field(jnp.real(r), t)
                 for ii in range(3):
-                    ev_mat -= (
-                        jnp.conjugate(Eq[ii]) * self.ev_mat["d_q"][key][ii]
-                    )
+                    ev_mat -= jnp.conjugate(Eq[ii]) * self.ev_mat["d_q"][key][ii]
                     ev_mat -= Eq[ii] * self.ev_mat["d_q*"][key][ii]
 
         # Add in magnetic fields:
@@ -749,9 +668,7 @@ class obe(governingeq):
 
     def __drhodt(self, r, t, rho):
         """Compute d(rho)/dt via per-component matrix-vector products."""
-        drhodt = jnp.dot(self.ev_mat["decay"], rho) + jnp.dot(
-            self.ev_mat["H0"], rho
-        )
+        drhodt = jnp.dot(self.ev_mat["decay"], rho) + jnp.dot(self.ev_mat["H0"], rho)
 
         # Add in electric fields:
         if self.transform_into_re_im:
@@ -772,11 +689,7 @@ class obe(governingeq):
             for key in self.laserBeams.keys():
                 Eq = self.laserBeams[key].total_electric_field(jnp.real(r), t)
                 for ii, q in enumerate([-1.0, 2.0, 1]):
-                    drhodt -= (
-                        (-1.0) ** q
-                        * Eq[2 - ii]
-                        * jnp.dot(self.ev_mat["d_q"][key][ii], rho)
-                    )
+                    drhodt -= (-1.0) ** q * Eq[2 - ii] * jnp.dot(self.ev_mat["d_q"][key][ii], rho)
                     drhodt -= (
                         (-1.0) ** q
                         * jnp.conjugate(Eq[2 - ii])
@@ -791,9 +704,7 @@ class obe(governingeq):
         else:
             Bq = cart2spherical(B)
             for ii in range(3):
-                drhodt -= jnp.dot(
-                    self.ev_mat["B"][ii] * jnp.conjugate(Bq[ii]), rho
-                )
+                drhodt -= jnp.dot(self.ev_mat["B"][ii] * jnp.conjugate(Bq[ii]), rho)
 
         return drhodt
 
@@ -822,9 +733,7 @@ class obe(governingeq):
             free_axes = args["free_axes"]
 
             F = self.force(r, t, rho, return_details=False)
-            dvdt = (
-                F * free_axes
-            ) / self.hamiltonian.mass + self.constant_accel
+            dvdt = (F * free_axes) / self.hamiltonian.mass + self.constant_accel
             drdt = v
             drhodt = self.__drhodt(r, t, rho)
             return jnp.concatenate((drhodt, dvdt, drdt))
@@ -858,10 +767,7 @@ class obe(governingeq):
                 phi = 2.0 * jnp.pi * jax.random.uniform(k1)
                 z = 2.0 * jax.random.uniform(k2) - 1.0
                 r = jnp.sqrt(1.0 - z**2)
-                return (
-                    jnp.array([r * jnp.cos(phi), r * jnp.sin(phi), z])
-                    * free_axes
-                )
+                return jnp.array([r * jnp.cos(phi), r * jnp.sin(phi), z]) * free_axes
 
             # 3 keys per excited state (dice, vec1, vec2) + 1 new key
             total_excited = sum(n_excited_per_channel)
@@ -873,9 +779,7 @@ class obe(governingeq):
             num_of_scatters = jnp.int32(0)
             total_P = 0.0
 
-            for ch_idx, (rates, indices, recoil_v) in enumerate(
-                decay_channels
-            ):
+            for ch_idx, (rates, indices, recoil_v) in enumerate(decay_channels):
                 P = dt * rates * jnp.real(y[indices])
 
                 for ii in range(n_excited_per_channel[ch_idx]):
@@ -892,14 +796,10 @@ class obe(governingeq):
                         jnp.zeros(3, dtype=jnp.float64),
                     )
                     y_jump = y_jump.at[-6:-3].add(delta_v)
-                    num_of_scatters += jnp.where(
-                        scattered, jnp.int32(1), jnp.int32(0)
-                    )
+                    num_of_scatters += jnp.where(scattered, jnp.int32(1), jnp.int32(0))
                     total_P += P[ii]
 
-            new_dt_max = jnp.where(
-                total_P > 0, (max_scatter_probability / total_P) * dt, jnp.inf
-            )
+            new_dt_max = jnp.where(total_P > 0, (max_scatter_probability / total_P) * dt, jnp.inf)
             return y_jump, num_of_scatters, new_dt_max, key_new
 
         return recoil_fn
@@ -982,9 +882,7 @@ class obe(governingeq):
         self.sol.t = ts_grid
         self.sol.y = batched_ys
         # reconstructing the rho for output
-        self.sol.rho = self.__reshape_rho(
-            batched_ys[0, :, : self.hamiltonian.n**2].T
-        )
+        self.sol.rho = self.__reshape_rho(batched_ys[0, :, : self.hamiltonian.n**2].T)
 
         return self.sol
 
@@ -1098,15 +996,11 @@ class obe(governingeq):
         # Per-call parameters as a JAX pytree (read by cached closures).
         args = {
             "free_axes": free_axes,
-            "max_scatter_probability": jnp.asarray(
-                max_scatter_probability, dtype=jnp.float64
-            ),
+            "max_scatter_probability": jnp.asarray(max_scatter_probability, dtype=jnp.float64),
         }
 
         dydt = self._motion_dydt
-        recoil_func = (
-            self._no_recoil if not random_recoil else self._motion_recoil_fn
-        )
+        recoil_func = self._no_recoil if not random_recoil else self._motion_recoil_fn
 
         # Resolve backend: 'auto' uses GPU when a CUDA device is present.
         resolved = backend
@@ -1183,18 +1077,12 @@ class obe(governingeq):
             `O.shape[:-2] + rho.shape[2:]`.
         """
         if rho is None:  # handle if rho is missing
-            if (
-                hasattr(self, "sols")
-                and isinstance(self.sols, list)
-                and len(self.sols) > 0
-            ):
+            if hasattr(self, "sols") and isinstance(self.sols, list) and len(self.sols) > 0:
                 rho = self.sols[0].rho
             elif hasattr(self, "sol"):
                 rho = self.sol.rho
             else:
-                raise ValueError(
-                    "No solution found in memory. Please provide 'rho' explicitly."
-                )
+                raise ValueError("No solution found in memory. Please provide 'rho' explicitly.")
         if rho is None:
             raise ValueError("No rho available in the stored solution.")
 
@@ -1292,33 +1180,20 @@ class obe(governingeq):
                 rho_mat,
                 axes=[(-2, -1), (0, 1)],
             )
-            gamma = self.hamiltonian.blocks[
-                self.hamiltonian.laser_keys[key]
-            ].parameters["gamma"]
+            gamma = self.hamiltonian.blocks[self.hamiltonian.laser_keys[key]].parameters["gamma"]
 
             if not return_details:
-                delE = _grad(
-                    self.laserBeams[key].total_electric_field_gradient, r, t
-                )
+                delE = _grad(self.laserBeams[key].total_electric_field_gradient, r, t)
 
                 # F = Re[∇(d_q · E†)] * gamma/2  (factor from dipole + RWA units)
                 for jj, q in enumerate([-1.0, 2.0, 1.0]):
-                    f += (
-                        jnp.real(
-                            (-1) ** q * gamma * mu_q_av[jj] * delE[:, 2 - jj]
-                        )
-                        / 2
-                    )
+                    f += jnp.real((-1) ** q * gamma * mu_q_av[jj] * delE[:, 2 - jj]) / 2
             else:
                 # All beam gradients in one call: (n_beams, 3_spatial, 3_grad, [n_pts])
-                delE_all = _grad(
-                    self.laserBeams[key].electric_field_gradient, r, t
-                )
+                delE_all = _grad(self.laserBeams[key].electric_field_gradient, r, t)
 
                 delE_q = delE_all[:, :, _q_col]  # select q columns
-                delE_q = jnp.moveaxis(
-                    delE_q, 0, 2
-                )  # -> (3_s, 3_q, n_b, [n_pts])
+                delE_q = jnp.moveaxis(delE_q, 0, 2)  # -> (3_s, 3_q, n_b, [n_pts])
 
                 # Broadcast signs and mu_q_av for vectorised multiply
                 if rho_mat.ndim == 2:  # single point
@@ -1331,9 +1206,7 @@ class obe(governingeq):
                 f_laser_q_key = jnp.real(s * gamma * m * delE_q) / 2
                 # f_laser_q_key: (3_s, 3_q, n_beams, [n_pts])
 
-                f_laser_key = jnp.sum(
-                    f_laser_q_key, axis=1
-                )  # (3_s, n_beams, [n_pts])
+                f_laser_key = jnp.sum(f_laser_q_key, axis=1)  # (3_s, n_beams, [n_pts])
                 f = f + jnp.sum(f_laser_key, axis=1)  # (3_s, [n_pts])
 
                 f_laser_q[key] = f_laser_q_key
@@ -1344,9 +1217,7 @@ class obe(governingeq):
             av_mu = self.observable(self.hamiltonian.mu, rho_mat)
 
             if rho_mat.ndim == 3:  # time series: r shape (3, n_pts)
-                delB = jax.vmap(lambda ri: self.magField.gradField(ri))(
-                    jnp.real(r).T
-                )
+                delB = jax.vmap(lambda ri: self.magField.gradField(ri))(jnp.real(r).T)
                 # delB: (n_pts, 3, 3) -> vmap over time, contract i
                 f_mag = jnp.real(jnp.einsum("it,tij->jt", av_mu, delB))
             else:
@@ -1436,21 +1307,16 @@ class obe(governingeq):
             Npop = kwargs.pop("init_pop", None)
             self.set_initial_rho_from_populations(Npop)
         else:
-            raise ValueError(
-                "Argument initial_rho=%s not understood" % initial_rho
-            )
+            raise ValueError("Argument initial_rho=%s not understood" % initial_rho)
 
         old_f_avg = jnp.full((3,), jnp.inf)
 
         if debug:
             print(
                 "Finding equilibrium force at "
-                + "r=(%.2f, %.2f, %.2f) "
-                % (self.r0[0], self.r0[1], self.r0[2])
-                + "v=(%.2f, %.2f, %.2f) "
-                % (self.v0[0], self.v0[1], self.v0[2])
-                + "with deltat = %.2f, itermax = %d, Npts = %d, "
-                % (deltat, itermax, Npts)
+                + "r=(%.2f, %.2f, %.2f) " % (self.r0[0], self.r0[1], self.r0[2])
+                + "v=(%.2f, %.2f, %.2f) " % (self.v0[0], self.v0[1], self.v0[2])
+                + "with deltat = %.2f, itermax = %d, Npts = %d, " % (deltat, itermax, Npts)
                 + "rel = %.1e and abs = %.1e" % (rel, abs)
             )
             self.piecewise_sols = []
@@ -1473,9 +1339,7 @@ class obe(governingeq):
             rho_flat = y_atom[:, :-6].T  # (n^2, n_points)
             r = jnp.real(y_atom[:, -3:]).T  # (3, n_points)
 
-            f, f_laser, f_laser_q, f_mag = self.force(
-                r, self.sol.t, rho_flat, return_details=True
-            )
+            f, f_laser, f_laser_q, f_mag = self.force(r, self.sol.t, rho_flat, return_details=True)
             f_avg = jnp.mean(f, axis=1)  # (3,)
 
             if debug:
@@ -1484,9 +1348,7 @@ class obe(governingeq):
 
             f_sq = jnp.sum(f_avg**2)
             diff_sq = jnp.sum((old_f_avg - f_avg) ** 2)
-            converged = bool(
-                (f_sq < abs) or (diff_sq / jnp.maximum(f_sq, 1e-30) < rel)
-            )
+            converged = bool((f_sq < abs) or (diff_sq / jnp.maximum(f_sq, 1e-30) < rel))
             if converged or ii >= itermax - 1:
                 break
 
@@ -1494,18 +1356,12 @@ class obe(governingeq):
             # Seed next chunk: rho_flat[:, -1] is already in the correct flat
             # representation (re/im if transform_into_re_im, complex otherwise)
             self.set_initial_rho(rho_flat[:, -1])
-            self.set_initial_position_and_velocity(
-                r[:, -1], jnp.real(y_atom[-1, -6:-3])
-            )
+            self.set_initial_position_and_velocity(r[:, -1], jnp.real(y_atom[-1, -6:-3]))
             ii += 1
 
         if return_details:
-            f_laser_avg = {
-                key: jnp.mean(f_laser[key], axis=2) for key in f_laser
-            }
-            f_laser_avg_q = {
-                key: jnp.mean(f_laser_q[key], axis=3) for key in f_laser_q
-            }
+            f_laser_avg = {key: jnp.mean(f_laser[key], axis=2) for key in f_laser}
+            f_laser_avg_q = {key: jnp.mean(f_laser_q[key], axis=3) for key in f_laser_q}
             f_mag_avg = jnp.mean(f_mag, axis=1)
             rho_mat = self.__reshape_rho(rho_flat)  # (n, n, n_points)
             Neq = jnp.real(jnp.diagonal(jnp.mean(rho_mat, axis=2)))
@@ -1605,9 +1461,7 @@ class obe(governingeq):
         if not name:
             name = "{0:d}".format(len(self.profile))
 
-        self.profile[name] = force_profile(
-            R, V, self.laserBeams, self.hamiltonian
-        )
+        self.profile[name] = force_profile(R, V, self.laserBeams, self.hamiltonian)
 
         # Flatten the position/velocity grid: (3, N)
         R_np = np.array(R).reshape(3, -1)
@@ -1631,9 +1485,7 @@ class obe(governingeq):
         rho0_batch = jnp.stack(rho0_list)  # (N, n²)
         V_jnp = jnp.asarray(V_np.T)  # (N, 3)
         R_jnp = jnp.asarray(R_np.T)  # (N, 3)
-        y0_batch = jnp.concatenate(
-            [rho0_batch, V_jnp, R_jnp], axis=1
-        )  # (N, state_dim)
+        y0_batch = jnp.concatenate([rho0_batch, V_jnp, R_jnp], axis=1)  # (N, state_dim)
 
         # Group atoms by their ideal chunk_deltat so that slow atoms get long
         # chunks (fast convergence) and fast atoms get short chunks (accuracy).
@@ -1653,18 +1505,14 @@ class obe(governingeq):
                     d = (
                         float(deltat_tmax)
                         if vabs == 0
-                        else min(
-                            2 * np.pi * deltat_v / vabs, float(deltat_tmax)
-                        )
+                        else min(2 * np.pi * deltat_v / vabs, float(deltat_tmax))
                     )
                 if deltat_r is not None:
                     rabs = np.sqrt(np.sum(r_i**2))
                     d_r = (
                         float(deltat_tmax)
                         if rabs == 0
-                        else min(
-                            2 * np.pi * deltat_r / rabs, float(deltat_tmax)
-                        )
+                        else min(2 * np.pi * deltat_r / rabs, float(deltat_tmax))
                     )
                     d = d_r if d is None else min(d, d_r)
                 if d is not None:
@@ -1732,15 +1580,11 @@ class obe(governingeq):
                 r_all = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
 
                 f_all = jax.vmap(
-                    lambda r_i, rho_i: self.force(
-                        r_i, t, rho_i, return_details=False
-                    )
+                    lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=False)
                 )(r_all, rho_flat_all)
 
                 f_chunk = jnp.sum(f_all, axis=2) / n_pts  # type: ignore[arg-type]  # (Ng, 3)
-                rho_chunk = (
-                    jnp.sum(rho_flat_all, axis=2) / n_pts
-                )  # (Ng, n_rho)
+                rho_chunk = jnp.sum(rho_flat_all, axis=2) / n_pts  # (Ng, n_rho)
 
                 f_sq = jnp.sum(f_chunk**2, axis=1)
                 diff_sq = jnp.sum((old_f_chunk - f_chunk) ** 2, axis=1)
@@ -1756,9 +1600,7 @@ class obe(governingeq):
                     | (~was_decreasing & (diff_sq < abs_tol))
                 )
                 converged_f = jnp.where(newly[:, None], f_chunk, converged_f)  # type: ignore[arg-type]
-                converged_rho = jnp.where(
-                    newly[:, None], rho_chunk, converged_rho
-                )  # type: ignore[arg-type]
+                converged_rho = jnp.where(newly[:, None], rho_chunk, converged_rho)  # type: ignore[arg-type]
                 atom_converged = atom_converged | newly
 
                 if bool(jnp.all(atom_converged)) or ii >= itermax - 1:
@@ -1771,9 +1613,7 @@ class obe(governingeq):
 
             # Atoms that hit itermax without converging fall back to last chunk.
             f_conv = jnp.where(atom_converged[:, None], converged_f, f_chunk)
-            rho_conv = jnp.where(
-                atom_converged[:, None], converged_rho, rho_chunk
-            )
+            rho_conv = jnp.where(atom_converged[:, None], converged_rho, rho_chunk)
 
             # Final pass at full Npts with return_details=True.
             self.evolve_density(
@@ -1789,9 +1629,7 @@ class obe(governingeq):
             r_all = jnp.real(self.sol.y[:, :, -3:]).transpose(0, 2, 1)
 
             f_all, f_laser_all, f_laser_q_all, f_mag_all = jax.vmap(
-                lambda r_i, rho_i: self.force(
-                    r_i, t, rho_i, return_details=True
-                )
+                lambda r_i, rho_i: self.force(r_i, t, rho_i, return_details=True)
             )(r_all, rho_flat_all)
 
             # Use the convergence estimate for f_avg so the convergence test
@@ -1808,27 +1646,21 @@ class obe(governingeq):
 
             # Per-beam/per-q averages from the final (converged) chunk only
             f_laser_group = {
-                k: np.array(jnp.sum(v, axis=-1) / n_pts)
-                for k, v in f_laser_all.items()
+                k: np.array(jnp.sum(v, axis=-1) / n_pts) for k, v in f_laser_all.items()
             }
             f_laser_q_group = {
-                k: np.array(jnp.sum(v, axis=-1) / n_pts)
-                for k, v in f_laser_q_all.items()
+                k: np.array(jnp.sum(v, axis=-1) / n_pts) for k, v in f_laser_q_all.items()
             }
             if final_f_laser_avg is None:
                 final_f_laser_avg = {
-                    k: np.zeros((N,) + v.shape[1:])
-                    for k, v in f_laser_group.items()
+                    k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_group.items()
                 }
                 final_f_laser_q_avg = {
-                    k: np.zeros((N,) + v.shape[1:])
-                    for k, v in f_laser_q_group.items()
+                    k: np.zeros((N,) + v.shape[1:]) for k, v in f_laser_q_group.items()
                 }
             for k in f_laser_group:
                 for local_idx, global_idx in enumerate(group_indices):
-                    final_f_laser_avg[k][global_idx] = f_laser_group[k][
-                        local_idx
-                    ]  # type: ignore[index]
+                    final_f_laser_avg[k][global_idx] = f_laser_group[k][local_idx]  # type: ignore[index]
                     final_f_laser_q_avg[k][global_idx] = f_laser_q_group[k][  # pyright: ignore[reportOptionalSubscript]
                         local_idx
                     ]
@@ -1856,9 +1688,7 @@ class obe(governingeq):
         assert final_f_laser_avg is not None
         assert final_f_laser_q_avg is not None
         f_laser_avg = {k: jnp.array(v) for k, v in final_f_laser_avg.items()}
-        f_laser_avg_q = {
-            k: jnp.array(v) for k, v in final_f_laser_q_avg.items()
-        }
+        f_laser_avg_q = {k: jnp.array(v) for k, v in final_f_laser_q_avg.items()}
         f_mag_avg = jnp.array(final_f_mag_avg)
 
         # Equilibrium populations: cumulative mean rho → diagonal
