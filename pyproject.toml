@@ -89,7 +89,11 @@ include = ["pylcp"]
 typeCheckingMode = "basic"
 
 [tool.pytest.ini_options]
-addopts = "--cov=pylcp --cov-report=term-missing"
+addopts = "--cov=pylcp --cov-report=term-missing --cov-fail-under=60"
+markers = [
+    "slow: marks tests that take more than a few seconds (deselect with '-m \"not slow\"')",
+    "gpu: marks tests that require a CUDA GPU",
+]
 filterwarnings = [
     # Diffrax does not officially support complex dtypes; expected when
     # transform_into_re_im=False is used in OBE.

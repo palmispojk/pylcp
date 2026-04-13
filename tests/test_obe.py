@@ -1,7 +1,6 @@
 """
 Tests for pylcp/obe.py
 """
-import warnings
 import pytest
 import numpy as np
 import jax
@@ -12,35 +11,12 @@ from pylcp.hamiltonian import hamiltonian
 from pylcp.fields import (laserBeams, laserBeam, constantMagneticField,
                           magField, infinitePlaneWaveBeam)
 from pylcp.obe import obe, force_profile
+from conftest import make_ham, requires_gpu
 
 
 # ---------------------------------------------------------------------------
-# GPU detection — single warning for all skipped GPU tests
+# Module-scoped fixture overrides (OBE construction is expensive)
 # ---------------------------------------------------------------------------
-
-HAS_GPU = jax.default_backend() == 'gpu'
-if not HAS_GPU:
-    warnings.warn(
-        "No CUDA GPU detected by JAX — all GPU and CPU-vs-GPU OBE tests "
-        "will be skipped.  Install jax[cuda12] to enable them.",
-        stacklevel=1,
-    )
-
-requires_gpu = pytest.mark.skipif(not HAS_GPU, reason="No GPU available")
-
-
-# ---------------------------------------------------------------------------
-# Shared helpers / fixtures
-# ---------------------------------------------------------------------------
-
-def make_ham(gamma=1.0, k=1.0, mass=1.0):
-    """Minimal F=0 -> F'=1 Hamiltonian (1 ground + 3 excited states)."""
-    H0_g, mu_g = hamiltonians.singleF(F=0, gF=0)
-    H0_e, mu_e = hamiltonians.singleF(F=1, gF=1)
-    d_q = hamiltonians.dqij_two_bare_hyperfine(0, 1)
-    return hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q,
-                       mass=mass, gamma=gamma, k=k)
-
 
 @pytest.fixture(scope='module')
 def ham():
@@ -1020,6 +996,7 @@ class TestMolassesForceProfileSmooth:
         )
 
 
+@pytest.mark.slow
 class TestEvolveMotion:
     """Tests for obe.evolve_motion, including default y0/keys and dtype consistency."""
 
@@ -1480,6 +1457,7 @@ class TestQuadrupoleTrapOBE:
 # GPU OBE tests — evolve_motion with backend='gpu'
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 @requires_gpu
 class TestEvolveMotionGPU:
     """Mirrors key TestEvolveMotion tests on GPU backend."""

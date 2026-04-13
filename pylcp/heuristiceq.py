@@ -294,7 +294,7 @@ class heuristiceq(governingeq):
                 * free_axes
             )
 
-        def random_recoil_fn(t, y, dt, key):
+        def random_recoil_fn(t, y, dt, key, args=None):
             """Apply a stochastic photon recoil kick if a scattering event occurs."""
             v = y[:3]
             r = y[3:6]
@@ -316,7 +316,7 @@ class heuristiceq(governingeq):
             )
             return y_jump, n_scatters, new_dt_max, key
 
-        def dummy_recoil(t, y, dt, key):
+        def dummy_recoil(t, y, dt, key, args=None):
             """No-op recoil function used when random_recoil=False."""
             return y, jnp.int32(0), jnp.inf, key
 

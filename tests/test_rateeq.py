@@ -6,53 +6,19 @@ import numpy as np
 import jax
 import jax.numpy as jnp
 
-import pylcp.hamiltonians as hamiltonians
 from pylcp.hamiltonian import hamiltonian
 from pylcp.fields import laserBeams, laserBeam, constantMagneticField, magField
 from pylcp.rateeq import rateeq, force_profile
+from conftest import make_ham
 
 
 # ---------------------------------------------------------------------------
-# Shared fixtures
+# Local fixtures (shared ones live in conftest.py)
 # ---------------------------------------------------------------------------
 
-def make_ham(gamma=1.0, k=1.0, mass=1.0):
-    """Minimal F=0 -> F'=1 Hamiltonian (1 ground + 3 excited states)."""
-    H0_g, mu_g = hamiltonians.singleF(F=0, gF=0)
-    H0_e, mu_e = hamiltonians.singleF(F=1, gF=1)
-    d_q = hamiltonians.dqij_two_bare_hyperfine(0, 1)
-    return hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q,
-                       mass=mass, gamma=gamma, k=k)
-
-
 @pytest.fixture
-def ham():
-    return make_ham(gamma=1.0, k=1.0, mass=1.0)
-
-
-@pytest.fixture
-def zero_B():
-    return constantMagneticField(jnp.array([0., 0., 0.]))
-
-
-@pytest.fixture
-def single_beam_beams():
-    """One σ+ beam along +z, on resonance, weak saturation."""
-    return laserBeams([{'kvec': [0., 0., 1.], 'pol': +1, 's': 0.1, 'delta': 0.}])
-
-
-@pytest.fixture
-def symmetric_beams():
-    """Two counter-propagating σ+/σ- beams along z, equal detuning & intensity."""
-    return laserBeams([
-        {'kvec': [0., 0.,  1.], 'pol': +1, 's': 0.5, 'delta': -1.0},
-        {'kvec': [0., 0., -1.], 'pol': -1, 's': 0.5, 'delta': -1.0},
-    ])
-
-
-@pytest.fixture
-def req(single_beam_beams, zero_B, ham):
-    return rateeq(single_beam_beams, zero_B, ham)
+def req(single_beam, zero_B, ham):
+    return rateeq(single_beam, zero_B, ham)
 
 
 @pytest.fixture
@@ -103,15 +69,15 @@ class TestRateeqInit:
     def test_include_mag_forces_default_true(self, req):
         assert req.include_mag_forces is True
 
-    def test_include_mag_forces_can_disable(self, single_beam_beams, zero_B, ham):
-        r = rateeq(single_beam_beams, zero_B, ham, include_mag_forces=False)
+    def test_include_mag_forces_can_disable(self, single_beam, zero_B, ham):
+        r = rateeq(single_beam, zero_B, ham, include_mag_forces=False)
         assert r.include_mag_forces is False
 
     def test_svd_eps_default(self, req):
         assert req.svd_eps == pytest.approx(1e-10)
 
-    def test_custom_svd_eps(self, single_beam_beams, zero_B, ham):
-        r = rateeq(single_beam_beams, zero_B, ham, svd_eps=1e-8)
+    def test_custom_svd_eps(self, single_beam, zero_B, ham):
+        r = rateeq(single_beam, zero_B, ham, svd_eps=1e-8)
         assert r.svd_eps == pytest.approx(1e-8)
 
     def test_recoil_velocity_key_present(self, req):
@@ -408,8 +374,8 @@ class TestRandomRecoilKickDistribution:
     """
 
     @pytest.fixture
-    def recoil_func(self, single_beam_beams, zero_B, ham):
-        req = rateeq(single_beam_beams, zero_B, ham)
+    def recoil_func(self, single_beam, zero_B, ham):
+        req = rateeq(single_beam, zero_B, ham)
         # Trigger internal setup by generating a force profile first
         R = np.zeros((3, 1))
         V = np.zeros((3, 1))
@@ -450,6 +416,7 @@ class TestRandomRecoilKickDistribution:
 # Magnetic trap motion tests
 # ---------------------------------------------------------------------------
 
+@pytest.mark.slow
 class TestQuadrupoleTrapMotion:
     """Atom motion in a quadrupole magnetic trap (rate equations).
 
@@ -553,3 +520,159 @@ class TestQuadrupoleTrapMotion:
         assert np.all(N <= 1.0 + 1e-6), "Population should not exceed 1"
         pop_sum = np.sum(N, axis=0)
         np.testing.assert_allclose(pop_sum, np.ones_like(pop_sum), atol=1e-4)
+
+
+# ---------------------------------------------------------------------------
+# TestEvolvePopulations
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestEvolvePopulations:
+    """Time evolution of populations at fixed position/velocity."""
+
+    def test_returns_sol_with_t_and_y(self, req):
+        req.set_initial_pop_from_equilibrium()
+        sol = req.evolve_populations([0, 10.0], n_points=101)
+        assert hasattr(sol, 't')
+        assert hasattr(sol, 'y')
+
+    def test_output_shapes(self, req, ham):
+        req.set_initial_pop_from_equilibrium()
+        sol = req.evolve_populations([0, 10.0], n_points=101)
+        assert sol.t.shape == (101,)
+        assert sol.y.shape == (ham.n, 101)
+
+    def test_population_sums_to_one(self, req):
+        req.set_initial_pop_from_equilibrium()
+        sol = req.evolve_populations([0, 10.0], n_points=101)
+        pop_sum = np.sum(sol.y, axis=0)
+        np.testing.assert_allclose(pop_sum, np.ones_like(pop_sum), atol=1e-4)
+
+    def test_population_non_negative(self, req):
+        req.set_initial_pop_from_equilibrium()
+        sol = req.evolve_populations([0, 10.0], n_points=101)
+        assert np.all(sol.y >= -1e-6)
+
+    def test_converges_to_equilibrium(self, req):
+        """Starting from pure ground, populations should approach equilibrium."""
+        req.set_initial_pop(jnp.array([1., 0., 0., 0.]))
+        sol = req.evolve_populations([0, 50.0], n_points=501)
+        Neq = req.equilibrium_populations(req.r0, req.v0, t=0.)
+        # Final populations should be close to equilibrium
+        np.testing.assert_allclose(sol.y[:, -1], np.array(Neq), atol=1e-3)
+
+
+# ---------------------------------------------------------------------------
+# TestEvolveMotion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestEvolveMotion:
+    """Single-atom trajectory integration (populations + motion)."""
+
+    @pytest.fixture
+    def req_mot(self, single_beam, zero_B, ham):
+        r = rateeq(single_beam, zero_B, ham)
+        r.set_initial_pop_from_equilibrium()
+        r.set_initial_position(jnp.zeros(3))
+        r.set_initial_velocity(jnp.zeros(3))
+        return r
+
+    def test_returns_solution(self, req_mot):
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51)
+        assert hasattr(sol, 't')
+        assert hasattr(sol, 'N')
+        assert hasattr(sol, 'v')
+        assert hasattr(sol, 'r')
+
+    def test_sol_stored_on_instance(self, req_mot):
+        req_mot.evolve_motion([0, 5.0], n_points=51)
+        assert req_mot.sol is not None
+
+    def test_atom_accelerates_along_beam(self, req_mot):
+        """+z beam should push atom in +z."""
+        sol = req_mot.evolve_motion([0, 10.0], n_points=101)
+        assert float(sol.r[2, -1]) > 0.0
+        assert float(sol.v[2, -1]) > 0.0
+
+    def test_transverse_stays_zero(self, req_mot):
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51)
+        assert np.allclose(sol.r[0], 0., atol=1e-10)
+        assert np.allclose(sol.r[1], 0., atol=1e-10)
+
+    def test_population_stays_physical(self, req_mot):
+        sol = req_mot.evolve_motion([0, 10.0], n_points=101)
+        assert np.all(sol.N >= -1e-6)
+        pop_sum = np.sum(sol.N, axis=0)
+        np.testing.assert_allclose(pop_sum, np.ones_like(pop_sum), atol=1e-3)
+
+    def test_freeze_axis(self, req_mot):
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51,
+                                    freeze_axis=[False, False, True])
+        assert np.allclose(sol.r[2], 0., atol=1e-10)
+        assert np.allclose(sol.v[2], 0., atol=1e-10)
+
+    def test_no_nan(self, req_mot):
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51)
+        assert not np.any(np.isnan(sol.r))
+        assert not np.any(np.isnan(sol.v))
+        assert not np.any(np.isnan(sol.N))
+
+    def test_random_recoil_runs(self, req_mot):
+        """random_recoil=True should run without error."""
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51, random_recoil=True)
+        assert not np.any(np.isnan(sol.r))
+        assert hasattr(sol, 't_random')
+
+    def test_random_force_runs(self, req_mot):
+        """random_force=True should run without error."""
+        sol = req_mot.evolve_motion([0, 5.0], n_points=51, random_force=True)
+        assert not np.any(np.isnan(sol.r))
+        assert hasattr(sol, 't_random')
+
+
+# ---------------------------------------------------------------------------
+# TestEvolveMotionCPU — non-diagonal Hamiltonian CPU fallback
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestEvolveMotionCPU:
+    """Test the CPU fallback path for non-diagonal Hamiltonians."""
+
+    @pytest.fixture
+    def nondiag_req(self, zero_B):
+        """Build a rateeq with a non-diagonal H0 to trigger CPU path."""
+        # 2-state system with off-diagonal coupling in H0
+        H0_g = jnp.array([[0.0, 0.1], [0.1, 0.5]])  # non-diagonal
+        H0_e = jnp.array([[-1.0]])
+        mu_g = jnp.zeros((3, 2, 2))
+        mu_e = jnp.zeros((3, 1, 1))
+        d_q = jnp.zeros((3, 2, 1))
+        d_q = d_q.at[1, 0, 0].set(1.0)
+        ham = hamiltonian(H0_g, H0_e, mu_g, mu_e, d_q, mass=1.0, gamma=1.0, k=1.0)
+        assert not np.all(ham.diagonal), "H0 must be non-diagonal for this test"
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 0.5, 'delta': 0.}
+        ])
+        r = rateeq(beams, zero_B, ham)
+        r.set_initial_pop(jnp.array([0.5, 0.5, 0.0]))
+        r.set_initial_position(jnp.zeros(3))
+        r.set_initial_velocity(jnp.zeros(3))
+        return r
+
+    def test_cpu_fallback_runs(self, nondiag_req):
+        """Non-diagonal Hamiltonian should use CPU path without error."""
+        sol = nondiag_req.evolve_motion([0, 5.0], n_points=51)
+        assert hasattr(sol, 'N')
+        assert hasattr(sol, 'v')
+        assert hasattr(sol, 'r')
+
+    def test_cpu_population_physical(self, nondiag_req):
+        sol = nondiag_req.evolve_motion([0, 5.0], n_points=51)
+        assert np.all(sol.N >= -1e-6)
+
+    def test_cpu_no_nan(self, nondiag_req):
+        sol = nondiag_req.evolve_motion([0, 5.0], n_points=51)
+        assert not np.any(np.isnan(sol.r))
+        assert not np.any(np.isnan(sol.v))
+        assert not np.any(np.isnan(sol.N))

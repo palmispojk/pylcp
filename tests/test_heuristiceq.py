@@ -3,6 +3,7 @@ Tests for pylcp/heuristiceq.py
 """
 import pytest
 import numpy as np
+import jax
 import jax.numpy as jnp
 
 from pylcp.fields import laserBeams, constantMagneticField
@@ -10,32 +11,12 @@ from pylcp.heuristiceq import heuristiceq
 
 
 # ---------------------------------------------------------------------------
-# Shared fixtures
+# Local fixtures (shared ones live in conftest.py)
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-def zero_B():
-    return constantMagneticField(jnp.array([0., 0., 0.]))
-
 
 @pytest.fixture
 def nonzero_B():
     return constantMagneticField(jnp.array([0., 0., 1.]))
-
-
-@pytest.fixture
-def single_beam():
-    """One σ+ beam along +z, on resonance, weak saturation."""
-    return laserBeams([{'kvec': [0., 0., 1.], 'pol': +1, 's': 0.1, 'delta': 0.}])
-
-
-@pytest.fixture
-def symmetric_beams():
-    """Two counter-propagating σ+/σ- beams along z, equal intensity."""
-    return laserBeams([
-        {'kvec': [0., 0.,  1.], 'pol': +1, 's': 0.5, 'delta': -1.0},
-        {'kvec': [0., 0., -1.], 'pol': -1, 's': 0.5, 'delta': -1.0},
-    ])
 
 
 @pytest.fixture
@@ -423,3 +404,114 @@ class TestRandomRecoilKickDistribution:
             "All kick magnitudes are identical — likely using a single "
             "random vector * 2 instead of two independent random vectors"
         )
+
+
+# ---------------------------------------------------------------------------
+# TestEvolveMotion
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestEvolveMotion:
+    """Single-atom trajectory integration via scipy."""
+
+    @pytest.fixture
+    def heq_mot(self, zero_B):
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 1.0, 'delta': 0.},
+        ])
+        h = heuristiceq(beams, zero_B, mass=1.0, gamma=1.0, k=1.0)
+        h.set_initial_position_and_velocity(jnp.zeros(3), jnp.zeros(3))
+        return h
+
+    def test_returns_solution(self, heq_mot):
+        sol = heq_mot.evolve_motion([0, 1.0])
+        assert hasattr(sol, 't')
+        assert hasattr(sol, 'r')
+        assert hasattr(sol, 'v')
+
+    def test_sol_stored_on_instance(self, heq_mot):
+        heq_mot.evolve_motion([0, 1.0])
+        assert heq_mot.sol is not None
+
+    def test_position_changes_with_force(self, heq_mot):
+        """A +z beam should accelerate the atom in +z."""
+        sol = heq_mot.evolve_motion([0, 5.0], max_step=0.5)
+        z_final = float(sol.r[2, -1])
+        assert z_final > 0.0, "Atom should have moved in +z"
+
+    def test_velocity_increases_along_beam(self, heq_mot):
+        sol = heq_mot.evolve_motion([0, 5.0], max_step=0.5)
+        vz_final = float(sol.v[2, -1])
+        assert vz_final > 0.0, "Atom should have positive z-velocity"
+
+    def test_transverse_stays_zero(self, heq_mot):
+        """No transverse force → x,y should stay at zero."""
+        sol = heq_mot.evolve_motion([0, 5.0], max_step=0.5)
+        assert np.allclose(sol.r[0], 0., atol=1e-10)
+        assert np.allclose(sol.r[1], 0., atol=1e-10)
+
+    def test_freeze_axis(self, heq_mot):
+        """Freezing z should prevent motion even with a +z beam."""
+        sol = heq_mot.evolve_motion([0, 5.0], freeze_axis=[False, False, True],
+                                    max_step=0.5)
+        assert np.allclose(sol.r[2], 0., atol=1e-10)
+        assert np.allclose(sol.v[2], 0., atol=1e-10)
+
+    def test_no_nan(self, heq_mot):
+        sol = heq_mot.evolve_motion([0, 2.0])
+        assert not np.any(np.isnan(sol.r))
+        assert not np.any(np.isnan(sol.v))
+
+
+# ---------------------------------------------------------------------------
+# TestEvolveMotionBatch
+# ---------------------------------------------------------------------------
+
+@pytest.mark.slow
+class TestEvolveMotionBatch:
+    """Batched atom trajectory integration via JAX/diffrax."""
+
+    @pytest.fixture
+    def heq_batch(self, zero_B):
+        beams = laserBeams([
+            {'kvec': [0., 0., 1.], 'pol': +1, 's': 1.0, 'delta': 0.},
+        ])
+        h = heuristiceq(beams, zero_B, mass=1.0, gamma=1.0, k=1.0)
+        h.set_initial_position_and_velocity(jnp.zeros(3), jnp.zeros(3))
+        return h
+
+    def test_returns_list_of_sols(self, heq_batch):
+        sols = heq_batch.evolve_motion_batch([0, 1.0], n_points=11)
+        assert isinstance(sols, list)
+        assert len(sols) == 1  # default: single atom from r0/v0
+
+    def test_sol_has_r_and_v(self, heq_batch):
+        sols = heq_batch.evolve_motion_batch([0, 1.0], n_points=11)
+        assert hasattr(sols[0], 'r')
+        assert hasattr(sols[0], 'v')
+
+    def test_multiple_atoms(self, heq_batch):
+        y0 = jnp.zeros((3, 6))  # 3 atoms, state = [v(3), r(3)]
+        sols = heq_batch.evolve_motion_batch([0, 1.0], y0_batch=y0, n_points=11)
+        assert len(sols) == 3
+
+    def test_atom_accelerates_in_z(self, heq_batch):
+        sols = heq_batch.evolve_motion_batch([0, 5.0], n_points=51)
+        z_final = float(sols[0].r[2, -1])
+        assert z_final > 0.0
+
+    def test_freeze_axis_batch(self, heq_batch):
+        sols = heq_batch.evolve_motion_batch(
+            [0, 5.0], freeze_axis=[False, False, True], n_points=51)
+        assert np.allclose(sols[0].r[2], 0., atol=1e-10)
+
+    def test_random_recoil_runs(self, heq_batch):
+        """random_recoil=True should run without error."""
+        sols = heq_batch.evolve_motion_batch(
+            [0, 2.0], random_recoil=True, n_points=21)
+        assert len(sols) == 1
+        assert not np.any(np.isnan(sols[0].r))
+
+    def test_sols_stored_on_instance(self, heq_batch):
+        heq_batch.evolve_motion_batch([0, 1.0], n_points=11)
+        assert heq_batch.sols is not None

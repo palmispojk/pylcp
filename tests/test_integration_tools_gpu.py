@@ -12,7 +12,6 @@ Test organisation:
 """
 import functools
 import math
-import warnings
 import pytest
 import jax
 import jax.numpy as jnp
@@ -23,27 +22,11 @@ from pylcp.integration_tools_gpu import (
     solve_ivp_dense,
     solve_ivp_random as _solve_ivp_random,
 )
+from conftest import HAS_GPU, requires_gpu
 
 # CPU tests would take minutes with a large n_points; use a small fixed value.
 # GPU tests are all skipped on CPU so this override is harmless.
 solve_ivp_random = functools.partial(_solve_ivp_random, n_points=20)
-
-
-# ---------------------------------------------------------------------------
-# GPU detection — single warning for all skipped GPU tests
-# ---------------------------------------------------------------------------
-
-HAS_GPU = jax.default_backend() == 'gpu'
-if not HAS_GPU:
-    warnings.warn(
-        "No CUDA GPU detected by JAX — all GPU and CPU-vs-GPU tests will be "
-        "skipped.  Multi-device sharding tests (test_multi_device_sharding.py) "
-        "will still run using simulated CPU devices via XLA_FLAGS.  "
-        "Install jax[cuda12] to enable real GPU tests.",
-        stacklevel=1,
-    )
-
-requires_gpu = pytest.mark.skipif(not HAS_GPU, reason="No GPU available")
 
 CPU_DEVICE = jax.devices('cpu')[0]
 GPU_DEVICE = jax.devices('gpu')[0] if HAS_GPU else None

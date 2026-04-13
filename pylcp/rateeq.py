@@ -1060,7 +1060,7 @@ class rateeq(governingeq):
             k: len(self.laserBeams[k].beam_vector) for k in pump_data
         }
 
-        def random_force_func(t, y, dt, key):
+        def random_force_func(t, y, dt, key, args=None):
             """Apply stochastic absorption and emission recoil kicks per laser beam."""
             v = y[n_states : n_states + 3]
             r = y[n_states + 3 :]
@@ -1165,7 +1165,7 @@ class rateeq(governingeq):
             k: len(self.decay_N_indices[k]) for k in self.decay_rates
         }
 
-        def random_recoil_func(t, y, dt, key):
+        def random_recoil_func(t, y, dt, key, args=None):
             """Apply stochastic spontaneous-emission recoil kicks from excited-state decay."""
             N = y[:n_states]
 
