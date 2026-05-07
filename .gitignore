@@ -139,3 +139,8 @@ dmypy.json
 doc/pylcp.bbl
 doc/pylcp.blg
 doc/pylcp.out
+
+# SLURM job artifacts
+logs/
+*.out
+*.err
