@@ -15,7 +15,7 @@ import datetime
 import numpy as np
 
 from common import (
-    AMDAHL_ATOMS_PER_WORKER, AMDAHL_CORE_COUNTS, PARALLEL_CORE_COUNTS, N_SERIAL,
+    PARALLEL_CORE_COUNTS, N_SERIAL,
     amdahl_speedup, fit_amdahl_p,
 )
 
@@ -74,11 +74,16 @@ def load_gpu(path_or_dir):
     return {'meta': meta, 'transitions': merged_transitions}
 
 
-def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
+def _mpl():
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    return plt
 
+
+def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
+    """One sweep plot per (transition, t_factor)."""
+    plt = _mpl()
     fig, ax = plt.subplots(figsize=(7.5, 5))
 
     if cpu_runs:
@@ -87,7 +92,6 @@ def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
                       if cpu_runs[n].get('serial') is not None]
         if serial_pts:
             ax.plot(*zip(*serial_pts), 'o-', label='Serial CPU')
-
         all_cores = sorted({c for n in ns for c in cpu_runs[n].get('parallel', {})})
         markers = ['^', 'v', 'D', 'p', 'h', '*']
         for i, nc in enumerate(all_cores):
@@ -96,7 +100,6 @@ def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
             if pts:
                 ax.plot(*zip(*pts), f'{markers[i % len(markers)]}-',
                         label=f'Parallel CPU ({nc} cores)')
-
     if gpu_runs:
         ns = sorted(gpu_runs.keys())
         gpu_pts = [(n, gpu_runs[n]['gpu']) for n in ns
@@ -106,55 +109,50 @@ def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
 
     ax.set_xlabel('Number of atoms (N)')
     ax.set_ylabel('Time per atom (s)')
-    ax.set_title(f'Evolve Motion — {name} (state_dim={state_dim})  '
+    ax.set_title(f'Evolve motion — {name} (state_dim={state_dim})  '
                  f't=2\u03c0\u00d7{t_factor}')
     ax.set_xscale('log'); ax.set_yscale('log')
-    ax.legend(); ax.grid(True, which='both', ls='--', alpha=0.4)
+    ax.legend(fontsize=9); ax.grid(True, which='both', ls='--', alpha=0.4)
     plt.tight_layout()
     out = os.path.join(out_dir, f'sweep_{name}_t{t_factor}.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved {out}")
+    plt.savefig(out, dpi=150, bbox_inches='tight'); plt.close()
+    print(f"  Saved {out}")
 
 
-def plot_amdahl(amdahl_sweep, name, t_factor, out_dir):
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+def plot_amdahl_combined(fits, out_dir):
+    """Single Amdahl plot: all (transition, t_factor) fits overlaid.
 
-    if not amdahl_sweep:
+    fits: list of (name, state_dim, t_factor, p, speedups).
+    color = transition, linestyle = t_factor.
+    """
+    if not fits:
         return
-
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+    plt = _mpl()
+    fig, ax = plt.subplots(figsize=(9, 6))
     core_range = np.array([1, 2, 4, 8, 16, 32, 64, 128, 256])
-    colors = plt.cm.viridis(np.linspace(0.15, 0.85, len(amdahl_sweep)))
 
-    for (apw, p, speedups), color in zip(amdahl_sweep, colors):
+    names = sorted({f[0] for f in fits})
+    cmap = plt.cm.viridis(np.linspace(0.15, 0.85, len(names)))
+    color_for = dict(zip(names, cmap))
+    linestyles = {100: ':', 500: '--', 2000: '-'}
+
+    for name, state_dim, t_factor, p, speedups in fits:
+        color = color_for[name]
+        ls = linestyles.get(t_factor, '-')
         predicted = [amdahl_speedup(p, n) for n in core_range]
-        ax1.plot(core_range, predicted, '-', color=color, lw=2,
-                 label=f'{apw} atoms/worker (p={p:.3f})')
+        ax.plot(core_range, predicted, ls, color=color, lw=2,
+                label=f'{name} (dim={state_dim})  t=2π×{t_factor}  p={p:.2f}')
         for nc, s in speedups.items():
-            ax1.plot(nc, s, 'o', color=color, markersize=7, zorder=5)
+            ax.plot(nc, s, 'o', color=color, markersize=5, zorder=5)
 
-    ax1.set_xlabel('Number of cores'); ax1.set_ylabel('Speedup S(n)')
-    ax1.set_title(f"Amdahl — {name}  t=2\u03c0\u00d7{t_factor}")
-    ax1.set_xscale('log', base=2)
-    ax1.legend(fontsize=9); ax1.grid(True, which='both', ls='--', alpha=0.4)
-
-    apws = [r[0] for r in amdahl_sweep]
-    ps = [r[1] for r in amdahl_sweep]
-    ax2.plot(apws, [p * 100 for p in ps], 'o-', color='tab:blue',
-             markersize=8, lw=2)
-    ax2.set_xlabel('Atoms per worker'); ax2.set_ylabel('p (%)')
-    ax2.set_title('Overhead vs work per worker')
-    ax2.set_xscale('log', base=2); ax2.set_ylim(0, 105)
-    ax2.grid(True, which='both', ls='--', alpha=0.4)
-
+    ax.set_xlabel('Number of cores'); ax.set_ylabel('Speedup S(n)')
+    ax.set_title('Amdahl fits across transitions and t_factors')
+    ax.set_xscale('log', base=2)
+    ax.legend(fontsize=8, ncol=2); ax.grid(True, which='both', ls='--', alpha=0.4)
     plt.tight_layout()
-    out = os.path.join(out_dir, f'amdahl_{name}_t{t_factor}.png')
-    plt.savefig(out, dpi=150, bbox_inches='tight')
-    plt.close()
-    print(f"    Saved {out}")
+    out = os.path.join(out_dir, 'amdahl_all.png')
+    plt.savefig(out, dpi=150, bbox_inches='tight'); plt.close()
+    print(f"  Saved {out}")
 
 
 def numerical_check(cpu_runs, gpu_runs):
@@ -173,79 +171,59 @@ def numerical_check(cpu_runs, gpu_runs):
           f"GPU max|z diff| = {diff:.4e}")
 
 
-def amdahl_tables(cpu_runs, fit_cores):
+def _amdahl_at_best_n(cpu_runs, fit_cores, t_factor):
+    """Fit Amdahl p at the largest N with all fit_cores measured. Prints summary."""
     candidates = [
         n for n in sorted(cpu_runs)
         if cpu_runs[n].get('serial') is not None
         and all(c in cpu_runs[n].get('parallel', {}) for c in fit_cores)
     ]
-    if candidates:
-        n_fit = candidates[-1]
-        t_ser = cpu_runs[n_fit]['serial']
-        pa = {c: cpu_runs[n_fit]['parallel'][c] for c in fit_cores}
-        p, speedups = fit_amdahl_p(t_ser, pa)
-        if p is not None:
-            print(f"    Amdahl fit (N={n_fit}):  p = {p:.4f}  "
-                  f"({p*100:.1f}% parallel)")
-            print(f"    {'Cores':>6}  {'S_pred':>8}  {'t/atom(s)':>11}")
-            seen = set()
-            for n in AMDAHL_CORE_COUNTS:
-                if n in seen:
-                    continue
-                seen.add(n)
-                s_pred = amdahl_speedup(p, n)
-                tag = (f"  ← measured S={speedups[n]:.2f}x"
-                       if n in speedups else "")
-                print(f"    {n:>6}  {s_pred:>8.2f}  "
-                      f"{t_ser/s_pred:>11.3f}{tag}")
-
-    max_cores = max(fit_cores)
-    amdahl_sweep = []
-    for apw in AMDAHL_ATOMS_PER_WORKER:
-        n_total = apw * max_cores
-        if n_total not in cpu_runs:
-            continue
-        e = cpu_runs[n_total]
-        if e.get('serial') is None:
-            continue
-        if not all(c in e.get('parallel', {}) for c in fit_cores):
-            continue
-        pa = {c: e['parallel'][c] for c in fit_cores}
-        p, speedups = fit_amdahl_p(e['serial'], pa)
-        if p is not None:
-            amdahl_sweep.append((apw, p, speedups))
-    return amdahl_sweep
+    if not candidates:
+        return None
+    n_fit = candidates[-1]
+    t_ser = cpu_runs[n_fit]['serial']
+    pa = {c: cpu_runs[n_fit]['parallel'][c] for c in fit_cores}
+    p, speedups = fit_amdahl_p(t_ser, pa)
+    if p is None:
+        return None
+    print(f"    t=2π×{t_factor}  Amdahl fit (N={n_fit}):  p = {p:.4f}  "
+          f"({p*100:.1f}% parallel)")
+    return (p, speedups)
 
 
 def plot_state_dim_comparison(gpu_data, out_dir):
-    """One curve per transition on a single plot, showing GPU scaling."""
+    """All GPU curves on one plot: color=transition, linestyle=t_factor."""
     if not gpu_data:
         return
-    import matplotlib
-    matplotlib.use('Agg')
-    import matplotlib.pyplot as plt
+    plt = _mpl()
+    fig, ax = plt.subplots(figsize=(8, 5.5))
 
-    t_factors = gpu_data['meta']['t_factors']
-    for t_factor in t_factors:
-        fig, ax = plt.subplots(figsize=(7.5, 5))
-        for name, tdata in gpu_data['transitions'].items():
+    linestyles = {100: ':', 500: '--', 2000: '-'}
+    names = list(gpu_data['transitions'].keys())
+    cmap = plt.cm.viridis(np.linspace(0.15, 0.85, len(names)))
+
+    for name, color in zip(names, cmap):
+        tdata = gpu_data['transitions'][name]
+        sd = tdata['state_dim']
+        for t_factor, ls in sorted(linestyles.items()):
             runs = tdata['runs'].get(t_factor, {})
             pts = [(n, runs[n]['gpu']) for n in sorted(runs)
                    if runs[n].get('gpu') is not None]
             if pts:
-                sd = tdata['state_dim']
-                ax.plot(*zip(*pts), 'o-',
-                        label=f'{name} (state_dim={sd})')
-        ax.set_xlabel('Number of atoms (N)')
-        ax.set_ylabel('GPU time per atom (s)')
-        ax.set_title(f'GPU scaling across transitions  t=2\u03c0\u00d7{t_factor}')
-        ax.set_xscale('log'); ax.set_yscale('log')
-        ax.legend(); ax.grid(True, which='both', ls='--', alpha=0.4)
-        plt.tight_layout()
-        out = os.path.join(out_dir, f'gpu_transitions_t{t_factor}.png')
-        plt.savefig(out, dpi=150, bbox_inches='tight')
-        plt.close()
-        print(f"  Saved {out}")
+                ax.plot(*zip(*pts), ls, marker='o', color=color, markersize=4,
+                        label=f'{name} (dim={sd})  t=2π×{t_factor}')
+
+    ax.set_xlabel('Number of atoms (N)')
+    ax.set_ylabel('GPU time per atom (s)')
+    ax.set_title('GPU scaling across transitions')
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.grid(True, which='both', ls='--', alpha=0.4)
+    ax.legend(fontsize=8, loc='center left', bbox_to_anchor=(1.02, 0.5),
+              frameon=False)
+    plt.tight_layout()
+    out = os.path.join(out_dir, 'gpu_transitions.png')
+    plt.savefig(out, dpi=150, bbox_inches='tight'); plt.close()
+    print(f"  Saved {out}")
 
 
 def main():
@@ -289,6 +267,7 @@ def main():
     t_factors = sorted(set((cpu['meta']['t_factors'] if cpu else []))
                        | set((gpu['meta']['t_factors'] if gpu else [])))
 
+    all_fits = []
     for name in all_names:
         cpu_t = cpu['transitions'].get(name) if cpu else None
         gpu_t = gpu['transitions'].get(name) if gpu else None
@@ -299,18 +278,17 @@ def main():
               f"(state_dim={state_dim}, optimal={optimal}) ########")
 
         for t_factor in t_factors:
-            print(f"\n  === t = 2pi x {t_factor} ===")
             cpu_runs = cpu_t['runs'].get(t_factor) if cpu_t else None
             gpu_runs = gpu_t['runs'].get(t_factor) if gpu_t else None
-
             numerical_check(cpu_runs, gpu_runs)
             plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir)
-
             if cpu_runs:
-                amdahl_sweep = amdahl_tables(cpu_runs, fit_cores)
-                plot_amdahl(amdahl_sweep, name, t_factor, out_dir)
+                fit = _amdahl_at_best_n(cpu_runs, fit_cores, t_factor)
+                if fit is not None:
+                    p, speedups = fit
+                    all_fits.append((name, state_dim, t_factor, p, speedups))
 
-    # Cross-transition GPU comparison.
+    plot_amdahl_combined(all_fits, out_dir)
     plot_state_dim_comparison(gpu, out_dir)
 
     print(f"\nDone. Output in {out_dir}")
