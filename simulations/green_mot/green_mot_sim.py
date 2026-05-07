@@ -38,7 +38,7 @@ hamiltonian = pylcp.hamiltonian(
     mass=constants.mass, muB=constants.muB, gamma=constants.gamma, k=constants.kmag
 )
 
-obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
+obe = pylcp.obe(laserBeams, magField, hamiltonian, a=constants.a_grav, transform_into_re_im=True)
 
 # ---------------------------------------------------------------------------
 # Build batched initial conditions
@@ -82,7 +82,7 @@ sols = obe.evolve_motion(
     keys_batch=keys_batch,
     random_recoil=True,
     max_scatter_probability=0.5,
-    n_output=5000,
+    n_points=5000,
     progress=True,
 )
 

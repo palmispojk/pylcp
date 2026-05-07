@@ -13,6 +13,8 @@ Usage from any simulation folder::
 import pickle
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
+from matplotlib.colors import LogNorm, Normalize
 
 
 def load_results(path):
@@ -25,8 +27,12 @@ def load_results(path):
 
 
 def plot_final_positions(results, kmag_real, title='MOT Cloud',
-                         filename='mot_cloud_2d_xy.png', axes='xy'):
-    """2D scatter of final atom positions.
+                         filename='mot_cloud_2d_xy.png', axes='xy',
+                         bins=120, cmap='magma_r', log=True):
+    """2D density heatmap of final atom positions.
+
+    Empty bins are left transparent so the figure background shows
+    through, avoiding large dark regions outside the cloud.
 
     Args:
         results: list of result dicts (must contain 'r').
@@ -34,6 +40,11 @@ def plot_final_positions(results, kmag_real, title='MOT Cloud',
         title: plot title.
         filename: output file path.  None to skip saving.
         axes: which two axes to plot — 'xy', 'xz', or 'yz'.
+        bins: number of bins per axis for the 2D histogram.
+        cmap: matplotlib colormap name for the density (light->dark works
+            best so empty regions blend with the white background).
+        log: log-scale colorbar (default).  Useful when a dense captured
+            core coexists with a diffuse uncaptured halo.
     """
     ax_map = {'x': 0, 'y': 1, 'z': 2}
     i0, i1 = ax_map[axes[0]], ax_map[axes[1]]
@@ -42,15 +53,51 @@ def plot_final_positions(results, kmag_real, title='MOT Cloud',
     pos0 = np.array([res['r'][i0, -1] * unit_to_mm for res in results])
     pos1 = np.array([res['r'][i1, -1] * unit_to_mm for res in results])
 
+    half = max(np.abs(pos0).max(), np.abs(pos1).max())
+    if not np.isfinite(half) or half == 0:
+        half = 1.0
+
+    bin_size_mm = 2 * half / bins
+
     fig, ax = plt.subplots(figsize=(7, 7))
-    ax.scatter(pos0, pos1, color='royalblue', s=12, alpha=0.4)
-    ax.scatter([0], [0], color='red', marker='+', s=200, label='Trap Center')
+    h, _, _, im = ax.hist2d(
+        pos0, pos1, bins=bins, range=[[-half, half], [-half, half]],
+        cmap=cmap, cmin=1,
+    )
+    h_max = np.nanmax(h) if np.any(np.isfinite(h)) else 1.0
+    if not np.isfinite(h_max) or h_max < 1:
+        h_max = 1.0
+    if log:
+        vmax = max(h_max, 2.0)
+        im.set_norm(LogNorm(vmin=1, vmax=vmax))
+    else:
+        im.set_norm(Normalize(vmin=0, vmax=h_max))
+
+    center_label = (f'Trap Center\nBin: {bin_size_mm:.3f} mm '
+                    f'({bin_size_mm*1e3:.1f} μm)')
+    ax.scatter([0], [0], color='cyan', marker='o', s=70,
+               edgecolors='black', linewidths=1.0, zorder=5,
+               label=center_label)
+    cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+    cbar.set_label('Atoms per bin' + (' (log)' if log else ''))
+    if log:
+        decade_lo = int(np.floor(np.log10(1)))
+        decade_hi = int(np.floor(np.log10(vmax)))
+        decade_ticks = 10.0 ** np.arange(decade_lo, decade_hi + 1)
+        ticks = np.unique(np.concatenate([[1.0], decade_ticks, [vmax]]))
+        ticks = ticks[(ticks >= 1) & (ticks <= vmax)]
+        cbar.set_ticks(ticks)
+        cbar.ax.yaxis.set_major_formatter(
+            mticker.FuncFormatter(lambda x, _: f'{int(round(x))}'))
+        cbar.ax.minorticks_off()
+    ax.set_xlim(-half, half)
+    ax.set_ylim(-half, half)
     ax.set_xlabel(f'{axes[0].upper()} position (mm)')
     ax.set_ylabel(f'{axes[1].upper()} position (mm)')
     ax.set_title(title)
     ax.set_aspect('equal')
-    ax.grid(True, linestyle=':', alpha=0.6)
-    ax.legend()
+    ax.grid(True, linestyle=':', alpha=0.4)
+    ax.legend(loc='upper right')
     if filename:
         fig.savefig(filename, dpi=300, bbox_inches='tight')
     return fig, ax
@@ -77,6 +124,30 @@ def plot_trajectories(results, alpha_nat, time_scale=1e3,
         for ii in range(3):
             ax[ii, 0].plot(t, res['v'][ii], linewidth=0.25, color='blue', alpha=0.3)
             ax[ii, 1].plot(t, res['r'][ii] * alpha_nat, linewidth=0.25, color='red', alpha=0.3)
+
+    ref_t = results[0]['t'] / time_scale
+    same_grid = all(res['t'].shape == results[0]['t'].shape for res in results)
+    if same_grid:
+        v_mean = np.mean([res['v'] for res in results], axis=0)
+        r_mean = np.mean([res['r'] for res in results], axis=0) * alpha_nat
+    else:
+        v_mean = np.zeros((3, len(ref_t)))
+        r_mean = np.zeros((3, len(ref_t)))
+        for res in results:
+            t_i = res['t'] / time_scale
+            for ii in range(3):
+                v_mean[ii] += np.interp(ref_t, t_i, res['v'][ii])
+                r_mean[ii] += np.interp(ref_t, t_i, res['r'][ii]) * alpha_nat
+        v_mean /= len(results)
+        r_mean /= len(results)
+
+    for ii in range(3):
+        ax[ii, 0].plot(ref_t, v_mean[ii], linewidth=1.2, color='black',
+                       label='Mean' if ii == 0 else None)
+        ax[ii, 1].plot(ref_t, r_mean[ii], linewidth=1.2, color='black',
+                       label='Mean' if ii == 0 else None)
+    ax[0, 0].legend(loc='best', fontsize=7, framealpha=0.7)
+    ax[0, 1].legend(loc='best', fontsize=7, framealpha=0.7)
 
     for ax_i in ax[-1, :]:
         ax_i.set_xlabel(r'$10^3 \Gamma t$')
@@ -148,6 +219,46 @@ def plot_distributions(dist_fits, title='MOT Atom Distributions',
     if filename:
         fig.savefig(filename, dpi=300, bbox_inches='tight')
     return fig, axes
+
+
+def plot_temperature_vs_time(T_data, title='MOT Temperature vs Time',
+                             filename='mot_temperature.png', yscale='log',
+                             target_T=None, target_label='Doppler limit'):
+    """Plot per-axis and mean temperature over time.
+
+    Args:
+        T_data: dict returned by ``analysis.temperature_vs_time``.
+        title: figure title.
+        filename: output file path. None to skip saving.
+        yscale: 'log' or 'linear'.
+        target_T: optional reference temperature in Kelvin (e.g. the Doppler
+            limit). Drawn as a dashed horizontal line.
+        target_label: legend label for the reference line.
+    """
+    fig, ax = plt.subplots(figsize=(8, 5))
+    t_ms = T_data['t_ms']
+
+    for axis, color in zip(['x', 'y', 'z'],
+                           ['tab:blue', 'tab:orange', 'tab:green']):
+        ax.plot(t_ms, T_data[f'T_{axis}'] * 1e6, linewidth=1.0,
+                color=color, alpha=0.55, label=f'$T_{axis}$')
+    ax.plot(t_ms, T_data['T_mean'] * 1e6, linewidth=2.0,
+            color='black', label=r'$\overline{T}$')
+
+    if target_T is not None:
+        ax.axhline(target_T * 1e6, linestyle='--', color='red', alpha=0.6,
+                   label=f'{target_label} ({target_T*1e6:.1f} μK)')
+
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Temperature (μK)')
+    ax.set_yscale(yscale)
+    ax.set_title(title)
+    ax.grid(True, which='both', alpha=0.3)
+    ax.legend(loc='best')
+
+    if filename:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+    return fig, ax
 
 
 def animate_3d(results, kmag_real, filename='mot_capture.gif',

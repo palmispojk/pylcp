@@ -110,21 +110,23 @@ def initial_velocities(results, units=None):
 #  Capture classification
 # ---------------------------------------------------------------------------
 
-def classify_captured(results, r_thresh=10000, v_thresh=0.5):
+def classify_captured(results, r_thresh=10000, units=None, r_mm=None):
     """Return a boolean mask of captured atoms.
 
     An atom is "captured" if its final distance from the origin is below
-    ``r_thresh`` AND its final speed is below ``v_thresh`` (both in
-    natural units).
+    the given threshold. Thresholds may be specified in natural units
+    (``r_thresh``) or in physical units (``r_mm``) when a ``units`` dict
+    from ``make_units`` is provided.
 
     Returns:
         np.ndarray of bool, shape (N,).
     """
+    if units is not None and r_mm is not None:
+        r_thresh = (r_mm * 1e-3) / units['r_to_si']
+
     final_r = np.array([res['r'][:, -1] for res in results])
-    final_v = np.array([res['v'][:, -1] for res in results])
     dist = np.sqrt(np.sum(final_r**2, axis=1))
-    speed = np.sqrt(np.sum(final_v**2, axis=1))
-    return (dist < r_thresh) & (speed < v_thresh)
+    return dist < r_thresh
 
 
 def capture_fraction(results, **kwargs):
@@ -177,6 +179,43 @@ def temperature(results, units, mask=None):
 def doppler_temperature(gamma_real):
     """Theoretical Doppler temperature T_D = hbar * gamma / (2 * k_B)."""
     return const.hbar * gamma_real / (2 * const.k)
+
+
+def temperature_vs_time(results, units, mask=None):
+    """Compute per-axis temperature at each saved time step.
+
+    Uses the velocity variance across atoms at each time index as a proxy
+    for the instantaneous kinetic temperature. Atoms are optionally
+    filtered by `mask` (typically the final-state capture mask, so the
+    curve tracks the cohort that ends up trapped).
+
+    Returns:
+        dict with 't' (natural units), 't_ms' (ms), 'T_x', 'T_y', 'T_z',
+        'T_mean' (arrays of shape (n_steps,), in Kelvin).
+    """
+    subset = results
+    if mask is not None:
+        subset = [r for r, m in zip(results, mask) if m]
+
+    if len(subset) == 0:
+        return {k: np.array([]) for k in
+                ('t', 't_ms', 'T_x', 'T_y', 'T_z', 'T_mean')}
+
+    t = subset[0]['t']                               # (n_steps,)
+    v = np.stack([res['v'] for res in subset], 0)   # (N, 3, n_steps), natural
+    v = v * units['v_to_si']                         # -> m/s
+
+    var = np.var(v, axis=0)                          # (3, n_steps), (m/s)^2
+    T_axes = units['mass_real'] * var / const.k      # (3, n_steps), K
+
+    return {
+        't': t,
+        't_ms': t * units['t_to_si'] * 1e3,
+        'T_x':    T_axes[0],
+        'T_y':    T_axes[1],
+        'T_z':    T_axes[2],
+        'T_mean': np.mean(T_axes, axis=0),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -390,21 +429,18 @@ def equilibration_time(results, units, mask=None, frac=0.90):
 #  Atom number vs time (loading curve)
 # ---------------------------------------------------------------------------
 
-def loading_curve(results, units, r_thresh=None, v_thresh=None):
+def loading_curve(results, units, r_thresh=None):
     """Compute the number of atoms within the capture region at each time step.
 
-    Uses the same default thresholds as ``classify_captured`` when not
-    specified.
+    Uses the same default position threshold as ``classify_captured`` when
+    not specified.
 
     Returns:
         dict with 't' (natural units), 't_ms' (milliseconds),
         'n_captured' (atom count at each time step).
     """
-    defaults = classify_captured.__defaults__  # (r_thresh, v_thresh)
     if r_thresh is None:
-        r_thresh = defaults[0]
-    if v_thresh is None:
-        v_thresh = defaults[1]
+        r_thresh = classify_captured.__defaults__[0]
 
     t = results[0]['t']
     n_steps = len(t)
@@ -412,11 +448,8 @@ def loading_curve(results, units, r_thresh=None, v_thresh=None):
 
     for res in results:
         r = res['r']  # (3, n_steps)
-        v = res['v']  # (3, n_steps)
         dist = np.sqrt(np.sum(r**2, axis=0))
-        speed = np.sqrt(np.sum(v**2, axis=0))
-        captured = (dist < r_thresh) & (speed < v_thresh)
-        n_captured += captured.astype(int)
+        n_captured += (dist < r_thresh).astype(int)
 
     return {
         't': t,
@@ -484,78 +517,50 @@ def fit_distributions(results, units, mask=None, n_bins=60):
 #  Summary
 # ---------------------------------------------------------------------------
 
-def cloud_summary(results, units):
-    """Print a full summary of the simulation results.
+def cloud_summary(results, units, r_mm=None):
+    """Summary of cloud size and temperature (captured atoms).
 
     Returns the summary as a formatted string.
     """
     N = len(results)
-    mask = classify_captured(results)
-    n_cap = mask.sum()
-    frac = n_cap / N
+    mask = classify_captured(results, units=units, r_mm=r_mm)
+    n_cap = int(mask.sum())
 
     temp = temperature(results, units, mask=mask)
     T_D = doppler_temperature(units['gamma_real'])
     size = cloud_size(results, units, mask=mask)
-    scat = scattering_rate(results, units, mask=mask)
-    psd = phase_space_density(results, units, mask=mask)
-    v_cap = capture_velocity(results, units, mask=mask)
-    t_eq = equilibration_time(results, units, mask=mask)
-    loading = loading_curve(results, units)
-
-    # Loading curve milestones
-    n_captured = loading['n_captured']
-    t_ms = loading['t_ms']
-    half_idx = np.searchsorted(n_captured, n_captured[-1] * 0.5)
-    t_half = t_ms[min(half_idx, len(t_ms) - 1)]
 
     lines = [
         f"=== MOT Simulation Summary ===",
-        f"  Total atoms:       {N}",
-        f"  Captured:          {n_cap} ({100*frac:.1f}%)",
-        f"  Lost:              {N - n_cap} ({100*(1-frac):.1f}%)",
+        f"  Total atoms:  {N}   Captured: {n_cap} ({100*n_cap/N:.1f}%)",
         f"",
         f"--- Temperature (captured atoms) ---",
         f"  T_x = {temp['T_x']*1e6:.1f} uK    (v_rms = {temp['v_rms_x']*100:.2f} cm/s)",
         f"  T_y = {temp['T_y']*1e6:.1f} uK    (v_rms = {temp['v_rms_y']*100:.2f} cm/s)",
         f"  T_z = {temp['T_z']*1e6:.1f} uK    (v_rms = {temp['v_rms_z']*100:.2f} cm/s)",
-        f"  T_mean = {temp['T_mean']*1e6:.1f} uK",
+        f"  T_mean   = {temp['T_mean']*1e6:.1f} uK",
         f"  T_Doppler = {T_D*1e6:.1f} uK   (ratio T/T_D = {temp['T_mean']/T_D:.2f})",
         f"",
         f"--- Cloud size (captured atoms, 1-sigma) ---",
         f"  sigma_x = {size['sigma_x_mm']:.3f} mm",
         f"  sigma_y = {size['sigma_y_mm']:.3f} mm",
         f"  sigma_z = {size['sigma_z_mm']:.3f} mm",
-        f"  center  = ({size['center_x']*1e3:.3f}, {size['center_y']*1e3:.3f}, {size['center_z']*1e3:.3f}) mm",
-        f"",
-        f"--- Phase-space density ---",
-        f"  PSD = {psd['psd']:.2e}",
-        f"  lambda_dB = {psd['lambda_dB']*1e9:.2f} nm",
-        f"  n_peak = {psd['n_peak']:.2e} /m^3",
-        f"",
-        f"--- Capture velocity ---",
-        f"  v_capture (max captured) = {v_cap['v_capture_si']:.2f} m/s",
-        f"  v_capture (95th pct)     = {v_cap['v_capture_95']:.2f} m/s",
-        f"",
-        f"--- Equilibration ---",
-        f"  t_eq (90% settled) = {t_eq['t_eq_ms']:.2f} ms",
-        f"  t_half (50% loaded) = {t_half:.2f} ms",
-        f"  N_final in trap = {n_captured[-1]}",
-        f"",
-        f"--- Scattering ---",
-        f"  Mean rate:          {scat['mean_rate']:.2e} /s",
-        f"  Mean per atom:      {scat['mean_scatters_per_atom']:.0f} scatters",
+        f"  center  = ({size['center_x']*1e3:.3f}, "
+        f"{size['center_y']*1e3:.3f}, {size['center_z']*1e3:.3f}) mm",
     ]
     return '\n'.join(lines)
 
 
-def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True):
+def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True,
+            r_mm=None):
     """Load results, print summary, and optionally save to a text file.
 
     Args:
         pkl_path: Path to the simulation pickle file.
         kmag_real, gamma_real, mass_real: Physical constants for unit conversion.
         log: If True, write summary to ``<pkl_stem>_analysis.txt``.
+        r_mm: Capture-region radius in mm. If None, the natural-unit
+            default of ``classify_captured`` is used.
 
     Returns:
         tuple of (results, units, summary_string).
@@ -564,7 +569,7 @@ def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True):
     units = make_units(kmag_real, gamma_real, mass_real)
 
     header = f"Loaded {pkl_path} ({len(results)} atoms)\n"
-    summary = header + cloud_summary(results, units)
+    summary = header + cloud_summary(results, units, r_mm=r_mm)
     print(summary)
 
     if log:
@@ -578,24 +583,28 @@ def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True):
 
 if __name__ == '__main__':
     import sys
+    import argparse
     import importlib.util
 
-    if len(sys.argv) < 3:
-        print("Usage: python analysis.py <pkl_path> <constants.py>")
+    parser = argparse.ArgumentParser(
+        description='Summarise an MOT simulation pickle.',
+    )
+    parser.add_argument('pkl_path')
+    parser.add_argument('constants_path')
+    parser.add_argument('--r-mm', type=float, default=None,
+                        help='Capture-region radius in mm (override natural-unit default)')
+    args = parser.parse_args()
+
+    if not os.path.exists(args.pkl_path):
+        print(f"Error: {args.pkl_path} not found")
+        sys.exit(1)
+    if not os.path.exists(args.constants_path):
+        print(f"Error: {args.constants_path} not found")
         sys.exit(1)
 
-    pkl_path = sys.argv[1]
-    constants_path = sys.argv[2]
-
-    if not os.path.exists(pkl_path):
-        print(f"Error: {pkl_path} not found")
-        sys.exit(1)
-    if not os.path.exists(constants_path):
-        print(f"Error: {constants_path} not found")
-        sys.exit(1)
-
-    spec = importlib.util.spec_from_file_location("constants", constants_path)
+    spec = importlib.util.spec_from_file_location("constants", args.constants_path)
     constants = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(constants)
 
-    analyze(pkl_path, constants.kmag_real, constants.gamma_real, constants.mass_real)
+    analyze(args.pkl_path, constants.kmag_real, constants.gamma_real,
+            constants.mass_real, r_mm=args.r_mm)

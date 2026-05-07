@@ -1,4 +1,4 @@
-"""Static plots of blue MOT simulation results."""
+"""Static plots of single-frequency (SF) red MOT simulation results."""
 import matplotlib
 matplotlib.use('Agg')
 import sys, os
@@ -10,43 +10,39 @@ from analysis import (make_units, classify_captured, fit_distributions,
                       temperature_vs_time, doppler_temperature)
 import constants
 
-results = load_results('blue_mot_simulation_data.pkl')
+results = load_results('sf_red_mot_simulation_data.pkl')
 print(f"Loaded {len(results)} atoms")
 
 plot_final_positions(
     results, constants.kmag_real,
-    title='Sr88 Blue MOT Cloud',
-    filename='blue_mot_cloud_2d_xy.png',
+    title='Sr88 SF Red MOT Cloud',
+    filename='sf_red_mot_cloud_2d_xy.png',
 )
-
-# Also show x-z plane to see Zeeman slower beam capture
 plot_final_positions(
     results, constants.kmag_real,
-    title='Sr88 Blue MOT Cloud (beam axis)',
-    filename='blue_mot_cloud_2d_xz.png',
+    title='Sr88 SF Red MOT Cloud (beam axis)',
+    filename='sf_red_mot_cloud_2d_xz.png',
     axes='xz',
 )
 
 plot_trajectories(
     results, constants.alpha_nat,
-    filename='blue_mot_3x2_trajectories.png',
+    filename='sf_red_mot_3x2_trajectories.png',
 )
 
-# Distribution fits for captured atoms
 units = make_units(constants.kmag_real, constants.gamma_real, constants.mass_real)
-mask = classify_captured(results)
+mask = classify_captured(results, units=units, r_mm=5.0)
 dist_fits = fit_distributions(results, units, mask=mask)
 plot_distributions(
     dist_fits,
-    title='Sr88 Blue MOT — Captured Atom Distributions',
-    filename='blue_mot_distributions.png',
+    title='Sr88 SF Red MOT — Captured Atom Distributions',
+    filename='sf_red_mot_distributions.png',
 )
 
-# Temperature of the captured cohort vs time
 T_data = temperature_vs_time(results, units, mask=mask)
 plot_temperature_vs_time(
     T_data,
-    title='Sr88 Blue MOT — Temperature vs Time',
-    filename='blue_mot_temperature.png',
+    title='Sr88 SF Red MOT — Temperature vs Time',
+    filename='sf_red_mot_temperature.png',
     target_T=doppler_temperature(constants.gamma_real),
 )
