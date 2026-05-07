@@ -226,14 +226,199 @@ def plot_state_dim_comparison(gpu_data, out_dir):
     print(f"  Saved {out}")
 
 
+def _cpu_best_at(cpu_runs):
+    """(t_best, label, n) over all (nc, N) in cpu_runs; label is 'serial' or 'X workers'."""
+    if not cpu_runs:
+        return None
+    best = None
+    for n, r in cpu_runs.items():
+        t_ser = r.get('serial')
+        if t_ser is not None:
+            if best is None or t_ser < best[0]:
+                best = (t_ser, 'serial', n)
+        for nc, t in r.get('parallel', {}).items():
+            if best is None or t < best[0]:
+                best = (t, f'{nc} workers', n)
+    return best
+
+
+def _gpu_best_at(gpu_runs):
+    """(t_best, N) over all N in gpu_runs."""
+    if not gpu_runs:
+        return None
+    best = None
+    for n, r in gpu_runs.items():
+        t = r.get('gpu')
+        if t is None:
+            continue
+        if best is None or t < best[0]:
+            best = (t, n)
+    return best
+
+
+def write_summary(cpu, gpu, all_fits, out_path):
+    """Write a human-readable summary.txt with speedup tables and stats."""
+    lines = []
+    w = lines.append
+
+    w("=" * 72)
+    w(f"Benchmark summary  generated {datetime.datetime.now().isoformat()}")
+    w("=" * 72)
+    if cpu:
+        w(f"CPU data timestamp: {cpu['meta']['timestamp']}")
+        w(f"  cores swept:      {cpu['meta']['core_counts']}")
+        w(f"  t_factors:        {cpu['meta']['t_factors']}")
+    if gpu:
+        w(f"GPU data timestamp: {gpu['meta']['timestamp']}")
+        w(f"  t_factors:        {gpu['meta']['t_factors']}")
+    w("")
+
+    names = sorted(set((cpu['transitions'].keys() if cpu else set()))
+                   | set((gpu['transitions'].keys() if gpu else set())))
+    t_factors = sorted(set((cpu['meta']['t_factors'] if cpu else []))
+                       | set((gpu['meta']['t_factors'] if gpu else [])))
+
+    # ---- Headline table: CPU best vs GPU best per (transition, t_factor) ----
+    if cpu and gpu:
+        w("-" * 72)
+        w("End-to-end speedup: GPU (best batch) vs best parallel CPU (any N, nc)")
+        w("-" * 72)
+        w(f"{'Transition':<14}{'t':<16}"
+          f"{'t_CPU_best':>14}{'cfg':>15}"
+          f"{'t_GPU':>12}{'N_GPU':>10}{'Speedup':>10}")
+        for name in names:
+            cpu_t = cpu['transitions'].get(name)
+            gpu_t = gpu['transitions'].get(name)
+            for tf in t_factors:
+                c_runs = cpu_t['runs'].get(tf) if cpu_t else None
+                g_runs = gpu_t['runs'].get(tf) if gpu_t else None
+                cb = _cpu_best_at(c_runs)
+                gb = _gpu_best_at(g_runs)
+                if not cb or not gb:
+                    continue
+                t_cpu, cfg, n_cpu = cb
+                t_gpu, n_gpu = gb
+                sp = t_cpu / t_gpu
+                w(f"{name:<14}2π×{tf:<12}"
+                  f"{t_cpu:>12.5f}  {cfg:>13}"
+                  f"{t_gpu:>12.5f}{n_gpu:>10}{sp:>9.1f}×")
+        w("")
+
+    # ---- Per-transition detail ----
+    for name in names:
+        cpu_t = cpu['transitions'].get(name) if cpu else None
+        gpu_t = gpu['transitions'].get(name) if gpu else None
+        sd = ((gpu_t or cpu_t) or {}).get('state_dim', '?')
+        opt = gpu_t['optimal_batch_size'] if gpu_t else None
+        w("-" * 72)
+        w(f"### {name}   state_dim={sd}   optimal GPU batch={opt}")
+        w("-" * 72)
+
+        # Amdahl p per t_factor
+        fits_here = [f for f in all_fits if f[0] == name]
+        if fits_here:
+            w("  Amdahl fit (ref N=largest with serial + all cores):")
+            for _, _, tf, p, _ in fits_here:
+                w(f"    t=2π×{tf:<5}  p = {p:.3f}  ({p*100:5.1f}% parallel)")
+            w("")
+
+        # CPU parallel speedup table at ref N for the largest t_factor
+        if cpu_t:
+            w("  CPU parallel speedup at reference N (serial → best workers):")
+            for tf in t_factors:
+                runs = cpu_t['runs'].get(tf, {})
+                cores_used = sorted({c for n in runs
+                                     for c in runs[n].get('parallel', {})})
+                fit_ns = [n for n in sorted(runs)
+                          if runs[n].get('serial') is not None
+                          and all(c in runs[n].get('parallel', {}) for c in cores_used)]
+                if not fit_ns:
+                    continue
+                n_ref = fit_ns[-1]
+                r = runs[n_ref]
+                t_ser = r['serial']
+                parts = [f"serial={t_ser:.4f}"]
+                for nc in cores_used:
+                    t_pa = r['parallel'].get(nc)
+                    if t_pa is None:
+                        continue
+                    parts.append(f"{nc}c:{t_ser/t_pa:>4.2f}×")
+                w(f"    t=2π×{tf:<5}  N={n_ref:<5}  {'  '.join(parts)}")
+            w("")
+
+        # Throughput at peak (atoms/s)
+        if cpu_t or gpu_t:
+            w("  Peak throughput (atoms/s):")
+            for tf in t_factors:
+                c_runs = cpu_t['runs'].get(tf, {}) if cpu_t else None
+                g_runs = gpu_t['runs'].get(tf, {}) if gpu_t else None
+                cb = _cpu_best_at(c_runs) if c_runs else None
+                gb = _gpu_best_at(g_runs) if g_runs else None
+                parts = []
+                if cb:
+                    t, cfg, n = cb
+                    parts.append(f"CPU {1/t:>9.1f} ({cfg}, N={n})")
+                if gb:
+                    t, n = gb
+                    parts.append(f"GPU {1/t:>9.1f} (N={n})")
+                if parts:
+                    w(f"    t=2π×{tf:<5}  " + "   ".join(parts))
+            w("")
+
+        # CPU vs GPU at matched N, broken down by CPU worker count.
+        # Table rows = matched N, columns = serial + each nc; cells = CPU/GPU ratio.
+        if cpu_t and gpu_t:
+            cores_all = sorted({c for tf in t_factors
+                                for n, r in cpu_t['runs'].get(tf, {}).items()
+                                for c in r.get('parallel', {})})
+            header_cols = ['serial'] + [f'{c}c' for c in cores_all]
+            w("  CPU/GPU speedup ratio at matched N (CPU_time / GPU_time):")
+            for tf in t_factors:
+                c_runs = cpu_t['runs'].get(tf, {})
+                g_runs = gpu_t['runs'].get(tf, {})
+                matched = sorted(set(c_runs) & set(g_runs))
+                # filter to Ns where GPU has a value
+                rows = []
+                for n in matched:
+                    t_gpu = g_runs[n].get('gpu')
+                    if t_gpu is None:
+                        continue
+                    ratios = {}
+                    t_ser = c_runs[n].get('serial')
+                    if t_ser is not None:
+                        ratios['serial'] = t_ser / t_gpu
+                    for nc, t_pa in c_runs[n].get('parallel', {}).items():
+                        ratios[nc] = t_pa / t_gpu
+                    rows.append((n, t_gpu, ratios))
+                if not rows:
+                    continue
+                w(f"    t=2π×{tf}")
+                head = f"      {'N':>6}  {'GPU(s)':>8}  " + \
+                       "  ".join(f"{c:>6}" for c in header_cols)
+                w(head)
+                for n, t_gpu, ratios in rows:
+                    cells = []
+                    for col in ['serial'] + cores_all:
+                        r = ratios.get(col)
+                        cells.append(f"{r:>6.2f}" if r is not None else f"{'—':>6}")
+                    w(f"      {n:>6}  {t_gpu:>8.4f}  " + "  ".join(cells))
+                w("")
+            w("")
+
+    with open(out_path, 'w') as f:
+        f.write("\n".join(lines) + "\n")
+    print(f"  Saved {out_path}")
+
+
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
+    run_dir = os.path.join(here, 'run')
     ap = argparse.ArgumentParser()
-    ap.add_argument('--cpu', default=os.path.join(here, 'cpu_results.pkl'))
-    ap.add_argument('--gpu', default=here,
+    ap.add_argument('--cpu', default=os.path.join(run_dir, 'cpu_results.pkl'))
+    ap.add_argument('--gpu', default=run_dir,
                     help="Path to gpu_results.pkl OR a directory containing "
                          "per-transition gpu_results_<name>.pkl files. "
-                         "Defaults to the script directory.")
+                         "Defaults to the run/ directory.")
     ap.add_argument('--out', default=None)
     args = ap.parse_args()
 
@@ -249,8 +434,7 @@ def main():
         print("No input data found.", file=sys.stderr)
         sys.exit(1)
 
-    out_dir = args.out or os.path.join(
-        here, f'run_{datetime.datetime.now().strftime("%Y%m%d_%H%M%S")}')
+    out_dir = args.out or run_dir
     os.makedirs(out_dir, exist_ok=True)
     print(f"Output → {out_dir}")
 
@@ -290,6 +474,7 @@ def main():
 
     plot_amdahl_combined(all_fits, out_dir)
     plot_state_dim_comparison(gpu, out_dir)
+    write_summary(cpu, gpu, all_fits, os.path.join(out_dir, 'summary.txt'))
 
     print(f"\nDone. Output in {out_dir}")
 

@@ -25,6 +25,7 @@ import time
 import pickle
 import datetime
 import argparse
+import copy
 
 import numpy as np
 import jax
@@ -32,6 +33,7 @@ import jax.numpy as jnp
 
 from common import (
     N_POINTS, SEED, SWEEP_CPU_ATOMS, SWEEP_T_FACTORS, PARALLEL_CORE_COUNTS,
+    CPU_PARALLEL_MAX_N, SERIAL_MAX_N,
     TRANSITIONS, setup_obe, make_y0_list, run_parallel,
 )
 
@@ -53,21 +55,29 @@ def run_cpu_sweep(obe, atom_counts, core_counts, t_factor, transition):
         y0_batch = jnp.stack(y0_list)
         keys = jax.random.split(jax.random.PRNGKey(SEED), n)
 
-        # Serial.
-        obe.evolve_motion(t_span, n_points=N_POINTS,
-                          y0_batch=y0_batch[:min(n, 2)],
-                          keys_batch=keys[:min(n, 2)], **kw)
-        t0 = time.perf_counter()
-        obe.evolve_motion(t_span, n_points=N_POINTS,
-                          y0_batch=y0_batch, keys_batch=keys, **kw)
-        t_serial = (time.perf_counter() - t0) / n
-        z_serial = np.array([sol.r[2, -1] for sol in obe.sols])
-        print(f"    serial:  {t_serial:.4f} s/atom", flush=True)
+        entry = {'serial': None, 'z_serial': None, 'parallel': {}}
 
-        entry = {'serial': t_serial, 'z_serial': z_serial, 'parallel': {}}
+        if n <= SERIAL_MAX_N:
+            obe.evolve_motion(t_span, n_points=N_POINTS,
+                              y0_batch=y0_batch[:min(n, 2)],
+                              keys_batch=keys[:min(n, 2)], **kw)
+            t0 = time.perf_counter()
+            obe.evolve_motion(t_span, n_points=N_POINTS,
+                              y0_batch=y0_batch, keys_batch=keys, **kw)
+            t_serial = (time.perf_counter() - t0) / n
+            z_serial = np.array([sol.r[2, -1] for sol in obe.sols])
+            entry['serial'] = t_serial
+            entry['z_serial'] = z_serial
+            print(f"    serial:  {t_serial:.4f} s/atom", flush=True)
+        else:
+            print(f"    serial:  skipped (N > SERIAL_MAX_N={SERIAL_MAX_N})",
+                  flush=True)
 
         for nc in core_counts:
             if n < nc:
+                continue
+            max_n = CPU_PARALLEL_MAX_N.get(nc)
+            if max_n is not None and n > max_n:
                 continue
             try:
                 t_pa, _ = run_parallel(y0_list, nc, t_factor=t_factor,
@@ -89,11 +99,28 @@ def main():
     ap.add_argument('--out', default=None)
     ap.add_argument('--cores', type=int, nargs='+', default=None,
                     help=f"Override core counts (default: {PARALLEL_CORE_COUNTS}).")
+    ap.add_argument('--atoms', type=int, nargs='+', default=None,
+                    help=f"Override atom counts (default: {list(SWEEP_CPU_ATOMS)}).")
     args = ap.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))
-    out_path = args.out or os.path.join(here, 'cpu_results.pkl')
+    run_dir = os.path.join(here, 'run')
+    os.makedirs(run_dir, exist_ok=True)
+    out_path = args.out or os.path.join(run_dir, 'cpu_results.pkl')
     core_counts = args.cores if args.cores else list(PARALLEL_CORE_COUNTS)
+    atom_counts = args.atoms if args.atoms else list(SWEEP_CPU_ATOMS)
+
+    existing = None
+    if os.path.exists(out_path):
+        try:
+            with open(out_path, 'rb') as f:
+                existing = pickle.load(f)
+            print(f"Found existing pickle at {out_path}; new runs will be "
+                  f"merged into it.", flush=True)
+        except Exception as exc:
+            print(f"Could not load existing pickle ({exc}); starting fresh.",
+                  flush=True)
+            existing = None
 
     print(f"Run started: {datetime.datetime.now().isoformat()}")
     print(f"  CPU cores (logical): {os.cpu_count()}")
@@ -114,28 +141,47 @@ def main():
         for t_factor in SWEEP_T_FACTORS:
             print(f"\n=== {name}: t = 2pi x {t_factor} ===", flush=True)
             runs[t_factor] = run_cpu_sweep(
-                obe, SWEEP_CPU_ATOMS, core_counts, t_factor,
+                obe, atom_counts, core_counts, t_factor,
                 transition=(Fg, Fe, gFg, gFe),
             )
 
-        results_by_transition[name] = {
+        entry = {
             'transition': {'Fg': Fg, 'Fe': Fe, 'gFg': gFg, 'gFe': gFe},
             'state_dim': state_dim,
-            'atom_counts': list(SWEEP_CPU_ATOMS),
+            'atom_counts': list(atom_counts),
             'runs': runs,
         }
 
-    payload = {
-        'meta': {
-            'timestamp': datetime.datetime.now().isoformat(),
-            't_factors': list(SWEEP_T_FACTORS),
-            'core_counts': core_counts,
-            'max_steps': N_POINTS,
-            'seed': SEED,
-            'cpu_cores_available': os.cpu_count(),
-        },
-        'transitions': results_by_transition,
+        if existing and name in existing.get('transitions', {}):
+            old = copy.deepcopy(existing['transitions'][name])
+            merged_runs = old.get('runs', {})
+            for tf, ndict in runs.items():
+                merged_runs.setdefault(tf, {}).update(ndict)
+            merged_atoms = sorted(set(old.get('atom_counts', [])) | set(atom_counts))
+            entry['runs'] = merged_runs
+            entry['atom_counts'] = merged_atoms
+
+        results_by_transition[name] = entry
+
+    meta = {
+        'timestamp': datetime.datetime.now().isoformat(),
+        't_factors': list(SWEEP_T_FACTORS),
+        'core_counts': core_counts,
+        'max_steps': N_POINTS,
+        'seed': SEED,
+        'cpu_cores_available': os.cpu_count(),
     }
+    if existing:
+        old_meta = existing.get('meta', {})
+        meta['core_counts'] = sorted(set(old_meta.get('core_counts', []))
+                                     | set(core_counts))
+        meta['t_factors'] = sorted(set(old_meta.get('t_factors', []))
+                                   | set(meta['t_factors']))
+        # Preserve any transitions that weren't re-run this time.
+        for name, tdata in existing.get('transitions', {}).items():
+            results_by_transition.setdefault(name, tdata)
+
+    payload = {'meta': meta, 'transitions': results_by_transition}
     with open(out_path, 'wb') as f:
         pickle.dump(payload, f, protocol=pickle.HIGHEST_PROTOCOL)
     print(f"\nSaved: {out_path}")

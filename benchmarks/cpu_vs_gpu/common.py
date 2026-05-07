@@ -14,9 +14,18 @@ N_POINTS = 32
 SWEEP_T_FACTORS = [100, 500, 2000]
 
 # Atom counts.
-# CPU: small — serial CPU is expensive (~seconds/atom).
-# Sized so the highest core count gets at least ~2 atoms/worker.
-SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64, 128]
+# CPU: extends into the GPU range so the two curves can be compared, but
+# only the high-core-count runs go that high (see CPU_PARALLEL_MAX_N).
+SWEEP_CPU_ATOMS = [4, 8, 16, 32, 64, 128, 256, 512, 1024]
+
+# Per-core-count cap on N: small core counts would take hours at large N
+# without adding useful information, so they stay at the original ceiling.
+# Only 16/32/64-core runs sweep the full range.
+CPU_PARALLEL_MAX_N = {2: 128, 4: 128, 8: 128, 16: 2048, 32: 2048, 64: 2048}
+
+# Serial per-atom time is N-independent, so there's no reason to pay the
+# wall-clock cost at large N.
+SERIAL_MAX_N = 128
 # GPU: large — start where batching pays off and extend toward optimal_batch_size.
 # benchmark_gpu.py appends `optimal_batch_size` onto this list automatically.
 SWEEP_GPU_ATOMS = [512, 1024, 2048, 4096, 8192, 16384, 32768]

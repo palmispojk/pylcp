@@ -107,6 +107,8 @@ def main():
     args = ap.parse_args()
 
     here = os.path.dirname(os.path.abspath(__file__))
+    run_dir = os.path.join(here, 'run')
+    os.makedirs(run_dir, exist_ok=True)
 
     if args.transition:
         matches = [t for t in TRANSITIONS if t[0] == args.transition]
@@ -120,7 +122,7 @@ def main():
     else:
         wanted = list(TRANSITIONS)
         default_name = 'gpu_results.pkl'
-    out_path = args.out or os.path.join(here, default_name)
+    out_path = args.out or os.path.join(run_dir, default_name)
 
     print(f"Run started: {datetime.datetime.now().isoformat()}")
     gpu_devs = [d for d in jax.devices() if d.platform == 'gpu']

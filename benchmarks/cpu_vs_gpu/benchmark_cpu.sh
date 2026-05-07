@@ -5,7 +5,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=64
 #SBATCH --mem=48G
-#SBATCH --time=12:00:00
+#SBATCH --time=24:00:00
 #SBATCH --output=logs/bench_cpu_%j.out
 #SBATCH --error=logs/bench_cpu_%j.err
 
