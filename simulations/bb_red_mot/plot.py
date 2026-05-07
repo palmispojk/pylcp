@@ -25,6 +25,27 @@ plot_final_positions(
     axes='xz',
 )
 
+# Zoomed-in views: keep only atoms within 2 mm of trap center so the helper's
+# autoscaling tightens onto the cloud core instead of the escapee halo.
+import numpy as _np
+_unit_to_mm = 1e3 / constants.kmag_real
+_zoom_results = [
+    r for r in results
+    if _np.linalg.norm(r['r'][:, -1] * _unit_to_mm) < 2.0
+]
+print(f"Zoom subset: {len(_zoom_results)} atoms within 2 mm of origin")
+plot_final_positions(
+    _zoom_results, constants.kmag_real,
+    title='Sr88 BB Red MOT Cloud (zoom)',
+    filename='bb_red_mot_cloud_2d_xy_zoom.png',
+)
+plot_final_positions(
+    _zoom_results, constants.kmag_real,
+    title='Sr88 BB Red MOT Cloud (zoom, beam axis)',
+    filename='bb_red_mot_cloud_2d_xz_zoom.png',
+    axes='xz',
+)
+
 plot_trajectories(
     results, constants.alpha_nat,
     filename='bb_red_mot_3x2_trajectories.png',
