@@ -485,66 +485,35 @@ def fit_distributions(results, units, mask=None, n_bins=60):
 # ---------------------------------------------------------------------------
 
 def cloud_summary(results, units):
-    """Print a full summary of the simulation results.
+    """Summary of cloud size and temperature (captured atoms).
 
     Returns the summary as a formatted string.
     """
     N = len(results)
     mask = classify_captured(results)
-    n_cap = mask.sum()
-    frac = n_cap / N
+    n_cap = int(mask.sum())
 
     temp = temperature(results, units, mask=mask)
     T_D = doppler_temperature(units['gamma_real'])
     size = cloud_size(results, units, mask=mask)
-    scat = scattering_rate(results, units, mask=mask)
-    psd = phase_space_density(results, units, mask=mask)
-    v_cap = capture_velocity(results, units, mask=mask)
-    t_eq = equilibration_time(results, units, mask=mask)
-    loading = loading_curve(results, units)
-
-    # Loading curve milestones
-    n_captured = loading['n_captured']
-    t_ms = loading['t_ms']
-    half_idx = np.searchsorted(n_captured, n_captured[-1] * 0.5)
-    t_half = t_ms[min(half_idx, len(t_ms) - 1)]
 
     lines = [
         f"=== MOT Simulation Summary ===",
-        f"  Total atoms:       {N}",
-        f"  Captured:          {n_cap} ({100*frac:.1f}%)",
-        f"  Lost:              {N - n_cap} ({100*(1-frac):.1f}%)",
+        f"  Total atoms:  {N}   Captured: {n_cap} ({100*n_cap/N:.1f}%)",
         f"",
         f"--- Temperature (captured atoms) ---",
         f"  T_x = {temp['T_x']*1e6:.1f} uK    (v_rms = {temp['v_rms_x']*100:.2f} cm/s)",
         f"  T_y = {temp['T_y']*1e6:.1f} uK    (v_rms = {temp['v_rms_y']*100:.2f} cm/s)",
         f"  T_z = {temp['T_z']*1e6:.1f} uK    (v_rms = {temp['v_rms_z']*100:.2f} cm/s)",
-        f"  T_mean = {temp['T_mean']*1e6:.1f} uK",
+        f"  T_mean   = {temp['T_mean']*1e6:.1f} uK",
         f"  T_Doppler = {T_D*1e6:.1f} uK   (ratio T/T_D = {temp['T_mean']/T_D:.2f})",
         f"",
         f"--- Cloud size (captured atoms, 1-sigma) ---",
         f"  sigma_x = {size['sigma_x_mm']:.3f} mm",
         f"  sigma_y = {size['sigma_y_mm']:.3f} mm",
         f"  sigma_z = {size['sigma_z_mm']:.3f} mm",
-        f"  center  = ({size['center_x']*1e3:.3f}, {size['center_y']*1e3:.3f}, {size['center_z']*1e3:.3f}) mm",
-        f"",
-        f"--- Phase-space density ---",
-        f"  PSD = {psd['psd']:.2e}",
-        f"  lambda_dB = {psd['lambda_dB']*1e9:.2f} nm",
-        f"  n_peak = {psd['n_peak']:.2e} /m^3",
-        f"",
-        f"--- Capture velocity ---",
-        f"  v_capture (max captured) = {v_cap['v_capture_si']:.2f} m/s",
-        f"  v_capture (95th pct)     = {v_cap['v_capture_95']:.2f} m/s",
-        f"",
-        f"--- Equilibration ---",
-        f"  t_eq (90% settled) = {t_eq['t_eq_ms']:.2f} ms",
-        f"  t_half (50% loaded) = {t_half:.2f} ms",
-        f"  N_final in trap = {n_captured[-1]}",
-        f"",
-        f"--- Scattering ---",
-        f"  Mean rate:          {scat['mean_rate']:.2e} /s",
-        f"  Mean per atom:      {scat['mean_scatters_per_atom']:.0f} scatters",
+        f"  center  = ({size['center_x']*1e3:.3f}, "
+        f"{size['center_y']*1e3:.3f}, {size['center_z']*1e3:.3f}) mm",
     ]
     return '\n'.join(lines)
 

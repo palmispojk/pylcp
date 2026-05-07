@@ -111,7 +111,7 @@ sols = obe.evolve_motion(
     keys_batch=keys_batch,
     random_recoil=True,
     max_scatter_probability=0.5,
-    n_points=5000,
+    n_points=1000,
     progress=True,
 )
 

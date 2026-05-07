@@ -1,0 +1,36 @@
+Loaded blue_mot/blue_mot_simulation_data.pkl (8192 atoms)
+=== MOT Simulation Summary ===
+  Total atoms:       8192
+  Captured:          8180 (99.9%)
+  Lost:              12 (0.1%)
+
+--- Temperature (captured atoms) ---
+  T_x = 1466.0 uK    (v_rms = 37.22 cm/s)
+  T_y = 1487.2 uK    (v_rms = 37.49 cm/s)
+  T_z = 1644.9 uK    (v_rms = 39.42 cm/s)
+  T_mean = 1532.7 uK
+  T_Doppler = 731.9 uK   (ratio T/T_D = 2.09)
+
+--- Cloud size (captured atoms, 1-sigma) ---
+  sigma_x = 0.191 mm
+  sigma_y = 0.190 mm
+  sigma_z = 0.141 mm
+  center  = (0.001, 0.001, -0.001) mm
+
+--- Phase-space density ---
+  PSD = 1.09e-11
+  lambda_dB = 4.75 nm
+  n_peak = 1.01e+14 /m^3
+
+--- Capture velocity ---
+  v_capture (max captured) = 36.13 m/s
+  v_capture (95th pct)     = 23.32 m/s
+
+--- Equilibration ---
+  t_eq (90% settled) = 1.05 ms
+  t_half (50% loaded) = 1.37 ms
+  N_final in trap = 8180
+
+--- Scattering ---
+  Mean rate:          9.85e+05 /s
+  Mean per atom:      5139 scatters
