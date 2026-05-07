@@ -297,9 +297,36 @@ class TestInfinitePlaneWaveBeam:
                 kvec=lambda R, t: jnp.array([0.0, 0.0, 1.0]), pol=+1, s=1.0, delta=0.0
             )
 
-    def test_callable_s_raises(self):
-        with pytest.raises(TypeError):
-            infinitePlaneWaveBeam(kvec=[0.0, 0.0, 1.0], pol=+1, s=lambda R, t: 1.0, delta=0.0)
+    def test_callable_s_accepted(self):
+        # Callable s(R, t) is allowed (used by the SF red MOT power ramp).
+        infinitePlaneWaveBeam(
+            kvec=[0.0, 0.0, 1.0], pol=+1, s=lambda R, t: 1.0, delta=0.0,
+        )
+
+    def test_callable_s_intensity(self):
+        beam = infinitePlaneWaveBeam(
+            kvec=[0.0, 0.0, 1.0], pol=+1, s=lambda R, t: 2.0 * t, delta=0.0,
+        )
+        assert float(beam.intensity(R0, 1.5)) == pytest.approx(3.0)
+
+    def test_callable_s_ramp_over_time(self):
+        # Linear ramp from s_start -> s_end over t_ramp, then held flat
+        # (mirrors the SF red MOT power ramp).
+        s_start, s_end, t_ramp = 1270.0, 127.0, 3000.0
+
+        def s_ramp(R, t):
+            frac = jnp.minimum(t / t_ramp, 1.0)
+            return s_start + (s_end - s_start) * frac
+
+        beam = infinitePlaneWaveBeam(
+            kvec=[0.0, 0.0, 1.0], pol=+1, s=s_ramp, delta=0.0,
+        )
+        assert float(beam.intensity(R0, 0.0)) == pytest.approx(s_start)
+        assert float(beam.intensity(R0, t_ramp / 2)) == pytest.approx(
+            (s_start + s_end) / 2
+        )
+        assert float(beam.intensity(R0, t_ramp)) == pytest.approx(s_end)
+        assert float(beam.intensity(R0, 2 * t_ramp)) == pytest.approx(s_end)
 
     def test_electric_field_gradient_shape(self):
         beam = infinitePlaneWaveBeam(kvec=[0.0, 0.0, 1.0], pol=+1, s=1.0, delta=0.0)
