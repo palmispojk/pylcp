@@ -300,12 +300,18 @@ class TestInfinitePlaneWaveBeam:
     def test_callable_s_accepted(self):
         # Callable s(R, t) is allowed (used by the SF red MOT power ramp).
         infinitePlaneWaveBeam(
-            kvec=[0.0, 0.0, 1.0], pol=+1, s=lambda R, t: 1.0, delta=0.0,
+            kvec=[0.0, 0.0, 1.0],
+            pol=+1,
+            s=lambda R, t: 1.0,
+            delta=0.0,
         )
 
     def test_callable_s_intensity(self):
         beam = infinitePlaneWaveBeam(
-            kvec=[0.0, 0.0, 1.0], pol=+1, s=lambda R, t: 2.0 * t, delta=0.0,
+            kvec=[0.0, 0.0, 1.0],
+            pol=+1,
+            s=lambda R, t: 2.0 * t,
+            delta=0.0,
         )
         assert float(beam.intensity(R0, 1.5)) == pytest.approx(3.0)
 
@@ -319,12 +325,13 @@ class TestInfinitePlaneWaveBeam:
             return s_start + (s_end - s_start) * frac
 
         beam = infinitePlaneWaveBeam(
-            kvec=[0.0, 0.0, 1.0], pol=+1, s=s_ramp, delta=0.0,
+            kvec=[0.0, 0.0, 1.0],
+            pol=+1,
+            s=s_ramp,
+            delta=0.0,
         )
         assert float(beam.intensity(R0, 0.0)) == pytest.approx(s_start)
-        assert float(beam.intensity(R0, t_ramp / 2)) == pytest.approx(
-            (s_start + s_end) / 2
-        )
+        assert float(beam.intensity(R0, t_ramp / 2)) == pytest.approx((s_start + s_end) / 2)
         assert float(beam.intensity(R0, t_ramp)) == pytest.approx(s_end)
         assert float(beam.intensity(R0, 2 * t_ramp)) == pytest.approx(s_end)
 
