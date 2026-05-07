@@ -144,3 +144,14 @@ doc/pylcp.out
 logs/
 *.out
 *.err
+
+# Simulation plots and analysis output
+simulations/**/*.png
+simulations/**/*.jpg
+simulations/**/*.jpeg
+simulations/**/*.gif
+simulations/**/*.svg
+simulations/**/*.pdf
+simulations/**/*.txt
+simulations/**/*.npz
+simulations/**/*.pkl
