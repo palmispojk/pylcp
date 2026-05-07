@@ -23,3 +23,5 @@ rscale = np.array([2, 2, 2]) / alpha
 roffset = np.array([0.0, 0.0, 0.0])
 vscale = np.array([0.1, 0.1, 0.1])
 voffset = np.array([0.0, 0.0, 0.0])
+
+a_grav = np.array([0.0, 0.0, -const.g * kmag_real / gamma_real**2])

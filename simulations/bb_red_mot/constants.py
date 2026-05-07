@@ -58,6 +58,8 @@ voffset = np.zeros(3)
 rscale  = np.full(3, _sigma_r_si * _r_scale)
 roffset = np.zeros(3)
 
+a_grav = np.array([0.0, 0.0, -const.g * kmag_real / gamma_real**2])
+
 # Simulation control
 # Stage duration: 70 ms -> 70e-3 * gamma_real ~ 3.3e3 nat
 tmax      = 4e3

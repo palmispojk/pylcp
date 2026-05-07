@@ -38,7 +38,7 @@ hamiltonian = pylcp.hamiltonian(
     mass=constants.mass, muB=constants.muB, gamma=constants.gamma, k=constants.kmag
 )
 
-obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
+obe = pylcp.obe(laserBeams, magField, hamiltonian, a=constants.a_grav, transform_into_re_im=True)
 
 # ---------------------------------------------------------------------------
 # Build batched initial conditions

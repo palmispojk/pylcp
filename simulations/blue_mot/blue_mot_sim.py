@@ -2,8 +2,8 @@
 Blue MOT simulation for Sr88 (1S0 -> 1P1, 461 nm) using GPU-batched OBE solver.
 
 Initial conditions model atoms arriving from a Zeeman slower beam:
-  - Longitudinal velocity (z): peaked near the slower capture velocity
-  - Transverse velocity (x, y): small, set by beam divergence
+  - Longitudinal velocity (x): peaked near the slower capture velocity
+  - Transverse velocity (y, z): small, set by beam divergence
   - Position: concentrated near the beam axis with a tuneable offset
 
 All experimental parameters (detuning, saturation, gradient, beam
@@ -46,7 +46,7 @@ hamiltonian = pylcp.hamiltonian(
     mass=constants.mass, muB=constants.muB, gamma=constants.gamma, k=constants.kmag
 )
 
-obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
+obe = pylcp.obe(laserBeams, magField, hamiltonian, a=constants.a_grav, transform_into_re_im=True)
 
 # ---------------------------------------------------------------------------
 # Build batched initial conditions — Zeeman slower beam
@@ -57,14 +57,16 @@ print(f"State dim: {state_dim}, using Natoms={Natoms}")
 
 rng = np.random.default_rng()
 
-# Sample positions: Gaussian around beam axis, offset along z
-r0_all = constants.rscale[None, :] * rng.standard_normal((Natoms, 3)) + constants.roffset[None, :]
+# Sample in beam frame (axis 0 = beam direction, 1,2 = transverse), then
+# rotate into the lab frame so the beam axis can point off the x-axis.
+r0_beam = constants.rscale_beam[None, :] * rng.standard_normal((Natoms, 3)) + constants.roffset_beam[None, :]
+v0_beam = constants.vscale_beam[None, :] * rng.standard_normal((Natoms, 3)) + constants.voffset_beam[None, :]
 
-# Sample velocities: narrow transverse, peaked longitudinal from slower
-v0_all = constants.vscale[None, :] * rng.standard_normal((Natoms, 3)) + constants.voffset[None, :]
+# Clip negative longitudinal velocities — atoms travel along +beam_dir.
+v0_beam[:, 0] = np.clip(v0_beam[:, 0], 0, None)
 
-# Clip negative longitudinal velocities — atoms from the slower travel in +z
-v0_all[:, 2] = np.clip(v0_all[:, 2], 0, None)
+r0_all = r0_beam @ constants.R_beam.T
+v0_all = v0_beam @ constants.R_beam.T
 
 # Compute equilibrium rho0 at each atom's starting position/velocity
 rho0_all = []
@@ -88,12 +90,13 @@ print(f"Setup time: {h}h{m:02d}m{s:02d}s")
 # ---------------------------------------------------------------------------
 print(f"\n--- Initial conditions (Zeeman slower beam) ---")
 print(f"  Atoms:           {Natoms}")
-print(f"  v_z (natural):   {v0_all[:, 2].mean():.1f} +/- {v0_all[:, 2].std():.1f}")
-print(f"  v_z (m/s):       {v0_all[:, 2].mean() / (constants.kmag_real / constants.gamma_real):.1f}"
-      f" +/- {v0_all[:, 2].std() / (constants.kmag_real / constants.gamma_real):.1f}")
-print(f"  v_xy (natural):  +/- {v0_all[:, :2].std():.1f}")
-print(f"  r_xy (natural):  +/- {r0_all[:, :2].std():.0f}")
-print(f"  r_z  (natural):  {r0_all[:, 2].mean():.0f} +/- {r0_all[:, 2].std():.0f}")
+print(f"  beam_dir:        ({constants.beam_dir[0]:.3f}, {constants.beam_dir[1]:.3f}, {constants.beam_dir[2]:.3f})")
+print(f"  v_long (nat):    {v0_beam[:, 0].mean():.1f} +/- {v0_beam[:, 0].std():.1f}")
+print(f"  v_long (m/s):    {v0_beam[:, 0].mean() / (constants.kmag_real / constants.gamma_real):.1f}"
+      f" +/- {v0_beam[:, 0].std() / (constants.kmag_real / constants.gamma_real):.1f}")
+print(f"  v_trans (nat):   +/- {v0_beam[:, 1:].std():.1f}")
+print(f"  r_trans (nat):   +/- {r0_beam[:, 1:].std():.0f}")
+print(f"  r_long (nat):    {r0_beam[:, 0].mean():.0f} +/- {r0_beam[:, 0].std():.0f}")
 print(f"  detuning:        {constants.det:.2f} gamma")
 print(f"  saturation:      {constants.s}")
 print(f"  B gradient:      {constants.alpha} T/m")

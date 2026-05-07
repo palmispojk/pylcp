@@ -28,8 +28,10 @@ alpha = 0.37              # T/m  (370 mT/m vertical)
 
 alpha_nat = alpha * muB_real / (gamma_real * kmag_real * const.hbar)
 
-# Zeeman slower beam initial conditions (atoms exit slower along +z, decelerated
-# from hundreds of m/s to ~10 m/s before reaching the MOT region; Tang p.39).
+# Zeeman slower beam initial conditions (Tang p.39).
+# Beam axis lies in the xy plane at 45 deg from +x toward +y; orthogonal to z.
+beam_axis_xy_angle = np.pi / 4
+
 _v_scale = kmag_real / gamma_real
 _r_scale = kmag_real
 
@@ -42,12 +44,23 @@ v_transverse_mean_si    = 0.0
 # Position: 2 mm sigma is a typical Zeeman slower output
 r_transverse_sigma_si   = 2.0e-3
 r_longitudinal_sigma_si = 3.0e-3
-z_offset_si             = -5.0e-3   # beam enters from -z
+longitudinal_offset_si  = -5.0e-3
 
-vscale  = np.array([v_transverse_sigma_si, v_transverse_sigma_si, v_longitudinal_sigma_si]) * _v_scale
-voffset = np.array([v_transverse_mean_si,  v_transverse_mean_si,  v_longitudinal_mean_si])  * _v_scale
-rscale  = np.array([r_transverse_sigma_si, r_transverse_sigma_si, r_longitudinal_sigma_si]) * _r_scale
-roffset = np.array([0.0, 0.0, z_offset_si * _r_scale])
+# Beam-frame scales/offsets (axis 0 = beam direction, 1,2 = transverse).
+vscale_beam  = np.array([v_longitudinal_sigma_si, v_transverse_sigma_si, v_transverse_sigma_si]) * _v_scale
+voffset_beam = np.array([v_longitudinal_mean_si,  v_transverse_mean_si,  v_transverse_mean_si])  * _v_scale
+rscale_beam  = np.array([r_longitudinal_sigma_si, r_transverse_sigma_si, r_transverse_sigma_si]) * _r_scale
+roffset_beam = np.array([longitudinal_offset_si * _r_scale, 0.0, 0.0])
+
+# Rotation about z that maps beam frame -> lab frame.
+# Beam-frame axis 0 -> (cos a, sin a, 0); axis 1 -> (-sin a, cos a, 0); axis 2 -> z.
+_c, _s = np.cos(beam_axis_xy_angle), np.sin(beam_axis_xy_angle)
+R_beam = np.array([[_c, -_s, 0.0],
+                   [_s,  _c, 0.0],
+                   [0.0, 0.0, 1.0]])
+beam_dir = R_beam @ np.array([1.0, 0.0, 0.0])
+
+a_grav = np.array([0.0, 0.0, -const.g * kmag_real / gamma_real**2])
 
 # Simulation control
 # 1/gamma_real ~ 5.2 ns -> 1e6 nat ~ 5 ms; Tang Fig 3.8 shows equilibrium within 15 ms
