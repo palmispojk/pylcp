@@ -150,6 +150,46 @@ def plot_distributions(dist_fits, title='MOT Atom Distributions',
     return fig, axes
 
 
+def plot_temperature_vs_time(T_data, title='MOT Temperature vs Time',
+                             filename='mot_temperature.png', yscale='log',
+                             target_T=None, target_label='Doppler limit'):
+    """Plot per-axis and mean temperature over time.
+
+    Args:
+        T_data: dict returned by ``analysis.temperature_vs_time``.
+        title: figure title.
+        filename: output file path. None to skip saving.
+        yscale: 'log' or 'linear'.
+        target_T: optional reference temperature in Kelvin (e.g. the Doppler
+            limit). Drawn as a dashed horizontal line.
+        target_label: legend label for the reference line.
+    """
+    fig, ax = plt.subplots(figsize=(8, 5))
+    t_ms = T_data['t_ms']
+
+    for axis, color in zip(['x', 'y', 'z'],
+                           ['tab:blue', 'tab:orange', 'tab:green']):
+        ax.plot(t_ms, T_data[f'T_{axis}'] * 1e6, linewidth=1.0,
+                color=color, alpha=0.55, label=f'$T_{axis}$')
+    ax.plot(t_ms, T_data['T_mean'] * 1e6, linewidth=2.0,
+            color='black', label=r'$\overline{T}$')
+
+    if target_T is not None:
+        ax.axhline(target_T * 1e6, linestyle='--', color='red', alpha=0.6,
+                   label=f'{target_label} ({target_T*1e6:.1f} μK)')
+
+    ax.set_xlabel('Time (ms)')
+    ax.set_ylabel('Temperature (μK)')
+    ax.set_yscale(yscale)
+    ax.set_title(title)
+    ax.grid(True, which='both', alpha=0.3)
+    ax.legend(loc='best')
+
+    if filename:
+        fig.savefig(filename, dpi=300, bbox_inches='tight')
+    return fig, ax
+
+
 def animate_3d(results, kmag_real, filename='mot_capture.gif',
                num_frames=100, fps=20, lim_mm=2.0, title_prefix='MOT Capture'):
     """Animated 3D GIF of atom positions over time.

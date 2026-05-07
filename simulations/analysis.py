@@ -179,6 +179,43 @@ def doppler_temperature(gamma_real):
     return const.hbar * gamma_real / (2 * const.k)
 
 
+def temperature_vs_time(results, units, mask=None):
+    """Compute per-axis temperature at each saved time step.
+
+    Uses the velocity variance across atoms at each time index as a proxy
+    for the instantaneous kinetic temperature. Atoms are optionally
+    filtered by `mask` (typically the final-state capture mask, so the
+    curve tracks the cohort that ends up trapped).
+
+    Returns:
+        dict with 't' (natural units), 't_ms' (ms), 'T_x', 'T_y', 'T_z',
+        'T_mean' (arrays of shape (n_steps,), in Kelvin).
+    """
+    subset = results
+    if mask is not None:
+        subset = [r for r, m in zip(results, mask) if m]
+
+    if len(subset) == 0:
+        return {k: np.array([]) for k in
+                ('t', 't_ms', 'T_x', 'T_y', 'T_z', 'T_mean')}
+
+    t = subset[0]['t']                               # (n_steps,)
+    v = np.stack([res['v'] for res in subset], 0)   # (N, 3, n_steps), natural
+    v = v * units['v_to_si']                         # -> m/s
+
+    var = np.var(v, axis=0)                          # (3, n_steps), (m/s)^2
+    T_axes = units['mass_real'] * var / const.k      # (3, n_steps), K
+
+    return {
+        't': t,
+        't_ms': t * units['t_to_si'] * 1e3,
+        'T_x':    T_axes[0],
+        'T_y':    T_axes[1],
+        'T_z':    T_axes[2],
+        'T_mean': np.mean(T_axes, axis=0),
+    }
+
+
 # ---------------------------------------------------------------------------
 #  Cloud size
 # ---------------------------------------------------------------------------
