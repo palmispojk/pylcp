@@ -915,9 +915,6 @@ class infinitePlaneWaveBeam(laserBeam):
         if callable(kvec):
             raise TypeError("kvec cannot be a function for an infinite plane wave.")
 
-        if callable(s):
-            raise TypeError("s cannot be a function for an infinite plane wave.")
-
         if callable(pol):
             raise TypeError("Polarization cannot be a function for an infinite plane wave.")
 

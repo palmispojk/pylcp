@@ -1,16 +1,18 @@
 """
 Broadband (BB) red MOT simulation for Sr88 (1S0 -> 3P1, 689 nm).
 
-Third cooling stage: atoms loaded from the low-power blue MOT are held
-against a 3 MHz frequency sweep at 50 kHz repetition (triangle waveform)
-that broadens the narrow-line capture range. The carrier detuning sits at
-delta_center; the instantaneous frequency is delta_center + delta_chirp(t)
-where delta_chirp is the triangle. The analytic phase integral of the
-chirp is passed as `phase(t)` to each MOT beam; the carrier stays in the
-Hamiltonian via `-det * I + H_e`, exactly as in the blue MOT.
+Third cooling stage: atoms loaded from an upstream blue-transition stage
+are held against a 3 MHz frequency sweep at 50 kHz repetition (triangle
+waveform) that broadens the narrow-line capture range. The carrier
+detuning sits at delta_center; the instantaneous frequency is
+delta_center + delta_chirp(t) where delta_chirp is the triangle. The
+analytic phase integral of the chirp is passed as `phase(t)` to each MOT
+beam; the carrier stays in the Hamiltonian via `-det * I + H_e`, exactly
+as in the blue MOT.
 
-Crosses the blue -> red transition boundary, so the loader rescales
-natural units using the low-power blue MOT constants.
+The upstream stage is selected with --upstream <pickle>; its sibling
+constants.py is used to rescale natural units across the blue -> red
+transition boundary. Default: low_power_blue_mot.
 """
 import os
 
@@ -21,6 +23,7 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 import sys
 import time
 import pickle
+import argparse
 
 import numpy as np
 import jax
@@ -30,15 +33,30 @@ import pylcp
 import constants
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-from init_atoms import initialize_from_pickle
-from analysis import classify_captured
+from init_atoms import initialize_from_pickle, load_src_constants
+
+# ---------------------------------------------------------------------------
+# CLI: choose which upstream stage feeds this one
+# ---------------------------------------------------------------------------
+_default_upstream = os.path.join(
+    os.path.dirname(__file__), '..', 'low_power_blue_mot',
+    'low_power_blue_mot_final_state.pkl',
+)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    '--upstream', default=_default_upstream,
+    help='Upstream final-state pickle (default: %(default)s). The sibling '
+         'constants.py in that directory is loaded for unit rescaling.',
+)
+args = parser.parse_args()
+upstream_pickle = os.path.abspath(args.upstream)
+upstream_dir = os.path.dirname(upstream_pickle)
+upstream_name = os.path.basename(upstream_dir)
 
 # Load the upstream stage's constants module by path (no __init__.py exists,
 # and 'constants' is already bound to this stage's module).
 import importlib.util
-_src_path = os.path.join(
-    os.path.dirname(__file__), '..', 'low_power_blue_mot', 'constants.py'
-)
+_src_path = os.path.join(upstream_dir, 'constants.py')
 _spec = importlib.util.spec_from_file_location('src_constants', _src_path)
 src_constants = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(src_constants)
@@ -88,13 +106,9 @@ hamiltonian = pylcp.hamiltonian(
 obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 
 # ---------------------------------------------------------------------------
-# Load atoms from the low-power blue MOT (blue -> red unit conversion)
+# Load atoms from the upstream stage (blue -> red unit conversion)
 # ---------------------------------------------------------------------------
 rng = np.random.default_rng()
-upstream_pickle = os.path.join(
-    os.path.dirname(__file__), '..', 'low_power_blue_mot',
-    'low_power_blue_mot_final_state.pkl',
-)
 y0_batch, keys_batch = initialize_from_pickle(
     upstream_pickle, obe, dst_constants=constants,
     src_constants=src_constants,        # crosses 461 nm -> 689 nm
@@ -107,7 +121,7 @@ m, s = divmod(int(trap_time_total), 60)
 h, m = divmod(m, 60)
 print(f"Setup time: {h}h{m:02d}m{s:02d}s")
 
-print(f"\n--- Initial conditions (loaded from low-power blue MOT) ---")
+print(f"\n--- Initial conditions (loaded from {upstream_name}) ---")
 print(f"  Atoms:            {Natoms}")
 print(f"  |v| (natural):    {float(jnp.linalg.norm(y0_batch[:, -6:-3], axis=1).mean()):.1f}")
 print(f"  |r| (natural):    {float(jnp.linalg.norm(y0_batch[:, -3:], axis=1).mean()):.1f}")
@@ -161,15 +175,13 @@ for sol in sols:
 with open('bb_red_mot_simulation_data.pkl', 'wb') as f:
     pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-mask = classify_captured(results)
-r_final = np.array([res['r'][:, -1] for res in results])[mask]
-v_final = np.array([res['v'][:, -1] for res in results])[mask]
+# Save all atoms (capture thresholds are applied downstream / at analysis time)
+r_final = np.array([res['r'][:, -1] for res in results])
+v_final = np.array([res['v'][:, -1] for res in results])
 final_state = {'r': r_final, 'v': v_final}
 
-np.savez('bb_red_mot_final_state.npz', **final_state)
 with open('bb_red_mot_final_state.pkl', 'wb') as f:
     pickle.dump(final_state, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 print("Data saved to bb_red_mot_simulation_data.pkl")
-print(f"Final state saved to bb_red_mot_final_state.{{npz,pkl}} "
-      f"({r_final.shape[0]}/{Natoms} captured atoms)")
+print(f"Final state saved to bb_red_mot_final_state.pkl ({Natoms} atoms)")

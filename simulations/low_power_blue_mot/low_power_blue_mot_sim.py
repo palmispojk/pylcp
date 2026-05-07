@@ -15,6 +15,7 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 import sys
 import time
 import pickle
+import argparse
 
 import numpy as np
 import jax
@@ -25,7 +26,21 @@ import constants
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from init_atoms import initialize_from_pickle
-from analysis import classify_captured
+
+# ---------------------------------------------------------------------------
+# CLI: choose which upstream stage feeds this one
+# ---------------------------------------------------------------------------
+_default_upstream = os.path.join(
+    os.path.dirname(__file__), '..', 'blue_mot', 'blue_mot_final_state.pkl'
+)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    '--upstream', default=_default_upstream,
+    help='Upstream final-state pickle (default: %(default)s).',
+)
+args = parser.parse_args()
+upstream_pickle = os.path.abspath(args.upstream)
+upstream_name = os.path.basename(os.path.dirname(upstream_pickle))
 
 # ---------------------------------------------------------------------------
 # Build the trap
@@ -51,12 +66,9 @@ hamiltonian = pylcp.hamiltonian(
 obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 
 # ---------------------------------------------------------------------------
-# Load atoms from the high-power blue MOT stage (same transition, no rescale)
+# Load atoms from the upstream stage (same transition, no rescale)
 # ---------------------------------------------------------------------------
 rng = np.random.default_rng()
-upstream_pickle = os.path.join(
-    os.path.dirname(__file__), '..', 'blue_mot', 'blue_mot_final_state.pkl'
-)
 y0_batch, keys_batch = initialize_from_pickle(
     upstream_pickle, obe, dst_constants=constants,
     src_constants=None,                 # same transition -> no unit rescale
@@ -69,7 +81,7 @@ m, s = divmod(int(trap_time_total), 60)
 h, m = divmod(m, 60)
 print(f"Setup time: {h}h{m:02d}m{s:02d}s")
 
-print(f"\n--- Initial conditions (loaded from blue MOT) ---")
+print(f"\n--- Initial conditions (loaded from {upstream_name}) ---")
 print(f"  Atoms:           {Natoms}")
 print(f"  |v| (natural):   {float(jnp.linalg.norm(y0_batch[:, -6:-3], axis=1).mean()):.2f}")
 print(f"  |r| (natural):   {float(jnp.linalg.norm(y0_batch[:, -3:], axis=1).mean()):.1f}")
@@ -121,15 +133,13 @@ for sol in sols:
 with open('low_power_blue_mot_simulation_data.pkl', 'wb') as f:
     pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-mask = classify_captured(results)
-r_final = np.array([res['r'][:, -1] for res in results])[mask]
-v_final = np.array([res['v'][:, -1] for res in results])[mask]
+# Save all atoms (capture thresholds are applied downstream / at analysis time)
+r_final = np.array([res['r'][:, -1] for res in results])
+v_final = np.array([res['v'][:, -1] for res in results])
 final_state = {'r': r_final, 'v': v_final}
 
-np.savez('low_power_blue_mot_final_state.npz', **final_state)
 with open('low_power_blue_mot_final_state.pkl', 'wb') as f:
     pickle.dump(final_state, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 print("Data saved to low_power_blue_mot_simulation_data.pkl")
-print(f"Final state saved to low_power_blue_mot_final_state.{{npz,pkl}} "
-      f"({r_final.shape[0]}/{Natoms} captured atoms)")
+print(f"Final state saved to low_power_blue_mot_final_state.pkl ({Natoms} atoms)")

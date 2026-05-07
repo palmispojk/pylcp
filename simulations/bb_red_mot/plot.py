@@ -31,7 +31,10 @@ plot_trajectories(
 )
 
 units = make_units(constants.kmag_real, constants.gamma_real, constants.mass_real)
-mask = classify_captured(results)
+# Narrow-line BB red MOT: cloud is naturally a few mm wide with v_rms ~ few cm/s,
+# so the natural-unit default thresholds (tuned for the blue MOT) reject almost
+# everything. Use physical-unit thresholds instead.
+mask = classify_captured(results, units=units, r_mm=5.0, v_cms=10.0)
 dist_fits = fit_distributions(results, units, mask=mask)
 plot_distributions(
     dist_fits,

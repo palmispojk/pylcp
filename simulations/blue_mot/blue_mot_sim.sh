@@ -16,9 +16,5 @@ cd "${SLURM_SUBMIT_DIR}"
 
 REPO_ROOT="$(git -C "${SLURM_SUBMIT_DIR}" rev-parse --show-toplevel)"
 
-cd "${REPO_ROOT}"
-uv sync --extra cuda
-
-cd "${SLURM_SUBMIT_DIR}"
 export PYTHONUNBUFFERED=1
-uv run --extra cuda python -u blue_mot_sim.py
+"${REPO_ROOT}/.venv/bin/python" -u blue_mot_sim.py

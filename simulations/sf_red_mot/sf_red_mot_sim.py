@@ -19,6 +19,7 @@ os.environ.setdefault('TF_CPP_MIN_LOG_LEVEL', '2')
 import sys
 import time
 import pickle
+import argparse
 
 import numpy as np
 import jax
@@ -29,7 +30,21 @@ import constants
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from init_atoms import initialize_from_pickle
-from analysis import classify_captured
+
+# ---------------------------------------------------------------------------
+# CLI: choose which upstream stage feeds this one
+# ---------------------------------------------------------------------------
+_default_upstream = os.path.join(
+    os.path.dirname(__file__), '..', 'bb_red_mot', 'bb_red_mot_final_state.pkl'
+)
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument(
+    '--upstream', default=_default_upstream,
+    help='Upstream final-state pickle (default: %(default)s).',
+)
+args = parser.parse_args()
+upstream_pickle = os.path.abspath(args.upstream)
+upstream_name = os.path.basename(os.path.dirname(upstream_pickle))
 
 # ---------------------------------------------------------------------------
 # Build the trap
@@ -37,8 +52,11 @@ from analysis import classify_captured
 print("Building SF red MOT setup...")
 trap_time = time.monotonic()
 
+def s_ramp(R, t):
+    return constants.s_start + (constants.s_end - constants.s_start) * (t / constants.tmax)
+
 laserBeams = pylcp.conventional3DMOTBeams(
-    k=constants.kmag, s=constants.s, delta=0.,
+    k=constants.kmag, s=s_ramp, delta=0.,
     beam_type=pylcp.infinitePlaneWaveBeam,
 )
 magField = pylcp.quadrupoleMagneticField(constants.alpha_nat)
@@ -56,16 +74,16 @@ hamiltonian = pylcp.hamiltonian(
 obe = pylcp.obe(laserBeams, magField, hamiltonian, transform_into_re_im=True)
 
 # ---------------------------------------------------------------------------
-# Load atoms from the BB red MOT (same transition, no rescale)
+# Load atoms from the upstream stage (same transition, no rescale)
 # ---------------------------------------------------------------------------
 rng = np.random.default_rng()
-upstream_pickle = os.path.join(
-    os.path.dirname(__file__), '..', 'bb_red_mot', 'bb_red_mot_final_state.pkl'
-)
+# Take only the BB-trapped cohort from the upstream pickle
+# (BB MOT capture criterion: r < 5 mm, v < 10 cm/s).
 y0_batch, keys_batch = initialize_from_pickle(
     upstream_pickle, obe, dst_constants=constants,
     src_constants=None,                 # same transition
     n_atoms=constants.MAX_ATOMS, rng=rng,
+    capture_r_mm=5.0, capture_v_cms=10.0,
 )
 Natoms = y0_batch.shape[0]
 
@@ -74,12 +92,12 @@ m, s = divmod(int(trap_time_total), 60)
 h, m = divmod(m, 60)
 print(f"Setup time: {h}h{m:02d}m{s:02d}s")
 
-print(f"\n--- Initial conditions (loaded from BB red MOT) ---")
+print(f"\n--- Initial conditions (loaded from {upstream_name}) ---")
 print(f"  Atoms:           {Natoms}")
 print(f"  |v| (natural):   {float(jnp.linalg.norm(y0_batch[:, -6:-3], axis=1).mean()):.2f}")
 print(f"  |r| (natural):   {float(jnp.linalg.norm(y0_batch[:, -3:], axis=1).mean()):.1f}")
 print(f"  detuning:        {constants.det:.2f} gamma")
-print(f"  saturation:      {constants.s}")
+print(f"  saturation:      {constants.s_start} -> {constants.s_end} (linear over tmax)")
 print(f"  B gradient:      {constants.alpha} T/m")
 print()
 
@@ -126,15 +144,13 @@ for sol in sols:
 with open('sf_red_mot_simulation_data.pkl', 'wb') as f:
     pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
-mask = classify_captured(results)
-r_final = np.array([res['r'][:, -1] for res in results])[mask]
-v_final = np.array([res['v'][:, -1] for res in results])[mask]
+# Save all atoms (capture thresholds are applied downstream / at analysis time)
+r_final = np.array([res['r'][:, -1] for res in results])
+v_final = np.array([res['v'][:, -1] for res in results])
 final_state = {'r': r_final, 'v': v_final}
 
-np.savez('sf_red_mot_final_state.npz', **final_state)
 with open('sf_red_mot_final_state.pkl', 'wb') as f:
     pickle.dump(final_state, f, protocol=pickle.HIGHEST_PROTOCOL)
 
 print("Data saved to sf_red_mot_simulation_data.pkl")
-print(f"Final state saved to sf_red_mot_final_state.{{npz,pkl}} "
-      f"({r_final.shape[0]}/{Natoms} captured atoms)")
+print(f"Final state saved to sf_red_mot_final_state.pkl ({Natoms} atoms)")

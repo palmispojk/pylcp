@@ -7,6 +7,8 @@ feeds each atom through the governing-equation's built-in initializers
 (`set_initial_position_and_velocity` + `set_initial_rho_from_rateeq`), and
 returns `(y0_batch, keys_batch)` ready for `evolve_motion`.
 """
+import importlib.util
+import os
 import pickle
 from pathlib import Path
 
@@ -15,8 +17,35 @@ import jax.numpy as jnp
 import numpy as np
 
 
+def load_src_constants(pickle_path):
+    """Load the source stage's `constants.py` for an upstream pickle.
+
+    Walks upward from the pickle's directory until a `constants.py` is found.
+    Use the returned module as the `src_constants` argument to
+    `initialize_from_pickle`.
+
+    Lets the upstream pickle live in a variant subfolder (e.g.
+    `infinite_plane_wave/`) while `constants.py` stays in the stage's root.
+    """
+    d = os.path.dirname(os.path.abspath(pickle_path))
+    while True:
+        candidate = os.path.join(d, 'constants.py')
+        if os.path.isfile(candidate):
+            spec = importlib.util.spec_from_file_location('src_constants', candidate)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            return mod
+        parent = os.path.dirname(d)
+        if parent == d:
+            raise FileNotFoundError(
+                f"No constants.py found at or above {pickle_path}"
+            )
+        d = parent
+
+
 def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
-                           n_atoms=None, rng=None, seed=None):
+                           n_atoms=None, rng=None, seed=None,
+                           capture_r_mm=None, capture_v_cms=None):
     """Load atoms from an upstream stage and build (y0_batch, keys_batch).
 
     Parameters
@@ -40,6 +69,11 @@ def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
         Used for resampling and seeding `keys_batch` if `seed` is None.
     seed : int, optional
         Explicit PRNG seed for `keys_batch`. Overrides `rng` for the keys.
+    capture_r_mm, capture_v_cms : float, optional
+        Apply an upstream capture filter before resampling: keep only atoms
+        with |r| < capture_r_mm and |v| < capture_v_cms (physical units),
+        evaluated in the upstream stage's frame. Use to feed only the
+        upstream-trapped cohort into this stage. Either or both may be None.
 
     Returns
     -------
@@ -58,6 +92,27 @@ def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
         raise ValueError(
             f"Expected r, v with shape (N, 3); got {r.shape}, {v.shape}"
         )
+
+    # Apply upstream capture filter in upstream's SI units (atoms are still
+    # in upstream natural units at this point).
+    if capture_r_mm is not None or capture_v_cms is not None:
+        src = src_constants if src_constants is not None else dst_constants
+        r_si = r / src.kmag_real
+        v_si = v * src.gamma_real / src.kmag_real
+        mask = np.ones(r.shape[0], dtype=bool)
+        if capture_r_mm is not None:
+            mask &= np.linalg.norm(r_si, axis=1) < capture_r_mm * 1e-3
+        if capture_v_cms is not None:
+            mask &= np.linalg.norm(v_si, axis=1) < capture_v_cms * 1e-2
+        n_kept = int(mask.sum())
+        if n_kept == 0:
+            raise ValueError(
+                f"Capture filter (r<{capture_r_mm} mm, v<{capture_v_cms} cm/s) "
+                f"rejected all {r.shape[0]} upstream atoms."
+            )
+        print(f"  Capture filter: {n_kept}/{r.shape[0]} atoms kept "
+              f"(r<{capture_r_mm} mm, v<{capture_v_cms} cm/s)")
+        r, v = r[mask], v[mask]
 
     # Cross-transition unit conversion: natural units scale with (k, gamma).
     # r_nat = r_SI * k_real ;  v_nat = v_SI * k_real / gamma_real.

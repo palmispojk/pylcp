@@ -81,7 +81,8 @@ def _mpl():
     return plt
 
 
-def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
+def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir,
+               knee=None):
     """One sweep plot per (transition, t_factor)."""
     plt = _mpl()
     fig, ax = plt.subplots(figsize=(7.5, 5))
@@ -106,6 +107,10 @@ def plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir):
                    if gpu_runs[n].get('gpu') is not None]
         if gpu_pts:
             ax.plot(*zip(*gpu_pts), 's-', label='GPU batched')
+
+    if knee:
+        ax.axvline(knee, color='gray', ls=':', lw=1,
+                   label=f'GPU saturation knee (N={knee})')
 
     ax.set_xlabel('Number of atoms (N)')
     ax.set_ylabel('Time per atom (s)')
@@ -191,6 +196,115 @@ def _amdahl_at_best_n(cpu_runs, fit_cores, t_factor):
     return (p, speedups)
 
 
+def fit_state_dim_power_law(gpu_data):
+    """Fit t/atom ~ state_dim^k per (N, t_factor) across transitions.
+
+    Exponent ~2 → memory-streaming dominated (rho-vector loads/stores, O(D^2)).
+    Exponent ~3 → dense matmul / Liouvillian apply dominated (O(D^3)).
+    Mixed values land between.
+
+    Returns list of dicts: {t_factor, n, points[(state_dim, t)], k, log_a}.
+    """
+    if not gpu_data:
+        return []
+    transitions = gpu_data['transitions']
+    by_key = {}  # (t_factor, n) -> [(state_dim, t_per_atom), ...]
+    for name, tdata in transitions.items():
+        sd = tdata['state_dim']
+        for t_factor, runs in tdata['runs'].items():
+            for n, r in runs.items():
+                t = r.get('gpu')
+                if t is None:
+                    continue
+                by_key.setdefault((t_factor, n), []).append((sd, t))
+    fits = []
+    for (t_factor, n), pts in sorted(by_key.items()):
+        if len(pts) < 2:
+            continue
+        sds = np.array([p[0] for p in pts], dtype=float)
+        ts = np.array([p[1] for p in pts], dtype=float)
+        # log-log linear fit: log t = k * log D + log a
+        x = np.log(sds); y = np.log(ts)
+        k, log_a = np.polyfit(x, y, 1)
+        fits.append({'t_factor': t_factor, 'n': n,
+                     'points': pts, 'k': float(k), 'log_a': float(log_a)})
+    return fits
+
+
+def plot_power_law_fits(fits, out_dir):
+    """One log-log plot of t/atom vs state_dim with fitted lines."""
+    if not fits:
+        return
+    plt = _mpl()
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    cmap = plt.cm.viridis(np.linspace(0.15, 0.85, len(fits)))
+    for color, fit in zip(cmap, fits):
+        sds = np.array([p[0] for p in fit['points']], dtype=float)
+        ts = np.array([p[1] for p in fit['points']], dtype=float)
+        order = np.argsort(sds)
+        sds, ts = sds[order], ts[order]
+        ax.plot(sds, ts, 'o', color=color, markersize=5)
+        sd_grid = np.linspace(sds.min(), sds.max(), 50)
+        t_fit = np.exp(fit['log_a']) * sd_grid ** fit['k']
+        ax.plot(sd_grid, t_fit, '-', color=color, lw=1.5,
+                label=f"N={fit['n']}, t=2π×{fit['t_factor']}: k={fit['k']:.2f}")
+    ax.set_xlabel('state_dim D')
+    ax.set_ylabel('GPU time per atom (s)')
+    ax.set_title('Power-law fit  t/atom ∝ D^k\n(k≈2 memory-bound, k≈3 compute-bound)')
+    ax.set_xscale('log'); ax.set_yscale('log')
+    ax.legend(fontsize=8, loc='center left', bbox_to_anchor=(1.02, 0.5),
+              frameon=False)
+    ax.grid(True, which='both', ls='--', alpha=0.4)
+    plt.tight_layout()
+    out = os.path.join(out_dir, 'power_law_state_dim.png')
+    plt.savefig(out, dpi=150, bbox_inches='tight'); plt.close()
+    print(f"  Saved {out}")
+
+
+def plot_arithmetic_intensity(gpu_data, out_dir):
+    """AI per (transition, N, t_factor) vs N, with knee marker per transition."""
+    if not gpu_data:
+        return
+    has_any = any(
+        r.get('cost', {}).get('ai') is not None
+        for tdata in gpu_data['transitions'].values()
+        for runs in tdata['runs'].values()
+        for r in runs.values()
+    )
+    if not has_any:
+        return
+    plt = _mpl()
+    fig, ax = plt.subplots(figsize=(8, 5.5))
+    linestyles = {100: ':', 500: '--', 2000: '-'}
+    names = list(gpu_data['transitions'].keys())
+    cmap = plt.cm.viridis(np.linspace(0.15, 0.85, len(names)))
+    for name, color in zip(names, cmap):
+        tdata = gpu_data['transitions'][name]
+        sd = tdata['state_dim']
+        knee = tdata.get('optimal_batch_size')
+        for t_factor, ls in sorted(linestyles.items()):
+            runs = tdata['runs'].get(t_factor, {})
+            pts = [(n, runs[n]['cost']['ai']) for n in sorted(runs)
+                   if runs[n].get('cost', {}).get('ai') is not None]
+            if pts:
+                ax.plot(*zip(*pts), ls, marker='o', color=color, markersize=4,
+                        label=f'{name} (D={sd}) t=2π×{t_factor}')
+        if knee:
+            ax.axvline(knee, color=color, alpha=0.25, lw=1)
+    ax.set_xlabel('Number of atoms (N)')
+    ax.set_ylabel('Arithmetic intensity (FLOPs / byte)')
+    ax.set_title('Kernel arithmetic intensity vs batch size\n'
+                 '(vertical lines = saturation knee per transition)')
+    ax.set_xscale('log')
+    ax.grid(True, which='both', ls='--', alpha=0.4)
+    ax.legend(fontsize=8, loc='center left', bbox_to_anchor=(1.02, 0.5),
+              frameon=False)
+    plt.tight_layout()
+    out = os.path.join(out_dir, 'arithmetic_intensity.png')
+    plt.savefig(out, dpi=150, bbox_inches='tight'); plt.close()
+    print(f"  Saved {out}")
+
+
 def plot_state_dim_comparison(gpu_data, out_dir):
     """All GPU curves on one plot: color=transition, linestyle=t_factor."""
     if not gpu_data:
@@ -256,7 +370,7 @@ def _gpu_best_at(gpu_runs):
     return best
 
 
-def write_summary(cpu, gpu, all_fits, out_path):
+def write_summary(cpu, gpu, all_fits, power_fits, out_path):
     """Write a human-readable summary.txt with speedup tables and stats."""
     lines = []
     w = lines.append
@@ -405,6 +519,58 @@ def write_summary(cpu, gpu, all_fits, out_path):
                 w("")
             w("")
 
+    # ---- GPU compute-vs-memory diagnostic --------------------------------
+    if gpu:
+        w("=" * 72)
+        w("GPU bottleneck diagnostic")
+        w("  k = exponent in t/atom ∝ D^k  (k≈2 mem-bound, k≈3 compute-bound)")
+        w("  AI = arithmetic intensity from XLA cost_analysis (FLOPs / byte)")
+        w("  knee = saturation N from optimal_batch_size probe")
+        w("=" * 72)
+
+        if power_fits:
+            w("  Power-law fit  log(t/atom) = k·log(D) + log(a):")
+            w(f"    {'t_factor':>10}  {'N':>8}  {'k':>6}  "
+              f"{'a (μs/D^k)':>14}  {'classifier':>18}")
+            for fit in sorted(power_fits, key=lambda f: (f['n'], f['t_factor'])):
+                k = fit['k']
+                if k < 2.3:
+                    cls = 'memory-streaming'
+                elif k > 2.7:
+                    cls = 'compute-bound'
+                else:
+                    cls = 'mixed'
+                a_us = float(np.exp(fit['log_a'])) * 1e6
+                w(f"    2π×{fit['t_factor']:<7}{fit['n']:>8}  {k:>6.2f}  "
+                  f"{a_us:>14.4g}  {cls:>18}")
+            w("")
+
+        # Per-(transition, N, t_factor) AI table.
+        w("  Arithmetic intensity per run (FLOPs/byte, kernel-invariant):")
+        w(f"    {'Transition':<14}{'D':>4}  {'knee':>6}  {'t_factor':>10}"
+          f"  {'N':>8}  {'AI':>10}  {'sat':>6}")
+        for name in sorted(gpu['transitions']):
+            tdata = gpu['transitions'][name]
+            sd = tdata.get('state_dim', '?')
+            knee = tdata.get('optimal_batch_size') or 0
+            for tf in sorted(tdata['runs']):
+                runs = tdata['runs'][tf]
+                for n in sorted(runs):
+                    cost = runs[n].get('cost') or {}
+                    ai = cost.get('ai')
+                    if ai is None:
+                        continue
+                    sat = 'yes' if knee and n >= knee // 2 else 'no'
+                    w(f"    {name:<14}{sd:>4}  {knee:>6}  2π×{tf:<7}"
+                      f"  {n:>8}  {ai:>10.2f}  {sat:>6}")
+        w("")
+        w("  How to read this:")
+        w("    • k≈2 + AI low (<5)  → bandwidth-limited streaming kernel")
+        w("    • k≈3 + AI high (>10) → compute-limited dense matmul")
+        w("    • N << knee           → launch/latency limited (GPU not saturated)")
+        w("    • N ≥ knee            → hardware-limited; AI/k tell which roof")
+        w("")
+
     with open(out_path, 'w') as f:
         f.write("\n".join(lines) + "\n")
     print(f"  Saved {out_path}")
@@ -465,7 +631,8 @@ def main():
             cpu_runs = cpu_t['runs'].get(t_factor) if cpu_t else None
             gpu_runs = gpu_t['runs'].get(t_factor) if gpu_t else None
             numerical_check(cpu_runs, gpu_runs)
-            plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir)
+            plot_sweep(cpu_runs, gpu_runs, name, state_dim, t_factor, out_dir,
+                       knee=optimal)
             if cpu_runs:
                 fit = _amdahl_at_best_n(cpu_runs, fit_cores, t_factor)
                 if fit is not None:
@@ -474,7 +641,13 @@ def main():
 
     plot_amdahl_combined(all_fits, out_dir)
     plot_state_dim_comparison(gpu, out_dir)
-    write_summary(cpu, gpu, all_fits, os.path.join(out_dir, 'summary.txt'))
+
+    power_fits = fit_state_dim_power_law(gpu)
+    plot_power_law_fits(power_fits, out_dir)
+    plot_arithmetic_intensity(gpu, out_dir)
+
+    write_summary(cpu, gpu, all_fits, power_fits,
+                  os.path.join(out_dir, 'summary.txt'))
 
     print(f"\nDone. Output in {out_dir}")
 

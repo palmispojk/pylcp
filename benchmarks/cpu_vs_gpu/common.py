@@ -47,6 +47,13 @@ N_SERIAL = 2
 AMDAHL_ATOMS_PER_WORKER = [2, 4]
 AMDAHL_CORE_COUNTS = [1, 2, 4, 8, 16, 32, 64, 128]
 
+# Roofline constants for the GPU on the target queue (NVIDIA A100 SXM4 40GB,
+# qist-gpu partition). FP64 because the integrator carry is float64.
+# Override via env vars PYLCP_GPU_PEAK_FP64_TFLOPS / PYLCP_GPU_PEAK_BW_GBS
+# in analyze.py if running on a different device.
+GPU_PEAK_FP64_TFLOPS = 9.7        # A100 FP64 peak
+GPU_PEAK_BW_GBS = 1555.0          # A100 HBM2e peak bandwidth
+
 
 def setup_obe(Fg=0, Fe=1, gFg=0, gFe=1):
     """Build the OBE object for a given (Fg -> Fe) transition."""

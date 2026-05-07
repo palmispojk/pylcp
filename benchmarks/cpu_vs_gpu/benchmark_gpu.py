@@ -20,7 +20,59 @@ from common import (
     N_POINTS, SEED, SWEEP_GPU_ATOMS, SWEEP_T_FACTORS, TRANSITIONS,
     setup_obe, make_y0_list,
 )
-from pylcp.integration_tools_gpu import optimal_batch_size
+from pylcp.integration_tools_gpu import (
+    optimal_batch_size, _make_run_group, _probe_bytes_per_atom,
+)
+
+
+def capture_cost(obe, y0_batch, keys_batch, t_span, n_points):
+    """XLA cost analysis for one save-group kernel call.
+
+    Lowers the inner JIT kernel (`_run_group`) with the same shapes used in
+    the timing run and reports flops + bytes accessed per kernel invocation.
+    The kernel is called n_points times per evolve_motion, so program-level
+    totals = n_points * these. Arithmetic intensity (flops/bytes) is
+    invariant and is the roofline classifier we care about.
+
+    XLA's static cost analysis does not multiply by while-loop trip counts,
+    so the reported numbers represent the cost of a single solver group
+    body — exactly what we want for arithmetic-intensity comparisons.
+    """
+    free_axes = jnp.bitwise_not(jnp.asarray([True, True, False], dtype=bool))
+    args = {
+        "free_axes": free_axes,
+        "max_scatter_probability": jnp.asarray(0.1, dtype=jnp.float64),
+    }
+    run_group = _make_run_group(obe._motion_dydt, obe._no_recoil, "Dopri5")
+
+    N = y0_batch.shape[0]
+    t0, tf = float(t_span[0]), float(t_span[1])
+    t_save_grid = np.linspace(t0, tf, n_points + 1)
+    dt0 = (tf - t0) * 1e-3
+
+    carry = {
+        "t": jnp.full(N, t0, dtype=jnp.float64),
+        "y": y0_batch,
+        "dt": jnp.full(N, dt0, dtype=jnp.float64),
+        "key": keys_batch,
+        "step_idx": jnp.ones(N, dtype=jnp.int32),
+        "nfev": jnp.zeros(N, dtype=jnp.int32),
+        "last_t_random": jnp.zeros(N, dtype=jnp.float64),
+        "last_n_random": jnp.zeros(N, dtype=jnp.int32),
+        "t_save_next": jnp.full(N, t_save_grid[1], dtype=jnp.float64),
+    }
+
+    lowered = run_group.lower(carry, float("inf"), 1e-5, 1e-6, args).compile()
+    raw = lowered.cost_analysis()
+    # JAX returns either a dict or a list-of-dicts depending on version.
+    if isinstance(raw, list):
+        raw = raw[0] if raw else {}
+    flops = float(raw.get("flops", 0.0)) if raw else 0.0
+    # XLA reports this under either key depending on version.
+    bytes_acc = float(raw.get("bytes accessed", raw.get("bytes_accessed", 0.0))) \
+        if raw else 0.0
+    ai = (flops / bytes_acc) if bytes_acc > 0 else None
+    return {"flops": flops, "bytes": bytes_acc, "ai": ai}
 
 
 def warmup(obe):
@@ -45,13 +97,21 @@ def run_gpu_sweep(obe, atom_counts, t_factor):
             obe.evolve_motion(t_span, n_points=N_POINTS,
                               y0_batch=y0_batch[:min(n, 2)],
                               keys_batch=keys[:min(n, 2)], **kw)
+            try:
+                cost = capture_cost(obe, y0_batch, keys, t_span, N_POINTS)
+            except Exception as cexc:
+                cost = {'flops': None, 'bytes': None, 'ai': None,
+                        'error': f"{type(cexc).__name__}: {cexc}"}
             t0 = time.perf_counter()
             obe.evolve_motion(t_span, n_points=N_POINTS,
                               y0_batch=y0_batch, keys_batch=keys, **kw)
             t_per_atom = (time.perf_counter() - t0) / n
             z_gpu = np.array([sol.r[2, -1] for sol in obe.sols])
-            out[n] = {'gpu': t_per_atom, 'z_gpu': z_gpu}
-            print(f"    N={n:>6}: {t_per_atom:.4f} s/atom", flush=True)
+            out[n] = {'gpu': t_per_atom, 'z_gpu': z_gpu, 'cost': cost}
+            ai_str = (f"{cost['ai']:.1f} F/B" if cost.get('ai') is not None
+                      else "AI=?")
+            print(f"    N={n:>6}: {t_per_atom:.4f} s/atom  ({ai_str})",
+                  flush=True)
         except Exception as exc:
             print(f"    N={n:>6}: FAILED ({type(exc).__name__}: {exc})",
                   flush=True)
@@ -70,7 +130,9 @@ def run_one_transition(name, Fg, Fe, gFg, gFe):
     warmup(obe)
 
     n_batched = optimal_batch_size(state_dim, safety=0.6)
-    print(f"  state_dim={state_dim}, optimal GPU batch size: {n_batched}")
+    bytes_per_atom = _probe_bytes_per_atom(state_dim)
+    print(f"  state_dim={state_dim}, optimal GPU batch size: {n_batched}, "
+          f"bytes/atom={bytes_per_atom}")
 
     atom_counts = sorted(set(SWEEP_GPU_ATOMS))
     if n_batched:
@@ -90,6 +152,7 @@ def run_one_transition(name, Fg, Fe, gFg, gFe):
         'transition': {'Fg': Fg, 'Fe': Fe, 'gFg': gFg, 'gFe': gFe},
         'state_dim': state_dim,
         'optimal_batch_size': n_batched,
+        'bytes_per_atom': bytes_per_atom,
         'atom_counts': atom_counts,
         'runs': runs,
     }
