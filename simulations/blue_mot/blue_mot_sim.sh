@@ -20,4 +20,5 @@ cd "${REPO_ROOT}"
 uv sync --extra cuda
 
 cd "${SLURM_SUBMIT_DIR}"
-uv run --extra cuda python blue_mot_sim.py
+export PYTHONUNBUFFERED=1
+uv run --extra cuda python -u blue_mot_sim.py

@@ -15,7 +15,7 @@ import scipy.constants as const
 # ============================================================================
 wavelength = 460.862e-9                         # m
 frq_real   = const.c / wavelength * 2 * np.pi   # angular frequency (rad/s)
-gamma_real = 2 * np.pi * 30.5e6                 # natural linewidth (rad/s)
+gamma_real = 2 * np.pi * 30.24e6                # natural linewidth (rad/s)
 kmag_real  = 2 * np.pi / wavelength             # wavevector (1/m)
 muB_real   = const.physical_constants["Bohr magneton"][0]  # J/T
 mass_real  = const.value('atomic mass constant') * 88      # kg
@@ -32,8 +32,8 @@ mass  = mass_real * gamma_real / const.hbar / kmag_real**2
 #  MOT PARAMETERS
 # ============================================================================
 # Detuning: 40 MHz chosen for larger capture range (Tang p.43)
-# UvA setup uses ~45 MHz — change to -1.48 * gamma to match
-det   = -1.31 * gamma    # 40 MHz / 30.5 MHz
+# UvA setup uses ~45 MHz — change to -1.488 * gamma to match
+det   = -1.3228 * gamma   # 40 MHz / 30.24 MHz
 
 # Saturation: 7 mW horizontal beams, 10 mm waist -> I/Isat = 0.173 (Tang p.43)
 # UvA setup: ~10-15 mW, ~20 mm beams -> s ~ 0.09
