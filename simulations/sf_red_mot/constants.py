@@ -28,8 +28,8 @@ mass  = mass_real * gamma_real / const.hbar / kmag_real**2
 # -500 kHz produces the compact, mildly sagged cloud chosen here.
 det_real_Hz = -500e3
 det     = 2 * np.pi * det_real_Hz / gamma_real   # ~ -67 gamma
-# Linear 10x ramp from BB-stage end value down over the 50 ms stage; the ramp
-# is driven by a callable s(R, t) in sf_red_mot_sim.py.
+# Linear 10x ramp from BB-stage end value over t_ramp, then held at s_end for
+# the remainder of tmax. Driven by a callable s(R, t) in sf_red_mot_sim.py.
 s_start = 1270.0
 s_end   = 127.0
 # Gradient unchanged from BB stage (Kristensen Sec. 4.4.2, Fig. 4.12)
@@ -53,6 +53,7 @@ roffset = np.zeros(3)
 a_grav = np.array([0.0, 0.0, -const.g * kmag_real / gamma_real**2])
 
 # Simulation control
-# Stage duration: 50 ms -> 50e-3 * gamma_real ~ 2.35e3 nat
-tmax      = 3e3
+# 50 ms 10x ramp + 100 ms hold at s_end -> total 150 ms stage.
+t_ramp    = 3e3
+tmax      = 9e3
 MAX_ATOMS = 65536

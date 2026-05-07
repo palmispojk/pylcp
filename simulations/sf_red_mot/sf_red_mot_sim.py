@@ -2,11 +2,9 @@
 Single-frequency (SF) red MOT simulation for Sr88 (1S0 -> 3P1, 689 nm).
 
 Final cooling stage: atoms loaded from the BB red MOT are held in a
-single-frequency trap at detuning delta_center (~-500 kHz). The real
-experiment linearly ramps the power 10x down over the 50 ms stage; this
-constant-parameter run uses a representative saturation value (geometric
-mean of the ramp). Swap in a time-dependent `s` callable if you want the
-ramp explicitly.
+single-frequency trap at detuning delta_center (~-500 kHz). Power is
+linearly ramped 10x down over the first t_ramp (~50 ms), then held at
+s_end for the remainder of tmax (an extra ~100 ms hold).
 
 Same transition as BB stage -> no unit conversion on the pickle load.
 """
@@ -53,7 +51,8 @@ print("Building SF red MOT setup...")
 trap_time = time.monotonic()
 
 def s_ramp(R, t):
-    return constants.s_start + (constants.s_end - constants.s_start) * (t / constants.tmax)
+    frac = jnp.minimum(t / constants.t_ramp, 1.0)
+    return constants.s_start + (constants.s_end - constants.s_start) * frac
 
 laserBeams = pylcp.conventional3DMOTBeams(
     k=constants.kmag, s=s_ramp, delta=0.,
@@ -98,7 +97,7 @@ print(f"  Atoms:           {Natoms}")
 print(f"  |v| (natural):   {float(jnp.linalg.norm(y0_batch[:, -6:-3], axis=1).mean()):.2f}")
 print(f"  |r| (natural):   {float(jnp.linalg.norm(y0_batch[:, -3:], axis=1).mean()):.1f}")
 print(f"  detuning:        {constants.det:.2f} gamma")
-print(f"  saturation:      {constants.s_start} -> {constants.s_end} (linear over tmax)")
+print(f"  saturation:      {constants.s_start} -> {constants.s_end} (linear over t_ramp={constants.t_ramp:g}, then held to tmax={constants.tmax:g})")
 print(f"  B gradient:      {constants.alpha} T/m")
 print()
 

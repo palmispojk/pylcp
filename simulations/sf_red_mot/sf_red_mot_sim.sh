@@ -13,7 +13,7 @@
 set -euo pipefail
 
 # Upstream stage that feeds this MOT. Point at any <stage>_final_state.pkl.
-UPSTREAM="../bb_red_mot/no_weak_blue_run/bb_red_mot_final_state.pkl"
+UPSTREAM="../bb_red_mot/bb_red_mot_final_state.pkl"
 
 cd "${SLURM_SUBMIT_DIR}"
 
