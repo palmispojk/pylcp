@@ -31,9 +31,7 @@ plot_trajectories(
 )
 
 units = make_units(constants.kmag_real, constants.gamma_real, constants.mass_real)
-# Same physical-unit thresholds as the BB stage (default natural-unit
-# thresholds reject narrow-line clouds).
-mask = classify_captured(results, units=units, r_mm=5.0, v_cms=10.0)
+mask = classify_captured(results, units=units, r_mm=5.0)
 dist_fits = fit_distributions(results, units, mask=mask)
 plot_distributions(
     dist_fits,

@@ -45,7 +45,8 @@ def load_src_constants(pickle_path):
 
 def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
                            n_atoms=None, rng=None, seed=None,
-                           capture_r_mm=None, capture_v_cms=None):
+                           capture_r_mm=None,
+                           allow_oversample=False):
     """Load atoms from an upstream stage and build (y0_batch, keys_batch).
 
     Parameters
@@ -63,23 +64,31 @@ def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
         Upstream stage's `constants`. If None, no unit conversion is applied
         (valid when source and destination share a transition).
     n_atoms : int, optional
-        Number of atoms to produce. If None, uses the captured count as-is.
-        If larger, samples with replacement.
+        Number of atoms to produce. If None, uses the available count as-is.
+        If smaller than what's available, takes a random subset (no
+        replacement). If larger, behavior is controlled by `allow_oversample`.
     rng : np.random.Generator, optional
         Used for resampling and seeding `keys_batch` if `seed` is None.
     seed : int, optional
         Explicit PRNG seed for `keys_batch`. Overrides `rng` for the keys.
-    capture_r_mm, capture_v_cms : float, optional
-        Apply an upstream capture filter before resampling: keep only atoms
-        with |r| < capture_r_mm and |v| < capture_v_cms (physical units),
-        evaluated in the upstream stage's frame. Use to feed only the
-        upstream-trapped cohort into this stage. Either or both may be None.
+    capture_r_mm : float, optional
+        Apply an upstream position capture filter before resampling: keep
+        only atoms with |r| < capture_r_mm (physical units), evaluated in
+        the upstream stage's frame. Use to feed only the upstream-trapped
+        cohort into this stage.
+    allow_oversample : bool, default False
+        If True and `n_atoms` exceeds what's available, sample with
+        replacement to reach `n_atoms` (duplicates atoms). If False (default),
+        clamp the request to the available count and print a notice — no
+        atoms are duplicated.
 
     Returns
     -------
-    y0_batch : jnp.ndarray, shape (n_atoms, state_dim)
+    y0_batch : jnp.ndarray, shape (n_atoms_actual, state_dim)
         Stacked [rho0 || v0 || r0] in this stage's natural units.
-    keys_batch : jnp.ndarray, shape (n_atoms, 2)
+        `n_atoms_actual` may be smaller than the requested `n_atoms` if
+        `allow_oversample=False` and the upstream pool is smaller.
+    keys_batch : jnp.ndarray, shape (n_atoms_actual, 2)
         Per-atom JAX PRNG keys for `evolve_motion(..., random_recoil=True)`.
     """
     path = Path(pickle_path)
@@ -93,25 +102,20 @@ def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
             f"Expected r, v with shape (N, 3); got {r.shape}, {v.shape}"
         )
 
-    # Apply upstream capture filter in upstream's SI units (atoms are still
-    # in upstream natural units at this point).
-    if capture_r_mm is not None or capture_v_cms is not None:
+    # Apply upstream position capture filter in upstream's SI units (atoms
+    # are still in upstream natural units at this point).
+    if capture_r_mm is not None:
         src = src_constants if src_constants is not None else dst_constants
         r_si = r / src.kmag_real
-        v_si = v * src.gamma_real / src.kmag_real
-        mask = np.ones(r.shape[0], dtype=bool)
-        if capture_r_mm is not None:
-            mask &= np.linalg.norm(r_si, axis=1) < capture_r_mm * 1e-3
-        if capture_v_cms is not None:
-            mask &= np.linalg.norm(v_si, axis=1) < capture_v_cms * 1e-2
+        mask = np.linalg.norm(r_si, axis=1) < capture_r_mm * 1e-3
         n_kept = int(mask.sum())
         if n_kept == 0:
             raise ValueError(
-                f"Capture filter (r<{capture_r_mm} mm, v<{capture_v_cms} cm/s) "
-                f"rejected all {r.shape[0]} upstream atoms."
+                f"Capture filter (r<{capture_r_mm} mm) rejected all "
+                f"{r.shape[0]} upstream atoms."
             )
         print(f"  Capture filter: {n_kept}/{r.shape[0]} atoms kept "
-              f"(r<{capture_r_mm} mm, v<{capture_v_cms} cm/s)")
+              f"(r<{capture_r_mm} mm)")
         r, v = r[mask], v[mask]
 
     # Cross-transition unit conversion: natural units scale with (k, gamma).
@@ -127,6 +131,10 @@ def initialize_from_pickle(pickle_path, obe, dst_constants, src_constants=None,
 
     N_saved = r.shape[0]
     if n_atoms is None:
+        n_atoms = N_saved
+    if n_atoms > N_saved and not allow_oversample:
+        print(f"  Note: requested {n_atoms} atoms but only {N_saved} available; "
+              f"using {N_saved} (pass allow_oversample=True to duplicate).")
         n_atoms = N_saved
     if n_atoms != N_saved:
         idx = rng.choice(N_saved, size=n_atoms, replace=(n_atoms > N_saved))

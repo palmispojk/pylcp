@@ -77,13 +77,14 @@ obe = pylcp.obe(laserBeams, magField, hamiltonian, a=constants.a_grav, transform
 # Load atoms from the upstream stage (same transition, no rescale)
 # ---------------------------------------------------------------------------
 rng = np.random.default_rng()
-# Take only the BB-trapped cohort from the upstream pickle
-# (BB MOT capture criterion: r < 5 mm, v < 10 cm/s).
+# Take only the BB-trapped cohort from the upstream pickle. Cloud is
+# ~0.5 mm radius (sigma ~0.14 mm xy, ~0.08 mm z); tighter cut excludes the
+# diffuse escapee halo visible outside the bound core.
 y0_batch, keys_batch = initialize_from_pickle(
     upstream_pickle, obe, dst_constants=constants,
     src_constants=None,                 # same transition
     n_atoms=constants.MAX_ATOMS, rng=rng,
-    capture_r_mm=5.0, capture_v_cms=10.0,
+    capture_r_mm=0.5,
 )
 Natoms = y0_batch.shape[0]
 

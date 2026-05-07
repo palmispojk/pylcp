@@ -110,35 +110,23 @@ def initial_velocities(results, units=None):
 #  Capture classification
 # ---------------------------------------------------------------------------
 
-def classify_captured(results, r_thresh=10000, v_thresh=0.5,
-                      units=None, r_mm=None, v_cms=None):
+def classify_captured(results, r_thresh=10000, units=None, r_mm=None):
     """Return a boolean mask of captured atoms.
 
-    An atom is "captured" if its final distance from the origin and final
-    speed are below the given thresholds. Thresholds may be specified in
-    natural units (``r_thresh``, ``v_thresh``) or — preferred for
-    narrow-line stages — in physical units (``r_mm``, ``v_cms``) when a
-    ``units`` dict from ``make_units`` is provided.
-
-    The natural-unit defaults (10000 / 0.5) are tuned to the blue MOT;
-    they collapse to ~mm/s velocity in red-MOT natural units and reject
-    well-cooled narrow-line clouds. Pass ``units`` plus ``r_mm``/``v_cms``
-    to override.
+    An atom is "captured" if its final distance from the origin is below
+    the given threshold. Thresholds may be specified in natural units
+    (``r_thresh``) or in physical units (``r_mm``) when a ``units`` dict
+    from ``make_units`` is provided.
 
     Returns:
         np.ndarray of bool, shape (N,).
     """
-    if units is not None:
-        if r_mm is not None:
-            r_thresh = (r_mm * 1e-3) / units['r_to_si']
-        if v_cms is not None:
-            v_thresh = (v_cms * 1e-2) / units['v_to_si']
+    if units is not None and r_mm is not None:
+        r_thresh = (r_mm * 1e-3) / units['r_to_si']
 
     final_r = np.array([res['r'][:, -1] for res in results])
-    final_v = np.array([res['v'][:, -1] for res in results])
     dist = np.sqrt(np.sum(final_r**2, axis=1))
-    speed = np.sqrt(np.sum(final_v**2, axis=1))
-    return (dist < r_thresh) & (speed < v_thresh)
+    return dist < r_thresh
 
 
 def capture_fraction(results, **kwargs):
@@ -441,21 +429,18 @@ def equilibration_time(results, units, mask=None, frac=0.90):
 #  Atom number vs time (loading curve)
 # ---------------------------------------------------------------------------
 
-def loading_curve(results, units, r_thresh=None, v_thresh=None):
+def loading_curve(results, units, r_thresh=None):
     """Compute the number of atoms within the capture region at each time step.
 
-    Uses the same default thresholds as ``classify_captured`` when not
-    specified.
+    Uses the same default position threshold as ``classify_captured`` when
+    not specified.
 
     Returns:
         dict with 't' (natural units), 't_ms' (milliseconds),
         'n_captured' (atom count at each time step).
     """
-    defaults = classify_captured.__defaults__  # (r_thresh, v_thresh)
     if r_thresh is None:
-        r_thresh = defaults[0]
-    if v_thresh is None:
-        v_thresh = defaults[1]
+        r_thresh = classify_captured.__defaults__[0]
 
     t = results[0]['t']
     n_steps = len(t)
@@ -463,11 +448,8 @@ def loading_curve(results, units, r_thresh=None, v_thresh=None):
 
     for res in results:
         r = res['r']  # (3, n_steps)
-        v = res['v']  # (3, n_steps)
         dist = np.sqrt(np.sum(r**2, axis=0))
-        speed = np.sqrt(np.sum(v**2, axis=0))
-        captured = (dist < r_thresh) & (speed < v_thresh)
-        n_captured += captured.astype(int)
+        n_captured += (dist < r_thresh).astype(int)
 
     return {
         't': t,
@@ -535,13 +517,13 @@ def fit_distributions(results, units, mask=None, n_bins=60):
 #  Summary
 # ---------------------------------------------------------------------------
 
-def cloud_summary(results, units, r_mm=None, v_cms=None):
+def cloud_summary(results, units, r_mm=None):
     """Summary of cloud size and temperature (captured atoms).
 
     Returns the summary as a formatted string.
     """
     N = len(results)
-    mask = classify_captured(results, units=units, r_mm=r_mm, v_cms=v_cms)
+    mask = classify_captured(results, units=units, r_mm=r_mm)
     n_cap = int(mask.sum())
 
     temp = temperature(results, units, mask=mask)
@@ -570,17 +552,15 @@ def cloud_summary(results, units, r_mm=None, v_cms=None):
 
 
 def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True,
-            r_mm=None, v_cms=None):
+            r_mm=None):
     """Load results, print summary, and optionally save to a text file.
 
     Args:
         pkl_path: Path to the simulation pickle file.
         kmag_real, gamma_real, mass_real: Physical constants for unit conversion.
         log: If True, write summary to ``<pkl_stem>_analysis.txt``.
-        r_mm, v_cms: Capture thresholds in physical units. If None, the
-            natural-unit defaults of ``classify_captured`` are used (these
-            are tuned for the blue MOT and reject narrow-line clouds —
-            pass explicit values for red-MOT stages).
+        r_mm: Capture-region radius in mm. If None, the natural-unit
+            default of ``classify_captured`` is used.
 
     Returns:
         tuple of (results, units, summary_string).
@@ -589,7 +569,7 @@ def analyze(pkl_path, kmag_real, gamma_real, mass_real, log=True,
     units = make_units(kmag_real, gamma_real, mass_real)
 
     header = f"Loaded {pkl_path} ({len(results)} atoms)\n"
-    summary = header + cloud_summary(results, units, r_mm=r_mm, v_cms=v_cms)
+    summary = header + cloud_summary(results, units, r_mm=r_mm)
     print(summary)
 
     if log:
@@ -613,8 +593,6 @@ if __name__ == '__main__':
     parser.add_argument('constants_path')
     parser.add_argument('--r-mm', type=float, default=None,
                         help='Capture-region radius in mm (override natural-unit default)')
-    parser.add_argument('--v-cms', type=float, default=None,
-                        help='Capture-speed threshold in cm/s (override natural-unit default)')
     args = parser.parse_args()
 
     if not os.path.exists(args.pkl_path):
@@ -629,4 +607,4 @@ if __name__ == '__main__':
     spec.loader.exec_module(constants)
 
     analyze(args.pkl_path, constants.kmag_real, constants.gamma_real,
-            constants.mass_real, r_mm=args.r_mm, v_cms=args.v_cms)
+            constants.mass_real, r_mm=args.r_mm)
