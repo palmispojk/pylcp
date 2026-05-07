@@ -48,10 +48,17 @@ upstream_name = os.path.basename(os.path.dirname(upstream_pickle))
 print("Building low-power blue MOT setup...")
 trap_time = time.monotonic()
 
-laserBeams = pylcp.conventional3DMOTBeams(
-    k=constants.kmag, s=constants.s, delta=0.,
-    beam_type=pylcp.infinitePlaneWaveBeam,
-)
+laserBeams = pylcp.laserBeams()
+for kvec in ([1., 0., 0.], [-1., 0., 0.], [0., 1., 0.], [0., -1., 0.]):
+    laserBeams.add_laser(pylcp.infinitePlaneWaveBeam(
+        kvec=constants.kmag * np.array(kvec), pol=-1,
+        s=constants.s, delta=0.,
+    ))
+for kvec in ([0., 0., 1.], [0., 0., -1.]):
+    laserBeams.add_laser(pylcp.infinitePlaneWaveBeam(
+        kvec=constants.kmag * np.array(kvec), pol=+1,
+        s=constants.s_z, delta=0.,
+    ))
 magField = pylcp.quadrupoleMagneticField(constants.alpha_nat)
 
 H_g, muq_g = pylcp.hamiltonians.singleF(F=0, gF=0, muB=constants.muB)
@@ -86,7 +93,7 @@ print(f"  Atoms:           {Natoms}")
 print(f"  |v| (natural):   {float(jnp.linalg.norm(y0_batch[:, -6:-3], axis=1).mean()):.2f}")
 print(f"  |r| (natural):   {float(jnp.linalg.norm(y0_batch[:, -3:], axis=1).mean()):.1f}")
 print(f"  detuning:        {constants.det:.2f} gamma")
-print(f"  saturation:      {constants.s}")
+print(f"  saturation:      xy={constants.s}, z={constants.s_z}")
 print(f"  B gradient:      {constants.alpha} T/m")
 print()
 

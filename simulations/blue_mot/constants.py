@@ -23,7 +23,8 @@ mass  = mass_real * gamma_real / const.hbar / kmag_real**2
 
 # MOT parameters (Tang p.43)
 det   = -1.3228 * gamma   # -40 MHz, chosen for larger capture range
-s     = 0.173             # 7 mW per beam, 10 mm waist
+s     = 0.173             # xy beams: 7 mW per beam, 10 mm waist
+s_z   = 0.121             # z beams: 4.9 mW per beam, 10 mm waist
 alpha = 0.37              # T/m  (370 mT/m vertical)
 
 alpha_nat = alpha * muB_real / (gamma_real * kmag_real * const.hbar)

@@ -26,7 +26,8 @@ mass  = mass_real * gamma_real / const.hbar / kmag_real**2
 
 # MOT parameters
 det   = -1.3228 * gamma   # -40 MHz, unchanged from blue MOT
-s     = 0.087             # halved from blue MOT s=0.173 (Tang-calibrated)
+s     = 0.0865            # xy beams: halved from blue MOT s=0.173 (Tang-calibrated)
+s_z   = 0.0605            # z beams: halved from blue MOT s_z=0.121
 # Quadrupole gradient still 35 G/cm here; ramp to red MOT happens at the
 # blue->red handoff (Kristensen Sec. 3.5.1).
 alpha = 0.35              # T/m

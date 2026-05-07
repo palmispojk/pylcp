@@ -31,9 +31,17 @@ import constants
 print("Building blue MOT setup...")
 trap_time = time.monotonic()
 
-laserBeams = pylcp.conventional3DMOTBeams(
-    k=constants.kmag, s=constants.s, delta=0., beam_type=pylcp.infinitePlaneWaveBeam
-)
+laserBeams = pylcp.laserBeams()
+for kvec in ([1., 0., 0.], [-1., 0., 0.], [0., 1., 0.], [0., -1., 0.]):
+    laserBeams.add_laser(pylcp.infinitePlaneWaveBeam(
+        kvec=constants.kmag * np.array(kvec), pol=-1,
+        s=constants.s, delta=0.,
+    ))
+for kvec in ([0., 0., 1.], [0., 0., -1.]):
+    laserBeams.add_laser(pylcp.infinitePlaneWaveBeam(
+        kvec=constants.kmag * np.array(kvec), pol=+1,
+        s=constants.s_z, delta=0.,
+    ))
 magField = pylcp.quadrupoleMagneticField(constants.alpha_nat)
 
 # Sr88 1S0 (J=0) -> 1P1 (J=1):  F=0 ground, F=1 excited
@@ -98,7 +106,7 @@ print(f"  v_trans (nat):   +/- {v0_beam[:, 1:].std():.1f}")
 print(f"  r_trans (nat):   +/- {r0_beam[:, 1:].std():.0f}")
 print(f"  r_long (nat):    {r0_beam[:, 0].mean():.0f} +/- {r0_beam[:, 0].std():.0f}")
 print(f"  detuning:        {constants.det:.2f} gamma")
-print(f"  saturation:      {constants.s}")
+print(f"  saturation:      xy={constants.s}, z={constants.s_z}")
 print(f"  B gradient:      {constants.alpha} T/m")
 print()
 
