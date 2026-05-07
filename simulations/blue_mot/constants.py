@@ -55,8 +55,8 @@ alpha_nat = alpha * muB_real / (gamma_real * kmag_real * const.hbar)
 _v_scale = kmag_real / gamma_real   # natural velocity unit -> m/s
 _r_scale = kmag_real                # natural position unit -> 1/m
 
-# Longitudinal (z): slower output velocity (Tang p.39)
-v_longitudinal_mean_si  = 15.0     # m/s
+# Longitudinal (z): Zeeman slower output, Gaussian around 20 m/s clipped at 0
+v_longitudinal_mean_si  = 20.0     # m/s
 v_longitudinal_sigma_si = 5.0      # m/s
 
 # Transverse (x, y): set by beam divergence, not measured in thesis

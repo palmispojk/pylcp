@@ -142,4 +142,20 @@ for sol in sols:
 with open('blue_mot_simulation_data.pkl', 'wb') as f:
     pickle.dump(results, f, protocol=pickle.HIGHEST_PROTOCOL)
 
+# Save final r, v of captured atoms for use as initial conditions in the next stage
+import sys
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
+from analysis import classify_captured
+
+mask = classify_captured(results)
+r_final = np.array([res['r'][:, -1] for res in results])[mask]
+v_final = np.array([res['v'][:, -1] for res in results])[mask]
+final_state = {'r': r_final, 'v': v_final}
+
+np.savez('blue_mot_final_state.npz', **final_state)
+with open('blue_mot_final_state.pkl', 'wb') as f:
+    pickle.dump(final_state, f, protocol=pickle.HIGHEST_PROTOCOL)
+
 print("Data saved to blue_mot_simulation_data.pkl")
+print(f"Final state saved to blue_mot_final_state.{{npz,pkl}} "
+      f"({r_final.shape[0]}/{Natoms} captured atoms)")
